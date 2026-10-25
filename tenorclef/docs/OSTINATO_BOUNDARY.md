@@ -1,0 +1,50 @@
+# Ostinato ↔ TenorClef boundary (Phase 0)
+
+## Rule of thumb
+
+| Lives in **Ostinato** | Lives in **TenorClef** |
+|-----------------------|------------------------|
+| Pathfinding, movement execution, physics traversal | Goals, plans, task graphs, catalogue |
+| Baritone processes & path executor | World model / knowledge facts |
+| Kinematic and physics travel | Inventory / crafting / container logic |
+| MovementEngine API | Threat assessment policy, recovery policy |
+| Swim/sprint-in-water movement fixes | When to mine vs escape water (task policy) |
+| Schematic/builder **mechanics** | What to build and why |
+| Input overrides needed to **follow a path** | Input overrides for **gameplay** (eat, shield, MLG decision) |
+
+## Boundary progress (Phase 2)
+
+- **Migrated:** `GetToBlockTask` / `GetToEntityTask` → `MovementEngineAdapter` → Ostinato `IMovementEngine` (fallback to CustomGoalProcess).
+- **Still direct:** most other tasks still call `getCustomGoalProcess` / `getPathingBehavior` / `getInputOverrideHandler`.
+- `AltoClef.initializeBaritoneSettings` still mutates Baritone settings (agent preferences; later via engine config).
+
+## Swarm
+
+Ostinato owns the swarm link (sigil crypto, roster, transport, region builds). TenorClef's side is
+`swarm/SwarmAdapter` (reflection over the `swarm*` settings and the `#swarm` command, so stock jars
+just report it unavailable), the `@swarm` command, and the Swarm tab of the TenorClef menu
+(`@swarm menu`): enable, signed senders, channel, roster, sigil home, status, ping, reload, build, stop.
+
+## Phase 2 direction
+
+1. Expand Ostinato `IMovementBackend` → documented **MovementEngine** API (`MovementGoal`, status, path result, failures).
+2. Keep travel selection inside Ostinato (the Tungsten bridge was later removed from both repos).
+3. Replace TenorClef travel call sites gradually (`GetToBlockTask` first).
+4. Leave mining/building on Baritone processes until a later, explicit action-interface phase.
+
+## Version matrix (boundary implications)
+
+| MC module | Ostinato jar (sole source) | CI gate |
+|----|----------|---------|
+| 1.21.1 / 1.21 | Published Baritone artifact  | None (preprocess node only; no CI job builds it) |
+| 26.3 (primary) | Ostinato `main` → `libs/baritone-unoptimized-fabric-ostinato-26.3.jar` (JDK 25 toolchain) | **Required** (compile + unit tests) |
+| 1.21.11 | Ostinato `1.21.11` → `libs/baritone-unoptimized-fabric-ostinato-1.21.11.jar` (pinned by `.sha256`; `-PostinatoJar` overrides) | **Required** (compile + unit tests) |
+| 1.21.4 | Ostinato `1.21.4` → `libs/baritone-unoptimized-fabric-1.21.4.jar` | **Required** (compile + unit tests) |
+| 1.16.1 | Ostinato `1.16.1` → `libs/baritone-unoptimized-fabric-1.16.1.jar` (kinematic backend lives here) | **Required** (compile) |
+
+Never cross jars between rows: each module must resolve only its own row's Ostinato jar.
+
+## Pointers
+
+- TenorClef: `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/OSTINATO_WIRING.md`
+- Ostinato: `docs/SWIM_PORT.md` (+ short `docs/TENORCLEF.md` pointer added in Phase 0)

@@ -1,0 +1,24 @@
+.gradle/
+build/
+**/build/
+versions/*/build/
+versions/*/run/
+*.class
+*.jar
+!libs/baritone-unoptimized-fabric-1.16.1.jar
+!libs/baritone-unoptimized-fabric-1.21.4.jar
+!libs/baritone-unoptimized-fabric-ostinato-1.21.11.jar
+!gradle/wrapper/gradle-wrapper.jar
+run/
+saves/
+.idea/
+.vs/
+*.bak
+*.bak*
+.DS_Store
+*.hprof
+*.iml
+out/
+
+# Personal machine overrides (java.home, larger jvmargs, etc.)
+gradle.properties.local

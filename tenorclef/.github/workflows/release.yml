@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to publish (e.g. v0.20.0)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {mc: '26.3', java: '21'}
+          - {mc: '1.21.11', java: '21'}
+          - {mc: '1.21.4', java: '21'}
+          - {mc: '1.16.1', java: '21'}
+    continue-on-error: ${{ matrix.experimental == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 26.3 compiles with a JDK 25 toolchain; Gradle and the preprocessor's Kotlin remapper run on 21.
+      - uses: actions/setup-java@v4
+        if: matrix.mc == '26.3'
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      # Ostinato: every node builds against its pinned libs/ jar (sha256-checked by build.gradle).
+      - name: Build ${{ matrix.mc }}
+        run: ./gradlew ${{ matrix.mc == '26.3' && '-Porg.gradle.java.installations.fromEnv=JAVA_HOME_25_X64' || '-Pno26' }} :${{ matrix.mc }}:build -x test --stacktrace
+      - name: Collect jar
+        run: |
+          mkdir -p out
+          for f in versions/${{ matrix.mc }}/build/libs/*.jar; do
+            case "$f" in *-sources.jar|*-dev.jar|*-javadoc.jar) continue;; esac
+            cp "$f" "out/tenorclef-mc${{ matrix.mc }}-${{ github.event.inputs.tag || github.ref_name }}.jar"
+          done
+          ls -la out
+          test -n "$(ls out)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jar-${{ matrix.mc }}
+          path: out/*.jar
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: TenorClef ${{ github.event.inputs.tag || github.ref_name }}
+          body_path: CHANGELOG.md
+          files: dist/*.jar

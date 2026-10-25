@@ -1,0 +1,4 @@
+# Ostinato: files that still use Baritone/Ostinato internals (imports or reflective class names).
+# This list only shrinks. PathBench benchmarks the 1.16.1 pathfinder internals themselves
+# (AStarPathFinder, CalculationContext, Favoring), so it has no API equivalent by design.
+src/main/java/adris/altoclef/benchmark/PathBench.java

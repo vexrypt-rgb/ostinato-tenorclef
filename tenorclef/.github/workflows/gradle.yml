@@ -1,0 +1,164 @@
+name: Build TenorClef
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# TenorClef always runs on Ostinato, so only the versions Ostinato is built for are compiled, each
+# against the Ostinato jar committed in libs/ for it. The other versions are preprocess-only nodes
+# (see build.gradle).
+#
+# Required green: 26.3 (primary), 1.21.11, 1.21.4, 1.16.1.
+# Non-blocking: 1.21.11 against the tip of Ostinato branch 1.21.11, as an early warning that the two have drifted.
+# The jobs for the older lines pass -Pno26 so they do not set up the 26.3 module they do not build.
+
+jobs:
+  baritone-imports:
+    name: Baritone API import gate
+    # Ostinato: fails on any new file that reaches Baritone/Ostinato internals instead of baritone.api.*.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/check-baritone-imports.sh
+
+  build-263:
+    name: Compile + test Fabric 26.3 (primary)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 26.3 compiles with a JDK 25 toolchain; Gradle and the preprocessor's Kotlin remapper run on 21.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - name: Verify pinned Ostinato 26.3 jar
+        run: ls -la libs/baritone-unoptimized-fabric-ostinato-26.3.jar && (cd libs && sha256sum --strict -c baritone-unoptimized-fabric-ostinato-26.3.jar.sha256)
+      - name: Compile 26.3 module
+        run: ./gradlew -Porg.gradle.java.installations.fromEnv=JAVA_HOME_25_X64 :26.3:compileJava --stacktrace
+      # Unit tests are pure Java (no Minecraft client).
+      - name: Unit tests
+        run: ./gradlew -Porg.gradle.java.installations.fromEnv=JAVA_HOME_25_X64 :26.3:test --stacktrace
+
+  build-12111:
+    name: Compile + test Fabric 1.21.11
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - name: Verify staged Ostinato 1.21.11 jar
+        run: ls -la libs/baritone-unoptimized-fabric-ostinato-1.21.11.jar
+      - name: Compile 1.21.11 module
+        run: ./gradlew -Pno26 "-PostinatoJar.1.21.11=${{ steps.stage_ostinato.outputs.jar }}" :1.21.11:compileJava --stacktrace
+      # Unit tests are pure Java (no Minecraft client).
+      - name: Unit tests
+        run: ./gradlew -Pno26 :1.21.11:test --stacktrace
+
+  build-1214:
+    name: Compile + test Fabric 1.21.4
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - name: Verify staged Ostinato 1.21.4 jar
+        run: ls -la libs/baritone-unoptimized-fabric-1.21.4.jar
+      - name: Compile 1.21.4 module
+        run: ./gradlew -Pno26 :1.21.4:compileJava --stacktrace
+      - name: Unit tests
+        run: ./gradlew -Pno26 :1.21.4:test --stacktrace
+      - name: Upload jars (if produced)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tenorclef-1.21.4
+          path: versions/1.21.4/build/libs/*.jar
+          if-no-files-found: ignore
+          retention-days: 14
+
+  build-12111-tip:
+    name: Compile Fabric 1.21.11 (Ostinato 1.21.11 tip)
+    # Builds whatever Ostinato branch 1.21.11 is today, so it can go red for reasons outside this repository.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      # Ostinato: build the tip and pass its jar with -PostinatoJar.1.21.11 (libs/ stays authoritative otherwise).
+      - name: Checkout Ostinato tip
+        uses: actions/checkout@v4
+        with:
+          repository: vexrypt-rgb/Ostinato
+          ref: '1.21.11'
+          path: _ostinato_tip
+
+      - name: Build Ostinato Fabric jar into sibling dist
+        id: stage_ostinato
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          chmod +x _ostinato_tip/gradlew
+          if ! (cd _ostinato_tip && ./gradlew :fabric:build -x test --stacktrace); then
+            echo "::warning::Ostinato tip build failed; skipping the tip compile"
+            echo "staged=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          shopt -s nullglob
+          jars=(_ostinato_tip/dist/baritone-unoptimized-fabric-*.jar)
+          if [ ${#jars[@]} -eq 0 ]; then
+            echo "::warning::No Ostinato unoptimized fabric jar in dist/; skipping the tip compile"
+            echo "staged=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          ls -la "${jars[@]}"
+          echo "jar=$GITHUB_WORKSPACE/${jars[0]}" >> "$GITHUB_OUTPUT"
+          echo "staged=true" >> "$GITHUB_OUTPUT"
+
+      - name: Compile 1.21.11 module
+        if: steps.stage_ostinato.outputs.staged == 'true'
+        run: ./gradlew -Pno26 "-PostinatoJar.1.21.11=${{ steps.stage_ostinato.outputs.jar }}" :1.21.11:compileJava --stacktrace
+
+  build-1161:
+    name: Compile Fabric 1.16.1 (Ostinato legacy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Verify staged Ostinato 1.16.1 jar
+        run: |
+          set -euo pipefail
+          if [ -f libs/baritone-unoptimized-fabric-1.16.1.jar ]; then
+            ls -la libs/baritone-unoptimized-fabric-1.16.1.jar
+          else
+            echo "::error::Missing libs/baritone-unoptimized-fabric-1.16.1.jar (committed stub required for CI)"
+            exit 1
+          fi
+
+      - name: Compile 1.16.1 module
+        run: ./gradlew -Pno26 :1.16.1:compileJava --stacktrace

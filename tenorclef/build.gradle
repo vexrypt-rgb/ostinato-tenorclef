@@ -1,0 +1,372 @@
+import com.replaymod.gradle.preprocess.PreprocessTask
+
+buildscript {
+    def (major, minor, patch) = project.name.split("-")[0].tokenize('.')
+    project.ext.mcVersion = "${major}${minor.padLeft(2, '0')}${(patch ?: '').padLeft(2, '0')}" as int
+
+    dependencies {
+        classpath 'fabric-loom:fabric-loom.gradle.plugin:1.15.5'
+    }
+}
+
+
+plugins {
+    id "maven-publish"
+    id 'com.gradleup.shadow' version '9.4.0'
+    id 'xyz.wagyourtail.jvmdowngrader' version '1.2.2'
+}
+
+// Minecraft 26.x is unobfuscated: Loom's no-remap plugin, Mojang names, no mappings and no remapJar.
+def unobfuscated = mcVersion >= 260000
+apply plugin: unobfuscated ? 'net.fabricmc.fabric-loom' : 'fabric-loom'
+apply plugin: 'com.replaymod.preprocess'
+
+preprocess {
+    patternAnnotation.set("adris.altoclef.multiversion.Pattern")
+}
+
+// The unobfuscated Loom has no mappings, and its mappingConfiguration getter throws, which the preprocessor
+// probes reflectively. Hand it an identity tiny file instead (26.x names are already the Mojang names);
+// the real 26.3 <-> 1.21.11 renames come from versions/mapping-26.3-1.21.11.txt.
+class IdentityTinyMappings {
+    File tinyMappings
+}
+if (unobfuscated) {
+    def identityTiny = layout.buildDirectory.file('identity-mappings.tiny').get().asFile
+    identityTiny.parentFile.mkdirs()
+    identityTiny.text = 'tiny\t2\t0\tofficial\tintermediary\tnamed\n'
+    def fake = new IdentityTinyMappings(tinyMappings: identityTiny)
+    project.extensions.getByName('loom').metaClass.getMappingConfiguration = { -> fake }
+}
+
+java {
+    sourceCompatibility = unobfuscated ? JavaVersion.VERSION_25 : JavaVersion.VERSION_21
+    targetCompatibility = unobfuscated ? JavaVersion.VERSION_25 : JavaVersion.VERSION_21
+}
+
+
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = unobfuscated ? 25 : 21
+    if (unobfuscated) {
+        // Gradle itself stays on JDK 21: the preprocessor's embedded Kotlin cannot parse Java 25 version strings.
+        javaCompiler = javaToolchains.compilerFor { languageVersion = JavaLanguageVersion.of(25) }
+    }
+}
+
+// The 26.3 classes are Java 25, so its tests run on the JDK 25 toolchain too.
+if (unobfuscated) {
+    tasks.withType(Test).configureEach {
+        javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(25) }
+    }
+}
+
+base {
+    archivesName = project.archives_base_name
+}
+version = "${project.name}-${project.mod_version}"
+group = project.maven_group
+
+// TenorClef always runs on Ostinato. These are the Minecraft versions Ostinato is built for; every other
+// version stays in the preprocess chain (it cannot be trimmed, see settings.gradle.kts) but is not compiled.
+def ostinatoVersions = [11601, 12104, 12111, 260300]
+project.ext.ostinatoTarget = ostinatoVersions.contains(mcVersion)
+if (!project.ext.ostinatoTarget) {
+    def skipped = ['compileJava', 'compileTestJava', 'processTestResources', 'test', 'jar', 'shadowJar', 'remapJar',
+                   'downgradeJar', 'replaceJar', 'remapSourcesJar', 'sourcesJar', 'javadoc', 'javadocJar', 'runClient',
+                   'runServer'] as Set
+    tasks.configureEach { t ->
+        if (skipped.contains(t.name)) {
+            t.enabled = false
+        }
+    }
+}
+
+def mappingsVersions = [
+        11601: "1.16.1+build.21",
+        11605: "1.16.5+build.10",
+        11701: "1.17.1+build.65",
+        11800: "1.18+build.1",
+        11802: "1.18.2+build.4",
+        11904: "1.19.4+build.2",
+        12001: "1.20.1+build.10",
+        12002: "1.20.2+build.4",
+        12004: "1.20.4+build.3",
+        12005: "1.20.5+build.1",
+        12006: "1.20.6+build.3",
+        12100: "1.21+build.9",
+        12101: "1.21.1+build.3",
+        12104: "1.21.4+build.8",
+        12111: "1.21.11+build.3",
+]
+
+def fabricApiVersions = [
+        11601: "0.18.0+build.387-1.16.1",
+        11605: "0.42.0+1.16",
+        11701: "0.46.1+1.17",
+        11800: "0.44.0+1.18",
+        11802: "0.77.0+1.18.2",
+        11904: "0.87.2+1.19.4",
+        12001: "0.92.2+1.20.1",
+        12002: "0.91.2+1.20.2",
+        12004: "0.96.3+1.20.4",
+        12005: "0.97.8+1.20.5",
+        12006: "0.100.0+1.20.6",
+        12100: "0.100.7+1.21",
+        12101: "0.110.0+1.21.1",
+        12104: "0.119.2+1.21.4",
+        12111: "0.140.0+1.21.11",
+        260300: "0.161.0+26.3",
+]
+
+def loaderVersions = [
+        11601: project.loader_version,
+        11605: project.loader_version,
+        12100: project.loader_version,
+        12101: project.loader_version,
+        12104: "0.16.10",
+        12111: "0.18.3",
+        260300: "0.19.5",
+]
+
+def getJavaVersion() {
+    if (mcVersion >= 260000) {
+        return JavaVersion.VERSION_25;
+    } else if (mcVersion >= 12006) {
+        return JavaVersion.VERSION_21;
+    } else if (mcVersion >= 11700) {
+        return JavaVersion.VERSION_17;
+    }
+    return JavaVersion.VERSION_1_8;
+}
+
+
+repositories {
+    mavenCentral()
+    maven {
+        // upstream Baritone, compile-only on preprocess-only nodes (see dependencies)
+        name = "MiranCZRepo"
+        url = "https://mirancz.github.io/maven/"
+        artifactUrls("https://mirancz.github.io/maven/cabaletta/baritone-unoptimized/${project.name}")
+    }
+    maven {
+        name = 'babbaj-repo'
+        url = 'https://babbaj.github.io/maven/'
+    }
+    flatDir {
+        dirs '../baritone/dist'
+    }
+}
+
+jvmdg {
+    downgradeTo = getJavaVersion()
+}
+
+dependencies {
+    //to change the versions see the gradle.properties file
+    minecraft("com.mojang:minecraft:${project.name}")
+    if (!unobfuscated) {
+        mappings("net.fabricmc:yarn:${mappingsVersions[mcVersion]}:v2")
+    }
+    // The no-remap Loom plugin has no mod configurations: fabric mods are ordinary dependencies there.
+    def modImpl = unobfuscated ? 'implementation' : 'modImplementation'
+    "${modImpl}"("net.fabricmc:fabric-loader:${loaderVersions.containsKey(mcVersion) ? loaderVersions[mcVersion] : project.loader_version}")
+    include(implementation(annotationProcessor("io.github.llamalad7:mixinextras-fabric:0.3.5")))
+
+    // Fabric API. This is technically optional, but you probably want it anyway.
+    "${modImpl}"("net.fabricmc.fabric-api:fabric-api:${fabricApiVersions[mcVersion]}")
+
+    // Jackson JSON
+    implementation 'com.fasterxml.jackson.core:jackson-core:2.16.0'
+    implementation 'com.fasterxml.jackson.core:jackson-annotations:2.16.0'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.16.0'
+
+    // Jvm downgrader
+    include('xyz.wagyourtail.jvmdowngrader:jvmdowngrader-java-api:1.2.2:downgraded-8')
+
+    // Nether pathfinder
+    implementation 'dev.babbaj:nether-pathfinder:1.5'
+
+    // Unit tests (src/test is JUnit 5). Gradle 9 needs the platform launcher on the test runtime.
+    testImplementation(platform('org.junit:junit-bom:5.10.2'))
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // PSA: Some older mods, compiled on Loom 0.2.1, might have outdated Maven POMs.
+    // You may need to force-disable transitiveness on them.
+    shadow('com.fasterxml.jackson.core:jackson-core:2.16.0')
+    shadow('com.fasterxml.jackson.core:jackson-annotations:2.16.0')
+    shadow('com.fasterxml.jackson.core:jackson-databind:2.16.0')
+
+    // Thank you georgeagostino for fixing my garbage
+        // Ostinato: the committed jar in libs/ is authoritative. No directory scan, no mtime sort.
+        // Each pinned jar has a libs/<jar>.sha256 next to it; a mismatch fails the build.
+        // Override for local/tip work only (skips the checksum): -PostinatoJar.<module>=/path/to/jar for one module
+        // (e.g. -PostinatoJar.1.21.11=...), or -PostinatoJar=/path/to/jar when building a single module.
+        def ostinatoLibsJar = [
+            11601 : 'baritone-unoptimized-fabric-1.16.1.jar',
+            12104 : 'baritone-unoptimized-fabric-1.21.4.jar',
+            12111 : 'baritone-unoptimized-fabric-ostinato-1.21.11.jar',
+            260300: 'baritone-unoptimized-fabric-ostinato-26.3.jar',
+        ]
+        def resolveOstinatoJar = { int ver ->
+            def override = project.findProperty("ostinatoJar.${project.name}") ?: project.findProperty('ostinatoJar')
+            if (override) {
+                def f = file(override.toString())
+                if (!f.isFile()) throw new GradleException("-PostinatoJar=${override} does not exist")
+                println "[altoclef] Ostinato Baritone for ${project.name}: ${f} (override, checksum not checked)"
+                return f
+            }
+            def f = file("${rootProject.projectDir}/libs/${ostinatoLibsJar[ver]}")
+            if (!f.isFile()) {
+                throw new GradleException("Missing libs/${ostinatoLibsJar[ver]}. Commit the pinned Ostinato jar, or pass -PostinatoJar=<path> (see libs/README.md).")
+            }
+            def sumFile = file("${f}.sha256")
+            if (!sumFile.isFile()) throw new GradleException("Missing libs/${f.name}.sha256 for the pinned Ostinato jar.")
+            def want = sumFile.text.trim().split(/\s+/)[0].toLowerCase()
+            def got = java.security.MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString()
+            if (want != got) throw new GradleException("libs/${f.name} sha256 is ${got}, libs/${f.name}.sha256 says ${want}. Re-pin both together.")
+            println "[altoclef] Ostinato Baritone for ${project.name}: libs/${f.name} (sha256 ok)"
+            return f
+        }
+
+        if (mcVersion == 11601) {
+            // NOTE: deliberately NOT `include files(jar)`: Loom rejects flat-file jars in
+            // processIncludeJars (a flat file carries no capabilities). Users install Ostinato separately.
+            modImplementation files(resolveOstinatoJar(11601))
+        } else if (mcVersion == 12104) {
+            modImplementation files(resolveOstinatoJar(12104))
+        } else if (mcVersion == 260300) {
+            // 26.3 is unobfuscated (mojmap), so plain implementation.
+            implementation files(resolveOstinatoJar(260300))
+        } else if (mcVersion == 12111) {
+            modImplementation files(resolveOstinatoJar(12111))
+        } else {
+        // Every other version is a preprocess-only node: TenorClef always runs on Ostinato, and
+        // Ostinato has no build for these versions, so they are never compiled or packaged. The
+        // preprocessor still resolves types on each node while remapping sources down the chain
+        // (without Baritone, calls on its return types such as player.setPitch are left unmapped
+        // and 1.16.1 fails), so the matching upstream jar is compile-only here, for that analysis.
+        modCompileOnly "cabaletta:baritone-unoptimized-fabric:${project.name}"
+    }
+
+    //modImplementation 'baritone-api-fabric:baritone-api-fabric:1.6.3'
+    //implementation files('baritone-plus/build/libs/baritone-unoptimized-fabric-1.6.3.jar')
+
+}
+shadowJar {
+    configurations = [project.configurations.shadow]
+}
+
+if (unobfuscated) {
+    // Nothing to remap: the shaded jar is the mod jar.
+    tasks.named('jar') { archiveClassifier = 'slim' }
+    shadowJar { archiveClassifier = '' }
+    tasks.register('replaceJar') { dependsOn shadowJar }
+    build { dependsOn tasks.replaceJar }
+} else {
+    remapJar {
+        dependsOn("shadowJar")
+        input.set(shadowJar.archiveFile)
+    }
+
+    downgradeJar {
+        dependsOn("remapJar")
+        inputFile.set(remapJar.archiveFile)
+    }
+
+    tasks.register('replaceJar') {
+        // do not downgrade java version if we do not need to
+        if (getJavaVersion() == java.targetCompatibility) {
+            return
+        }
+
+        dependsOn downgradeJar
+        doLast {
+            def originalJar = tasks.remapJar.archiveFile.get().asFile
+            def downgradedJar = file("${originalJar.parent}/${originalJar.name.replace('.jar', '-downgraded.jar')}")
+            if (downgradedJar.exists()) {
+                originalJar.delete()
+                downgradedJar.renameTo(originalJar)
+            } else {
+                throw new GradleException("Downgraded JAR not found: ${downgradedJar}")
+            }
+        }
+    }
+
+
+    build {
+        dependsOn tasks.replaceJar
+    }
+}
+
+
+processResources {
+    inputs.property("version", project.version)
+    inputs.property("mcVersion", project.name)
+
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version,
+                "mcVersion": project.name
+    }
+
+    // Mixin rejects a compatibility level above the running JRE; downgraded (Java 8/17) builds must not claim 21.
+    filesMatching("altoclef.mixins.json") {
+        def level = getJavaVersion() == JavaVersion.VERSION_1_8 ? "JAVA_8" : (getJavaVersion() == JavaVersion.VERSION_17 ? "JAVA_17" : null)
+        if (level != null) filter { it.replace('"JAVA_21"', '"' + level + '"') }
+    }
+
+    from(sourceSets.main.resources.srcDirs) {
+        duplicatesStrategy DuplicatesStrategy.EXCLUDE
+        exclude "fabric.mod.json"
+    }
+}
+
+// ensure that the encoding is set to UTF-8, no matter what the system default is
+// this fixes some edge cases with special characters not displaying correctly
+// see http://yodaconditions.net/blog/fix-for-java-file-encoding-problems-with-gradle.html
+tasks.withType(JavaCompile) {
+    options.encoding = "UTF-8"
+}
+
+test {
+    useJUnitPlatform()
+}
+
+// Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
+// if it is present.
+// If you remove this task, sources will not be generated.
+task sourcesJar(type: Jar, dependsOn: classes) {
+    from sourceSets.main.allSource
+}
+
+jar {
+    from "LICENSE"
+}
+
+// configure the maven publication
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            // add all the jars that should be included when publishing to maven
+            if (unobfuscated) {
+                artifact(shadowJar) {
+                    builtBy shadowJar
+                }
+            } else {
+                artifact(remapJar) {
+                    builtBy remapJar
+                }
+                artifact(sourcesJar) {
+                    builtBy remapSourcesJar
+                }
+            }
+        }
+    }
+
+    // select the repositories you want to publish to
+    repositories {
+        // uncomment to publish to the local maven
+        // mavenLocal()
+    }
+}
