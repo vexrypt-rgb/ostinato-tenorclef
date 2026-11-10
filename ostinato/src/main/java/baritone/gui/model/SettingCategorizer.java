@@ -83,7 +83,7 @@ public final class SettingCategorizer {
         rule("^(color|render)|Render|Opacity$|LineWidth|^selection", RENDER);
         rule("^(notification|chat)", CHAT);
         rule("^(build|schematic|layer)|Schematic", BUILDING);
-        rule("^(mine|legitMine|minYLevel|maxYLevel|allowOnlyExposed|forceInternal|internalMining)", MINING);
+        rule("^(mine|legitMine|legitMode|minYLevel|maxYLevel|allowOnlyExposed|forceInternal|internalMining)", MINING);
         rule("^farm", MINING);
         rule("^follow", PATHING);
         rule("^(explore|worldExploring)", MINING);

@@ -80,6 +80,7 @@ There are about a hundred settings, but here are some fun / interesting / import
 - `renderCachedChunks` (and `cachedChunksOpacity`) <-- very fun but you need a beefy computer
 - `avoidance` (avoidance of mobs / mob spawners)
 - `legitMine`
+- `legitMode` (`auto`, `on`, or `off`; default `auto`. `auto` is on only on a remote multiplayer server. See `docs/legit-mode.md`.)
 - `followRadius`
 - `backfill` (fill in tunnels behind you)
 - `buildInLayers`

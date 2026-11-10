@@ -1620,6 +1620,15 @@ public final class Settings {
     public final Setting<Boolean> legitMineIncludeDiagonals = new Setting<>(false);
 
     /**
+     * Ostinato: how ore and block targeting treats blocks the bot has not seen. {@code auto} (the default) is on
+     * only while connected to a remote multiplayer server, and off in singleplayer and on LAN. {@code on} forces the
+     * seen-only filter. {@code off} leaves pathing, mining, and targeting as they were before this setting.
+     * Set with {@code #set legitMode on}, {@code #set legitMode off}, or {@code #set legitMode auto}.
+     * This is separate from {@link #legitMine}.
+     */
+    public final Setting<baritone.api.legit.LegitMode.Value> legitMode = new Setting<>(baritone.api.legit.LegitMode.Value.AUTO);
+
+    /**
      * When mining block of a certain type, try to mine two at once instead of one.
      * If the block above is also a goal block, set GoalBlock instead of GoalTwoBlocks
      * If the block below is also a goal block, set GoalBlock to the position one down instead of GoalTwoBlocks

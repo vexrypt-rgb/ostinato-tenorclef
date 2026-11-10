@@ -19,6 +19,7 @@ package baritone.api.utils;
 
 import baritone.api.BaritoneAPI;
 import baritone.api.Settings;
+import baritone.api.legit.LegitMode;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Vec3i;
@@ -269,6 +270,8 @@ public class SettingsUtil {
         STRING(String.class, String::new),
         MIRROR(Mirror.class, Mirror::valueOf, Mirror::name),
         ROTATION(Rotation.class, Rotation::valueOf, Rotation::name),
+        // Ostinato: #set legitMode on|off|auto. Enum.valueOf would reject the lowercase tokens.
+        LEGIT_MODE(LegitMode.Value.class, LegitMode.Value::parse, LegitMode.Value::token),
         COLOR(
                 Color.class,
                 str -> new Color(Integer.parseInt(str.split(",")[0]), Integer.parseInt(str.split(",")[1]), Integer.parseInt(str.split(",")[2])),
