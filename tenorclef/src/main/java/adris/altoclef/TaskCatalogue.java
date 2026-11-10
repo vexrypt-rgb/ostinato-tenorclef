@@ -40,6 +40,7 @@ import net.minecraft.entity.passive.*;
 //$$ import net.minecraft.world.entity.animal.sheep.Sheep;
 //$$ import net.minecraft.world.entity.animal.squid.Squid;
 //#endif
+import net.minecraft.entity.EntityType;
 import net.minecraft.item.Item;
 import net.minecraft.util.DyeColor;
 
@@ -62,6 +63,9 @@ public class TaskCatalogue {
     private static final HashMap<String, CataloguedResource> nameToResourceTask = new HashMap<>();
     private static final HashMap<Item, CataloguedResource> itemToResourceTask = new HashMap<>();
     private static final HashSet<Item> resourcesObtainable = new HashSet<>();
+    // Ostinato: mob() writes this from the catalogue static block below. A field declared after that block
+    // is still null when the block runs (run49 crashed on MOB_SOURCE.put during <clinit>).
+    private static final java.util.Map<Item, Class<?>> MOB_SOURCE = new java.util.HashMap<>();
 
     public static void init() {
         nameToItemMatches.keySet();
@@ -140,8 +144,8 @@ public class TaskCatalogue {
             mob("wither_skeleton_skull", Items.WITHER_SKELETON_SKULL, WitherSkeletonEntity.class).forceDimension(Dimension.NETHER);
             mob("ink_sac", Items.INK_SAC, SquidEntity.class); // Warning, this probably won't work.
             mob("glow_ink_sac", Items.GLOW_INK_SAC, Entities.GLOW_SQUID); // Warning, this probably won't work.
-            mob("string", Items.STRING, SpiderEntity.class); // Warning, this probably won't work.
-            mine("sugar_cane", Items.SUGAR_CANE);
+            put("string", new Item[]{Items.STRING}, count -> new adris.altoclef.tasks.resources.CollectStringTask(count)); // Ostinato: cobweb+sword first, spiders second
+            simple("sugar_cane", Items.SUGAR_CANE, adris.altoclef.tasks.resources.FarmSugarCaneTask::new); // Ostinato: harvest above the base + replant/extend the patch (was: mine whole stalks)
             mine("brown_mushroom", MiningRequirement.HAND, new Block[]{Blocks.BROWN_MUSHROOM, Blocks.BROWN_MUSHROOM_BLOCK}, Items.BROWN_MUSHROOM);
             mine("red_mushroom", MiningRequirement.HAND, new Block[]{Blocks.RED_MUSHROOM, Blocks.RED_MUSHROOM_BLOCK}, Items.RED_MUSHROOM);
             mine("mushroom", MiningRequirement.HAND, new Block[]{Blocks.BROWN_MUSHROOM, Blocks.BROWN_MUSHROOM_BLOCK, Blocks.RED_MUSHROOM, Blocks.RED_MUSHROOM_BLOCK}, Items.BROWN_MUSHROOM, Items.RED_MUSHROOM);
@@ -164,6 +168,8 @@ public class TaskCatalogue {
             simple("cocoa_beans", Items.COCOA_BEANS, CollectCocoaBeansTask::new);
             shear("cobweb", Blocks.COBWEB, Items.COBWEB).dontMineIfPresent();
             colorfulTasks("wool", color -> color.wool, (color, count) -> new CollectWoolTask(color.color, count));
+            // Ostinato: #allblocks. Concrete = powder hardened by water.
+            colorfulTasks("concrete", color -> color.concrete, (color, count) -> new CollectConcreteTask(color.concrete, color.concretePowder, count));
             // Misc greenery
             shear("leaves", ItemHelper.itemsToBlocks(ItemHelper.LEAVES), ItemHelper.LEAVES).dontMineIfPresent();
             for (CataloguedResource resource : woodTasks(
@@ -293,6 +299,11 @@ public class TaskCatalogue {
             shapedRecipe2x2Block("polished_deepslate", Items.POLISHED_DEEPSLATE, 4, "cobbled_deepslate");
             shapedRecipe2x2Block("deepslate_bricks", Items.DEEPSLATE_BRICKS, 4, "polished_deepslate");
             shapedRecipe2x2Block("deepslate_tiles", Items.DEEPSLATE_TILES, 4, "deepslate_bricks");
+            // Ostinato: tuff family (1.20.3+), maze tunnel palette tuff. Gated so the 1.16.1 node still compiles.
+            //#if MC >= 12003
+            shapedRecipe2x2Block("polished_tuff", Items.POLISHED_TUFF, 4, "tuff");
+            shapedRecipe2x2Block("tuff_bricks", Items.TUFF_BRICKS, 4, "polished_tuff");
+            //#endif
             shapedRecipe2x2Block("cut_copper", CItems.CUT_COPPER, 4, "copper_block");
             shapedRecipe2x2Block("cut_sandstone", Items.CUT_SANDSTONE, 4, "sandstone");
             shapedRecipe2x2Block("cut_red_sandstone", Items.CUT_RED_SANDSTONE, 4, "red_sandstone");
@@ -420,6 +431,11 @@ public class TaskCatalogue {
             armor("iron", "iron_ingot", Items.IRON_HELMET, Items.IRON_CHESTPLATE, Items.IRON_LEGGINGS, Items.IRON_BOOTS);
             armor("golden", "gold_ingot", Items.GOLDEN_HELMET, Items.GOLDEN_CHESTPLATE, Items.GOLDEN_LEGGINGS, Items.GOLDEN_BOOTS);
             armor("diamond", "diamond", Items.DIAMOND_HELMET, Items.DIAMOND_CHESTPLATE, Items.DIAMOND_LEGGINGS, Items.DIAMOND_BOOTS);
+            //#if MC >= 12109
+            // Ostinato: copper tools and armor (1.21.9+); copper ore is common, so #maze.tunnels kits ask for these first.
+            tools("copper", "copper_ingot", Items.COPPER_PICKAXE, Items.COPPER_SHOVEL, Items.COPPER_SWORD, Items.COPPER_AXE, Items.COPPER_HOE);
+            armor("copper", "copper_ingot", Items.COPPER_HELMET, Items.COPPER_CHESTPLATE, Items.COPPER_LEGGINGS, Items.COPPER_BOOTS);
+            //#endif
             smith("netherite_helmet", Items.NETHERITE_HELMET, "netherite_ingot", "diamond_helmet");
             smith("netherite_chestplate", Items.NETHERITE_CHESTPLATE, "netherite_ingot", "diamond_chestplate");
             smith("netherite_leggings", Items.NETHERITE_LEGGINGS, "netherite_ingot", "diamond_leggings");
@@ -660,6 +676,124 @@ public class TaskCatalogue {
                 shapedRecipe3x3("beetroot_soup", Items.BEETROOT_SOUP, 1, b, b, b, b, b, b, o, "bowl", o);
             }
         }
+        loadGenerated();
+    }
+
+    // Ostinato: #allblocks. How many entries loadGenerated() added (0 before 26.3).
+    private static int generatedCount;
+
+    public static int generatedCount() {
+        return generatedCount;
+    }
+
+    /**
+     * Ostinato: #allblocks. Adds the vanilla recipes and natural self-dropping blocks from
+     * {@code allblocks/catalogue-26.3.txt} (made by tools/allblocks/gen_catalogue.py from the 26.3 client jar) for items
+     * the hand-written list above leaves out. A hand-written entry always wins. An entry is added only once every
+     * ingredient already has a task, so the file is applied in passes until nothing more resolves. 26.3 only: the
+     * recipes come from that version's data.
+     */
+    private static void loadGenerated() {
+        if (adris.altoclef.tasks.speedrun.testrun2.McCompat.gameMinor() < 26) return;
+        List<String[]> lines = new ArrayList<>();
+        try (java.io.InputStream in = TaskCatalogue.class.getResourceAsStream("/allblocks/catalogue-26.3.txt")) {
+            if (in == null) return;
+            java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(in, java.nio.charset.StandardCharsets.UTF_8));
+            for (String l; (l = r.readLine()) != null; ) {
+                if (l.startsWith("craft ") || l.startsWith("smelt ") || l.startsWith("mine ") || l.startsWith("kill ") || l.startsWith("shear ")) lines.add(l.trim().split(" "));
+            }
+        } catch (java.io.IOException | RuntimeException e) {
+            System.out.println("[allblocks] could not read the generated catalogue: " + e);
+            return;
+        }
+        boolean progress = true;
+        while (progress) {
+            progress = false;
+            for (Iterator<String[]> it = lines.iterator(); it.hasNext(); ) {
+                String[] p = it.next();
+                Item out = adris.altoclef.tasks.speedrun.testrun2.McCompat.item(p[1]);
+                if (out == null || itemToResourceTask.containsKey(out)) {
+                    it.remove();
+                    continue;
+                }
+                try {
+                    if (addGenerated(p, out)) {
+                        it.remove();
+                        generatedCount++;
+                        progress = true;
+                    }
+                } catch (RuntimeException e) {
+                    System.out.println("[allblocks] skipped generated line " + String.join(" ", p) + ": " + e);
+                    it.remove();
+                }
+            }
+        }
+    }
+
+    private static boolean addGenerated(String[] p, Item out) {
+        String name = nameToResourceTask.containsKey(p[1]) ? "generated_" + p[1] : p[1];
+        switch (p[0]) {
+            case "craft": {
+                int count = Integer.parseInt(p[2]);
+                boolean table = p[3].equals("3");
+                ItemTarget[] slots = new ItemTarget[p.length - 4];
+                for (int i = 0; i < slots.length; i++) {
+                    if (p[4 + i].equals("-")) {
+                        slots[i] = t(null);
+                        continue;
+                    }
+                    slots[i] = generatedIngredient(p[4 + i], 1);
+                    if (slots[i] == null) return false;
+                }
+                CraftingRecipe recipe = CraftingRecipe.newShapedRecipe(name, slots, count);
+                put(name, new Item[]{out}, c -> table
+                        ? new CraftInTableTask(new RecipeTarget(out, c, recipe))
+                        : new CraftInInventoryTask(new RecipeTarget(out, c, recipe)));
+                return true;
+            }
+            case "smelt": {
+                if (generatedIngredient(p[2], 1) == null) return false;
+                put(name, new Item[]{out}, c -> new SmeltInFurnaceTask(new SmeltTarget(new ItemTarget(out, c), generatedIngredient(p[2], c))));
+                return true;
+            }
+            case "mine": {
+                Block block = adris.altoclef.tasks.speedrun.testrun2.McCompat.block(p[2]);
+                if (block == null) return false;
+                mine(name, MiningRequirement.valueOf(p[3]), new Block[]{block}, out).forceDimension(Dimension.valueOf(p[4]));
+                return true;
+            }
+            case "shear": {
+                Block block = adris.altoclef.tasks.speedrun.testrun2.McCompat.block(p[2]);
+                if (block == null || !itemToResourceTask.containsKey(Items.SHEARS)) return false;
+                shear(name, block, out).dontMineIfPresent();
+                return true;
+            }
+            case "kill": {
+                EntityType<?> type = adris.altoclef.tasks.speedrun.testrun2.McCompat.entityType(p[2]);
+                if (type == null) return false;
+                //#if MC >= 12000
+                Class<?> cls = type.getBaseClass();
+                //#else
+                //$$ Class<?> cls = net.minecraft.entity.Entity.class; // no EntityType.getBaseClass before 1.20
+                //#endif
+                MOB_SOURCE.put(out, cls);
+                put(name, new Item[]{out}, c -> new KillAndLootTask(cls, e -> e.getType() == type, new ItemTarget(out, c)))
+                        .forceDimension(Dimension.valueOf(p[3]));
+                return true;
+            }
+            default:
+                return false;
+        }
+    }
+
+    /** First alternative that already has a task: a catalogue name ("planks") or an item id. Null when none has. */
+    private static ItemTarget generatedIngredient(String alternatives, int count) {
+        for (String alt : alternatives.split("\\|")) {
+            if (nameToResourceTask.containsKey(alt)) return new ItemTarget(alt, count);
+            Item item = adris.altoclef.tasks.speedrun.testrun2.McCompat.item(alt);
+            if (item != null && itemToResourceTask.containsKey(item)) return new ItemTarget(item, count);
+        }
+        return null;
     }
 
     private static CataloguedResource put(String name, Item[] matches, Function<Integer, ResourceTask> getTask) {
@@ -852,7 +986,21 @@ public class TaskCatalogue {
         return smith(name, new Item[]{match}, materials, tool);
     }
 
+    // MOB_SOURCE is declared with the other static fields. mob() below fills it.
+    // Ostinato: run48 maze fill rolled rotten_flesh on peaceful; no zombies spawn, so KillAndLootTask wandered.
+
+    /** Ostinato: true when the item has a catalogue task AND that task can produce it in the current world. */
+    public static boolean obtainableNow(Item item) {
+        if (!taskExists(item)) return false;
+        Class<?> src = MOB_SOURCE.get(item);
+        if (src == null) return true;
+        net.minecraft.world.World w = AltoClef.getInstance() == null ? null : AltoClef.getInstance().getWorld();
+        boolean peaceful = w != null && w.getDifficulty() == net.minecraft.world.Difficulty.PEACEFUL;
+        return !(peaceful && (net.minecraft.entity.mob.HostileEntity.class.isAssignableFrom(src) || SlimeEntity.class.isAssignableFrom(src)));
+    }
+
     private static CataloguedResource mob(String name, Item[] matches, Class mobClass) {
+        for (Item m : matches) MOB_SOURCE.put(m, mobClass); // Ostinato
         return put(name, matches, count -> new KillAndLootTask(mobClass, new ItemTarget(matches, count)));
     }
 
@@ -890,6 +1038,7 @@ public class TaskCatalogue {
         List<CataloguedResource> result = new ArrayList<>();
         for (WoodType woodType : WoodType.values()) {
             ItemHelper.WoodItems woodItems = ItemHelper.getWoodItems(woodType);
+            if (woodItems == null) continue; // Ostinato: wood type absent in this MC version
             Item match = getMatch.apply(woodItems);
             String cataloguedName = getCatalogueName.apply(woodItems);
             if (match == null) continue;

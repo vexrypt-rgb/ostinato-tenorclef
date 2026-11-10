@@ -22,7 +22,9 @@ import java.util.Optional;
  * <p>
  * Not useful for custom tasks.
  */
-public class CraftGenericManuallyTask extends Task {
+// Ostinato: marks the grid as in use, else ResourceTask's grid-clearing guard empties every half-filled 2x2 craft
+// and the craft ping-pongs forever (the only craft path on 1.21.2+).
+public class CraftGenericManuallyTask extends Task implements adris.altoclef.tasksystem.ITaskUsesCraftingGrid {
 
     private final RecipeTarget target;
 
@@ -74,7 +76,12 @@ public class CraftGenericManuallyTask extends Task {
         // We need 9 sticks
         // plank recipe results in 4 sticks
         // this means 3 planks per slot
-        int requiredPerSlot = (int) Math.ceil((double) target.getTargetCount() / target.getRecipe().outputCount());
+        // Ostinato: fill per slot for the items still to CRAFT (target - held), not the whole target. The collect step
+        // (CollectRecipeCataloguedResourcesTask / hasRecipeMaterialsOrTarget) gathers for target - held, so asking
+        // stone_pickaxe=2 while holding a worn one gathered 2 sticks but filled 2 per stick slot -> second stick slot
+        // never filled -> MoveItemToSlotTask "not enough item: stick" spam forever (#maze.tunnels run71).
+        int stillToCraft = Math.max(1, target.getTargetCount() - mod.getItemStorage().getItemCount(target.getOutputItem()));
+        int requiredPerSlot = (int) Math.ceil((double) stillToCraft / target.getRecipe().outputCount());
 
         // For each slot in table
         for (int craftSlot = 0; craftSlot < target.getRecipe().getSlotCount(); ++craftSlot) {

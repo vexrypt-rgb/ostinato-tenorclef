@@ -22,11 +22,14 @@ import baritone.pathing.movement.JumpFailures;
 import baritone.Baritone;
 import baritone.api.pathing.calc.IPath;
 import baritone.api.pathing.goals.Goal;
+import baritone.api.pathing.goals.TerminalCostGoal;
 import baritone.api.pathing.movement.ActionCosts;
 import baritone.api.utils.BetterBlockPos;
 import baritone.api.utils.SettingsUtil;
 import baritone.pathing.calc.openset.BinaryHeapOpenSet;
 import baritone.pathing.movement.CalculationContext;
+import baritone.pathing.legato.LegatoFeasibility;
+import baritone.pathing.legato.LegatoStats;
 import baritone.pathing.movement.Moves;
 import baritone.pathing.movement.movements.MovementTas;
 import baritone.pathing.CostCalibration;
@@ -87,15 +90,33 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
         this.heuristicWeight = heuristicWeight * (1 + Baritone.settings().pathTieBreak.value);
     }
 
+    /** Ostinato Legato: a Theta* line must save at least this much over the grid edge, so collinear moves stay. */
+    static final double THETA_MIN_SAVING = 0.05;
+
+    /** Ostinato Legato: the moves Theta* may turn into a straight line from the grandparent: flat walking only. */
+    static boolean[] flatWalkMoves(Moves[] moves) {
+        boolean[] flat = new boolean[moves.length];
+        for (int i = 0; i < moves.length; i++) {
+            String n = moves[i].name();
+            flat[i] = moves[i].yOffset == 0 && !moves[i].dynamicXZ
+                    && (n.startsWith("TRAVERSE_") || n.startsWith("DIAGONAL_") || n.startsWith("LINE_"));
+        }
+        return flat;
+    }
+
     @Override
     protected Optional<IPath> calculate0(long primaryTimeout, long failureTimeout) {
+        // Ostinato: piCheapPathing only. Off, begin/end do nothing and the open set is a fresh heap.
+        calcContext.beginPiCheap(piCheap);
+        BinaryHeapOpenSet openSet = null;
+        try {
         int minY = calcContext.minY;
         calcContext.lazyJumps = Baritone.settings().lazyJumpChecks.value;
         int height = calcContext.maxY;
         startNode = getNodeAtPosition(startX, startY, startZ, BetterBlockPos.longHash(startX, startY, startZ));
         startNode.cost = 0;
         startNode.combinedCost = heuristicWeight * startNode.estimatedCostToGoal; // Ostinato: weighted (weight 1 = stock)
-        BinaryHeapOpenSet openSet = new BinaryHeapOpenSet();
+        openSet = piCheap ? BinaryHeapOpenSet.pooled() : new BinaryHeapOpenSet();
         openSet.insert(startNode);
         double[] bestHeuristicSoFar = new double[COEFFICIENTS.length];//keep track of the best node by the metric of (estimatedCostToGoal + cost / COEFFICIENTS[i])
         for (int i = 0; i < bestHeuristicSoFar.length; i++) {
@@ -127,6 +148,13 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
         for (int i = 0; i < allMoves.length; i++) {
             moveScale[i] = CostCalibration.scale(allMoves[i].family());
         }
+        // Ostinato Legato: any-angle (Theta*) parents on flat walking moves, legatoSearch only
+        boolean theta = calcContext.legatoSearch;
+        boolean[] flatWalk = theta ? flatWalkMoves(allMoves) : null;
+        double linePerBlock = LegatoFeasibility.perBlock(calcContext);
+        LegatoFeasibility.Result lineCheck = theta ? new LegatoFeasibility.Result() : null;
+        // Ostinato Cadenza: a goal whose cells cost differently once reached (null: every goal cell ends the search)
+        TerminalCostGoal terminalGoal = goal instanceof TerminalCostGoal tg ? tg : null;
         while (!openSet.isEmpty() && numEmptyChunk < pathingMaxChunkBorderFetch && !cancelRequested) {
             if ((numNodes & (timeCheckInterval - 1)) == 0) { // only call this once every 64 nodes (about half a millisecond)
                 long now = System.currentTimeMillis(); // since nanoTime is slow on windows (takes many microseconds)
@@ -148,12 +176,14 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
                 // usual; otherwise it goes back in at whatever it is worth now (its checked cost or the next offer).
                 PendingOffer o = currentNode.pending;
                 currentNode.pending = o.next;
+                o.next = null;
                 double v = o.check.verify();
                 double checked = v >= ActionCosts.COST_INF ? ActionCosts.COST_INF : o.cost + (v - o.raw) * o.mult;
                 if (currentNode.cost - checked > minimumImprovement) {
                     currentNode.cost = checked;
                     currentNode.previous = o.prev;
-                    prune(currentNode, minimumImprovement);
+                    currentNode.legato = false;
+                    recycleOffer(prune(currentNode, minimumImprovement));
                     if (noteBest(currentNode, bestHeuristicSoFar, minimumImprovement)) {
                         failing = false;
                     }
@@ -162,18 +192,39 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
                     double key = currentNode.pending != null ? currentNode.pending.cost : currentNode.cost;
                     if (currentNode.pending != null || currentNode.expandedCost - currentNode.cost > minimumImprovement) {
                         if (key < ActionCosts.COST_INF) {
-                            currentNode.combinedCost = key + heuristicWeight * currentNode.estimatedCostToGoal;
+                            currentNode.combinedCost = key + heuristicWeight * currentNode.estimatedCostToGoal
+                                    + (currentNode.terminalPaidAt == key ? currentNode.terminalCharge : 0); // Cadenza: keep a paid charge
                             openSet.insert(currentNode);
                         }
                     }
+                    recycleOffer(o);
                     continue;
                 }
+                recycleOffer(o);
             }
+            boolean wasExpanded = currentNode.expandedCost == currentNode.cost;
             currentNode.expandedCost = currentNode.cost;
+            double charge = 0;
             if (goal.isInGoal(currentNode.x, currentNode.y, currentNode.z)) {
-                logDebug(profileLine(numNodes, numMovementsConsidered, numRejected, numEmptyChunk, numFavored));
-                logDebug("Took " + (System.currentTimeMillis() - startTime) + "ms, " + numMovementsConsidered + " movements considered");
-                return Optional.of(new Path(realStart, startNode, currentNode, numNodes, goal, calcContext));
+                // Ostinato Cadenza: a terminal cost is charged on the first pop (the cell goes back in at cost + charge)
+                // and the search only ends here once it pops the cell again with that charge paid. Charge 0 (or a
+                // plain goal) ends it at once, exactly as before.
+                PathNode from = currentNode.previous == null ? currentNode : currentNode.previous; // Cadenza v2: arrival heading
+                charge = terminalGoal == null ? 0 : terminalGoal.terminalCost(currentNode.x, currentNode.y, currentNode.z, from.x, from.y, from.z);
+                if (!(charge > 0) || currentNode.terminalPaidAt == currentNode.cost) {
+                    logDebug(profileLine(numNodes, numMovementsConsidered, numRejected, numEmptyChunk, numFavored));
+                    logDebug("Took " + (System.currentTimeMillis() - startTime) + "ms, " + numMovementsConsidered + " movements considered");
+                    return Optional.of(new Path(realStart, startNode, currentNode, numNodes, goal, calcContext));
+                }
+                currentNode.terminalPaidAt = currentNode.cost;
+                currentNode.terminalCharge = charge;
+                baritone.pathing.cadenza.CadenzaStats.terminalCharge();
+            }
+            if (charge > 0 && wasExpanded) {
+                // popped again at a cost already expanded (its charge went stale): only the charge needs re-queuing
+                currentNode.combinedCost = currentNode.cost + heuristicWeight * currentNode.estimatedCostToGoal + charge;
+                openSet.insert(currentNode);
+                continue;
             }
             for (Moves moves : allMoves) {
                 int newX = currentNode.x + moves.xOffset;
@@ -190,6 +241,14 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
                 }
                 if (currentNode.y + moves.yOffset > height || currentNode.y + moves.yOffset < minY) {
                     continue;
+                }
+                // Ostinato: a positive-cost edge cannot improve a node already reached for the same or less.
+                // Fixed-offset moves only; a dynamic landing is not known until the move runs.
+                if (piCheap && !moves.dynamicXZ && !moves.dynamicY) {
+                    PathNode have = peekNodeAtPosition(newX, currentNode.y + moves.yOffset, newZ);
+                    if (have != null && have.cost <= currentNode.cost && (!isFavoring || have.favor > 0)) {
+                        continue;
+                    }
                 }
                 res.reset();
                 moves.apply(calcContext, currentNode.x, currentNode.y, currentNode.z, res);
@@ -255,9 +314,29 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
                     actionCost *= neighbor.favor;
                 }
                 double tentativeCost = currentNode.cost + actionCost;
+                PathNode parent = currentNode;
+                boolean line = false;
+                if (theta && res.check == null && flatWalk[moves.ordinal()] && res.y == currentNode.y) {
+                    // Theta*: straight from the grandparent when the swept box fits and that is strictly cheaper
+                    PathNode p = currentNode.previous;
+                    if (p != null && p.y == res.y && Math.abs(res.x - p.x) <= LegatoFeasibility.MAX_SPAN
+                            && Math.abs(res.z - p.z) <= LegatoFeasibility.MAX_SPAN) {
+                        double straight = p.cost + Math.hypot(res.x - p.x, res.z - p.z) * linePerBlock
+                                * moveScale[moves.ordinal()] * (isFavoring ? neighbor.favor : 1);
+                        if (straight < tentativeCost - THETA_MIN_SAVING && neighbor.cost - straight > minimumImprovement) {
+                            boolean ok = LegatoFeasibility.evaluate(calcContext, p.x, p.y, p.z, res.x, res.z, lineCheck).feasible();
+                            LegatoStats.thetaCheck(ok);
+                            if (ok) {
+                                tentativeCost = straight;
+                                parent = p;
+                                line = true;
+                            }
+                        }
+                    }
+                }
                 if (res.check != null) {
                     // Ostinato: an unchecked move: queued on the node, which keeps its checked cost and parent for now
-                    if (neighbor.cost - tentativeCost > minimumImprovement && offer(neighbor, new PendingOffer(tentativeCost, res.cost, actionCost / res.cost, currentNode, res.check))) {
+                    if (neighbor.cost - tentativeCost > minimumImprovement && offer(neighbor, freshOffer(tentativeCost, res.cost, actionCost / res.cost, currentNode, res.check))) {
                         neighbor.combinedCost = neighbor.pending.cost + heuristicWeight * neighbor.estimatedCostToGoal;
                         if (neighbor.isOpen()) {
                             openSet.update(neighbor);
@@ -268,9 +347,10 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
                     continue;
                 }
                 if (neighbor.cost - tentativeCost > minimumImprovement) {
-                    neighbor.previous = currentNode;
+                    neighbor.previous = parent;
+                    neighbor.legato = line;
                     neighbor.cost = tentativeCost;
-                    prune(neighbor, minimumImprovement); // Ostinato: offers no cheaper than this need no check
+                    recycleOffer(prune(neighbor, minimumImprovement)); // Ostinato: offers no cheaper than this need no check
                     neighbor.combinedCost = (neighbor.pending != null ? neighbor.pending.cost : tentativeCost) + heuristicWeight * neighbor.estimatedCostToGoal; // Ostinato: weighted (weight 1 = stock)
                     if (neighbor.isOpen()) {
                         openSet.update(neighbor);
@@ -280,6 +360,15 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
                     if (noteBest(neighbor, bestHeuristicSoFar, minimumImprovement)) {
                         failing = false;
                     }
+                }
+            }
+            if (charge > 0) {
+                // Ostinato Cadenza: back in at its cost plus the terminal charge; stops the search when popped again
+                currentNode.combinedCost = currentNode.cost + heuristicWeight * currentNode.estimatedCostToGoal + charge;
+                if (currentNode.isOpen()) {
+                    openSet.update(currentNode);
+                } else {
+                    openSet.insert(currentNode);
                 }
             }
         }
@@ -298,7 +387,42 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
             logDebug("Took " + (System.currentTimeMillis() - startTime) + "ms, " + numMovementsConsidered + " movements considered");
         }
         return result;
+        } finally {
+            if (openSet != null) {
+                openSet.release();
+            }
+            calcContext.endPiCheap(piCheap);
+        }
     }
+
+    /** Ostinato: a recycled unchecked offer, or a new one when piCheapPathing is off or the free list is empty. */
+    private PendingOffer freshOffer(double cost, double raw, double mult, PathNode prev, baritone.utils.pathing.LazyCheck check) {
+        if (!piCheap || freeOffers == null) {
+            return new PendingOffer(cost, raw, mult, prev, check);
+        }
+        PendingOffer o = freeOffers;
+        freeOffers = o.next;
+        o.set(cost, raw, mult, prev, check);
+        return o;
+    }
+
+    /** Ostinato: return offers to the free list. No-op while piCheapPathing is off, so those offers are collected as before. */
+    private void recycleOffer(PendingOffer o) {
+        if (!piCheap || o == null) {
+            return;
+        }
+        while (o != null) {
+            PendingOffer n = o.next;
+            o.prev = null;
+            o.check = null;
+            o.next = freeOffers;
+            freeOffers = o;
+            o = n;
+        }
+    }
+
+    /** Ostinato: offers waiting to be reused during this search. */
+    private PendingOffer freeOffers;
 
     /**
      * Ostinato: max unchecked offers queued on one node; a costlier one is dropped, for good. Four lost cubed level 7's
@@ -317,6 +441,7 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
         }
         if (n >= MAX_PENDING) {
             lossy = true;
+            recycleOffer(o);
             return false;
         }
         o.next = at;
@@ -328,15 +453,17 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
         for (PendingOffer e = o; e.next != null; e = e.next) {
             if (++n >= MAX_PENDING) {
                 lossy = true;
+                PendingOffer drop = e.next;
                 e.next = null;
+                recycleOffer(drop);
                 break;
             }
         }
         return true;
     }
 
-    /** Drops queued offers no cheaper than the node's checked cost. */
-    private static void prune(PathNode node, double minimumImprovement) {
+    /** Drops queued offers no cheaper than the node's checked cost. Returns the dropped chain, or null. */
+    private static PendingOffer prune(PathNode node, double minimumImprovement) {
         PendingOffer prev = null;
         for (PendingOffer e = node.pending; e != null; prev = e, e = e.next) {
             if (!(node.cost - e.cost > minimumImprovement)) {
@@ -345,9 +472,10 @@ public final class AStarPathFinder extends AbstractNodeCostSearch {
                 } else {
                     prev.next = null;
                 }
-                return;
+                return e;
             }
         }
+        return null;
     }
 
     /** Updates the best node by each coefficient; true when one of them is past MIN_DIST_PATH from the start. */

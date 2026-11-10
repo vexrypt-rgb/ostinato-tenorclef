@@ -48,26 +48,36 @@ public final class SettingCategorizer {
         put(m, BUILDING, "acceptableThrowawayItems", "allowPlace", "blockPlacementPenalty", "okIfAir", "okIfWater",
                 "incorrectSize", "distanceTrim", "mapArtMode", "startAtLayer", "layerOrder", "layerHeight", "skipFailedLayers",
                 "breakFromAbove", "goalBreakFromAbove", "placeIncorrectBlockPenaltyMultiplier",
-                "breakCorrectBlockPenaltyMultiplier", "backfill");
+                "breakCorrectBlockPenaltyMultiplier", "backfill",
+                "mazeMode", "mazeSeed", "mazeMinActionDelay", "mazeMaxActionDelay", "mazeActionJitter", "mazeMapFile", "mazeDepthY");
         put(m, WATER_AIR, "allowDoorAirPockets", "allowBoats", "allowBoatFall", "maxFallHeightBoat", "walkOnWaterOnePenalty",
                 "assumeWalkOnWater", "strictLiquidCheck", "allowWaterBucketFall", "maxFallHeightBucket",
                 "allowPlaceInFluidsSource", "allowPlaceInFluidsFlow", "sprintInWater", "swimInWater", "allowMountClutch", "allowSteeredFalls");
         put(m, RENDER, "yLevelBoxSize", "fadePath", "cachedChunksOpacity");
-        put(m, MOVEMENT, "freeLook", "humanInputCaps", "maxYawPerTick", "maxPitchPerTick", "blockFreeLook", "smoothLook", "smoothLookTicks", "frameLook", "humanLookEverywhere", "parkourTurnCap", "analogMovement", "randomLooking", "randomLooking113",
+        put(m, MOVEMENT, "freeLook", "humanInputCaps", "maxYawPerTick", "maxPitchPerTick", "physicalInput", "inputArbitration", "latticeExperiment", "predictionTolerance", "unifiedExecutor", "blockFreeLook", "smoothLook", "smoothLookTicks", "frameLook", "humanLookEverywhere", "parkourTurnCap", "analogMovement", "randomLooking", "randomLooking113",
                 "remainWithExistingLookDirection", "antiCheatCompatibility", "kinematicTravel", "slowKinematic", "headSteering", "pathWander", "physicsTravel",
+                "travelStack", "simTravel",
                 "nativeAcceleration", "pitfallAvoidance", "jumpPenalty", "overshootTraverse", "freecamSpeed", "freecamKey", "enemyMobs",
-                "allowNeos", "kinematicTrace", "allowLadderClutch", "pickupLadders", "experimentalMovement", "experimentalJumpBias",
-                "experimentalBlockPlacementPenalty", "experimentalMinHealth", "fallDamageCost");
+                "allowNeos", "kinematicTrace", "presto", "prestoPhysicsCheck", "prestoDebug", "legato", "legatoSmoothing", "legatoSearch", "legatoDebug", "kinematicLine", "cadenza", "cadenzaMaxTargets", "cadenzaShortHorizon", "cadenzaBuilder", "cadenzaTurnAware", "cadenzaBatch", "cadenzaDebug", "maestro", "maestroTurnCost", "maestroMaxStates", "simEdgeSearch", "simEdgeMaxStates", "simEdgeHorizon", "allowLadderClutch", "pickupLadders", "allowGodBridge", "experimentalMovement", "experimentalJumpBias",
+                "experimentalBlockPlacementPenalty", "experimentalMinHealth", "fallDamageCost", "fastMode", "fastModeMinHealth");
         put(m, PATHING, "seedPlanning", "seedPlanningSeed", "blocksToAvoid", "disconnectOnArrival", "axisHeight", "followRadius", "doBedWaypoints",
-                "doDeathWaypoints", "considerPotionEffects", "enterPortal", "rightClickContainerOnArrival", "blocksToAvoidStandingOn");
+                "doDeathWaypoints", "considerPotionEffects", "enterPortal", "rightClickContainerOnArrival", "verifiedGetToBlock", "blocksToAvoidStandingOn");
         put(m, CHAT, "censorCoordinates", "censorRanCommands", "prefix", "prefixControl", "toastTimer", "logAsToast",
                 "verboseCommandExceptions", "desktopNotifications", "echoCommands", "shortBaritonePrefix", "useMessageTag");
         put(m, ADVANCED, "cutoffAtLoadBoundary", "simplifyUnloadedYCoord", "movementFault", "pvpAutotune", "pvpAutotuneMode",
                 "spectateLearn", "spectateLearnOnServers", "spectateAutoDetect", "spectateSaveLogs", "spectateRadius", "spectateBudgetMs", "spectateKitDetect", "spectateLearnKits", "spectateFightTypes", "spectateLearnLateFights", "sparSeedPriors", "spectateLearnSuspectedCheats", "autoSpectateServer", "autoSpectateMinutes", "autoSpectateHoverMinMs", "autoSpectateHoverMaxMs", "autoSpectateClickGapMinMs", "autoSpectateClickGapMaxMs", "autoSpectateReadMinMs", "autoSpectateReadMaxMs", "autoSpectateKeyMinMs", "autoSpectateKeyMaxMs", "autoSpectateThinkMinMs", "autoSpectateThinkMaxMs", "healthEstimator",
-                "testHarness"); // Ostinato: pvpAutotuneMode, spectator learning (with kit detection and fight types), health estimator, testHarness
+                "testHarness",
+                "trainingTask", "trainingLegit", "compassFollow", "trainingSeed", "trainingTasks", "trainingModel", "trainingModelFile", "trainingOutDir", "trainingGearChoice", "raceEveryBlockItem",
+                "overnightRaces", "overnightEveryBlockItem", "overnightDir", "overnightTimeoutMs",
+                "agentApi", "agentChat", "agentProvider", "agentBaseUrl", "agentModel", "agentApiKey",
+                "agentDryRun", "agentOwnerOnly", "agentOwner", "agentKeyFile", "agentOneSession", "agent429ToOllama",
+                "agentMemory", "agentTools", "agentRouteDir",
+                "secondoEnabled", "secondoFollowDistance", "secondoAssist", "secondoAssistRadius", "secondoAssistStand",
+                "secondoPickup", "secondoPickupRadius", "secondoCombatAssist"); // Ostinato: testHarness, legit track, compass follow, gear choice, every-block race, agent API, Secondo
         put(m, INTERFACE, "guiKeybind", "renderPathHud", "pathHudAnchor", "guiAccentColor", "guiTheme", "renderAcsHud", "acsHudAnchor", "acsHudOpacity", "acsHudScale");
         OVERRIDES = Collections.unmodifiableMap(m);
 
+        rule("^maze", BUILDING);
         rule("^swarm", SWARM);
         rule("^elytra", ELYTRA);
         rule("^(color|render)|Render|Opacity$|LineWidth|^selection", RENDER);

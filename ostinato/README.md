@@ -220,14 +220,24 @@ Beyond upstream Baritone, Ostinato adds:
     (`MovementClimbJump`).
   - **Chained jumps** (`allowMomentumJumps`, on by default): two jumps through a one block pad, landing
     with the speed the next jump needs, for gaps no single jump makes (`MovementChainJump`).
-  - **Ladder clutch** (`allowLadderClutch`, off by default): survive a long fall by placing a ladder or
-    vine on a wall beside the last blocks of it, then pick the ladder back up (`pickupLadders`). Needs
-    one on the hotbar; a water bucket is still preferred when it is no more expensive.
+  - **Ladder clutch** (`allowLadderClutch`, off by default): survive a long fall by grabbing a ladder or
+    vine already in the column, or by placing one on a wall beside the last blocks, then pick the ladder
+    back up (`pickupLadders`). Placing needs one on the hotbar; a water bucket is still preferred when it
+    is no more expensive. Off, an existing ladder is caught only from a drop of 11 blocks or less.
+  - **God bridge** (`allowGodBridge`, off by default): when a bridge can only be placed against the block
+    underfoot, turn around and walk backward, clicking that far face instead of sneaking. The planner
+    prices it as a walk. Off, the sneak and its cost are unchanged. See `docs/god-bridge.md`.
   - **Experimental movement** (`experimentalMovement`): a preset, not a settings rewrite. Parkour,
     neos, momentum and climb jumps, diagonals and `kinematicTravel` act as if on, jumps cost
     `experimentalJumpBias` times as much, block placement at most `experimentalBlockPlacementPenalty`,
     and falls that hurt are taken when nothing protects you and you stay above `experimentalMinHealth`.
     Turning it off hands your own settings back.
+  - **fastMode** (`fastMode`, off by default): a speedrunner preset that does not rewrite your settings.
+    Parkour (including a placed landing, neos, momentum, climb and head-hitter jumps), diagonals, sprint
+    jumping, ladder clutch, swimming, boats and an elytra takeoff from the ground behave as if on. Jumps
+    use `experimentalJumpBias`, placement is capped by `experimentalBlockPlacementPenalty`, and a hurting
+    fall stops at `fastModeMinHealth`. Straight runs aim ahead and shallow corners are cut. God bridging,
+    kinematic travel and the TAS jump search stay on their own settings. See `docs/fast-mode.md`.
 - **Checking the simulation** (`kinematicTrace`, off by default): while a jump, climb jump or chain flies,
   every tick compares the real player with `PlayerSim`'s prediction and logs `SIMTRACE` lines (per-tick
   rows in `simtrace/simtrace.csv`, one summary per movement in `simtrace/summary.csv`): the one-tick

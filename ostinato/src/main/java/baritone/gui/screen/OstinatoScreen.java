@@ -185,7 +185,7 @@ public final class OstinatoScreen extends Screen {
         super(Component.literal("Ostinato"));
         Map<String, String> docs = SettingDescriptions.get();
         for (Settings.Setting<?> s : settings.allSettings) {
-            if (s.isJavaOnly() || !editable(s)) {
+            if (s.isJavaOnly() || !editable(s) || SettingsUtil.isUnlistedSetting(s.getName())) { // Ostinato: maze stays secret
                 continue; // callbacks and other values without a text form cannot be edited here
             }
             Entry e = new Entry(s, docs.get(s.getName().toLowerCase(Locale.ROOT)));
@@ -330,6 +330,11 @@ public final class OstinatoScreen extends Screen {
         try {
             if (e.kind == Kind.COLOR && e.s.value instanceof Color) {
                 return String.format("#%06X", ((Color) e.s.value).getRGB() & 0xFFFFFF);
+            }
+            // Ostinato: the settings screen shows agentApiKey as (hidden).
+            if (SettingsUtil.isSecretSetting(e.s.getName())) {
+                Object secret = e.s.value;
+                return secret == null || String.valueOf(secret).isBlank() ? "" : "(hidden)";
             }
             return SettingsUtil.settingValueToString(e.s);
         } catch (Throwable t) {
@@ -1697,6 +1702,11 @@ public final class OstinatoScreen extends Screen {
     public boolean keyPressed(net.minecraft.client.input.KeyEvent ev) {
         int key = ev.key();
         curKey = ev;
+        if (konami.feed(key)) { // Ostinato: secret maze toggle, never consumes the key
+            boolean on = !Baritone.settings().mazeMode.value;
+            Baritone.settings().mazeMode.value = on;
+            baritone.api.utils.Helper.HELPER.logDirect(on ? "The walls hum." : "The hum fades.");
+        }
         if (closing) {
             return true;
         }
@@ -1799,6 +1809,9 @@ public final class OstinatoScreen extends Screen {
     }
 
     private net.minecraft.client.input.KeyEvent curKey;
+    private final baritone.maze.KonamiCode konami = new baritone.maze.KonamiCode(
+            InputConstants.KEY_UP, InputConstants.KEY_DOWN, InputConstants.KEY_LEFT, InputConstants.KEY_RIGHT,
+            InputConstants.KEY_B, InputConstants.KEY_A); // Ostinato: maze easter egg
 
     private int accentOrMuted() {
         return Theme.accent();

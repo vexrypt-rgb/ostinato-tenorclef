@@ -6,3 +6,11 @@ out/
 .idea/
 run/
 tenorclef/versions/*/build/
+
+# run output and caches
+tenorclef/versions/*/logs/
+tenorclef/versions/*/altoclef/
+__pycache__/
+*.pyc
+hs_err_pid*.log
+replay_pid*.log

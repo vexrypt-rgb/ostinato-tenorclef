@@ -17,6 +17,8 @@
 
 package baritone.behavior;
 
+import baritone.pathing.kinematic.KinematicController;
+import baritone.pathing.decide.PathDecisionMatrix;
 import baritone.pathing.calc.HierarchicalPathFinder;
 import baritone.pathing.calc.hierarchy.SectionGraph;
 import baritone.pathing.seed.SeedPlanning;
@@ -25,6 +27,7 @@ import baritone.utils.fault.FaultBook;
 import baritone.Baritone;
 import baritone.api.behavior.IPathingBehavior;
 import baritone.api.event.events.*;
+import baritone.api.event.events.type.EventState;
 import baritone.api.pathing.calc.IPath;
 import baritone.api.pathing.goals.Goal;
 import baritone.api.pathing.goals.GoalXZ;
@@ -34,10 +37,14 @@ import baritone.api.utils.Helper;
 import baritone.api.utils.PathCalculationResult;
 import baritone.api.utils.interfaces.IGoalRenderPos;
 import baritone.pathing.calc.AStarPathFinder;
+import baritone.pathing.calc.MaestroPathFinder;
+import baritone.pathing.calc.SimEdge;
+import baritone.pathing.calc.SimEdgePathFinder;
 import baritone.pathing.calc.AbstractNodeCostSearch;
 import baritone.pathing.movement.CalculationContext;
 import baritone.pathing.movement.MovementHelper;
 import baritone.pathing.path.PathExecutor;
+import baritone.pathing.unified.UnifiedExecutor;
 import baritone.utils.PathRenderer;
 import baritone.utils.PathingCommandContext;
 import baritone.utils.pathing.Favoring;
@@ -70,6 +77,11 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
     private boolean pauseRequestedLastTick;
     private boolean unpausedLastTick;
     private boolean pausedThisTick;
+    // Ostinato: Grace Note's emergency hold (see requestEmergencyHold): who asked this tick, and whether it held
+    private String emergencyOwner;
+    private boolean emergencyHeldThisTick;
+    // Packet callbacks may run on the network thread; consume the signal before client-thread auditing.
+    private volatile boolean prestoCorrection;
     private boolean cancelRequested;
     private boolean calcFailedLastTick;
 
@@ -168,12 +180,21 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
         // Ostinato: install or clear the seed terrain predictor (setting seedPlanning, off by default)
         SeedPlanning.sync(ctx.minecraft(), event.getType() == TickEvent.Type.OUT ? null : ctx.world());
         if (event.getType() == TickEvent.Type.OUT) {
+            prestoCorrection = false;
+            KinematicController.invalidatePresto(ctx, false);
+            emergencyOwner = null; // Ostinato: no hold outlives the world it was asked in
+            emergencyHeldThisTick = false;
             secretInternalSegmentCancel();
             baritone.getPathingControlManager().cancelEverything();
             return;
         }
 
         expectedSegmentStart = pathStart();
+        if (prestoCorrection) {
+            prestoCorrection = false;
+            KinematicController.invalidatePresto(ctx, true);
+        }
+        KinematicController.audit(baritone); // Ostinato Presto: validate ownership before observing a landing
         baritone.getPathingControlManager().preTick();
         tickPath();
         ticksElapsedSoFar++;
@@ -189,11 +210,37 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
 
     private void tickPath() {
         pausedThisTick = false;
+        emergencyHeldThisTick = false;
+        if (emergencyOwner != null) {
+            // Ostinato: an emergency hold stops the executor even mid-movement, where requestPause waits for a safe point:
+            // its owner has already decided the movement cannot be left to run (an unplanned fall). Asked again every
+            // tick it is still needed, so a forgotten request lasts one tick. Any ordinary pause asked for meanwhile is
+            // used up here rather than replayed a tick after the hold ends.
+            if (unpausedLastTick) {
+                logDebug("Emergency hold by " + emergencyOwner);
+                baritone.getInputOverrideHandler().clearAllKeys();
+                baritone.getInputOverrideHandler().getBlockBreakHelper().stopBreakingBlock();
+            }
+            UnifiedExecutor ux = unified();
+            if (ux != null) {
+                ux.emergency(); // Ostinato 2.0 Phase 06: takes the lease from the physics driver, then lets go
+            }
+            emergencyOwner = null;
+            pauseRequestedLastTick = false;
+            unpausedLastTick = false;
+            pausedThisTick = true;
+            emergencyHeldThisTick = true;
+            return;
+        }
         if (pauseRequestedLastTick && (safeToCancel || current != null && current.pausableNow())) {
             pauseRequestedLastTick = false;
             if (unpausedLastTick) {
                 baritone.getInputOverrideHandler().clearAllKeys();
                 baritone.getInputOverrideHandler().getBlockBreakHelper().stopBreakingBlock();
+            }
+            UnifiedExecutor ux = unified();
+            if (ux != null) {
+                ux.cancelConfirmed(UnifiedExecutor.Cause.PAUSE); // Ostinato 2.0 Phase 06: the pause has the controls
             }
             unpausedLastTick = false;
             pausedThisTick = true;
@@ -203,6 +250,10 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
         if (cancelRequested) {
             cancelRequested = false;
             baritone.getInputOverrideHandler().clearAllKeys();
+            UnifiedExecutor ux = unified();
+            if (ux != null) {
+                ux.cancelConfirmed(UnifiedExecutor.Cause.SOFT_CANCEL); // Ostinato 2.0 Phase 06: keys cleared just above
+            }
         }
         synchronized (pathPlanLock) {
             synchronized (pathCalcLock) {
@@ -231,10 +282,15 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
                 return;
             }
             if (current.failed() || current.finished()) {
+                UnifiedExecutor ux = unified();
+                boolean segmentFinished = ux != null && current.finished(); // Ostinato 2.0 Phase 06: read before current goes
                 current = null;
                 // The last tick's forced keys (e.g. the kinematic controller's MOVE_FORWARD) would otherwise outlive
                 // the path: inControl() stays true while any key is forced, so W would stay held with nothing driving.
                 baritone.getInputOverrideHandler().clearAllKeys();
+                if (ux != null) {
+                    ux.segmentEnded(segmentFinished); // Ostinato 2.0 Phase 06: keys cleared just above
+                }
                 if (goal == null || goal.isInGoal(ctx.playerFeet())) {
                     logDebug("All done. At " + goal);
                     queuePathEvent(PathEvent.AT_GOAL);
@@ -411,11 +467,61 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
         pauseRequestedLastTick = true;
     }
 
+    /**
+     * Ostinato: hold the path executor this tick whatever it is doing (see tickPath). For Grace Note only; it has to
+     * come before this behavior's tick, and it is asked for again each tick the hold is still wanted.
+     */
+    public void requestEmergencyHold(String owner) {
+        emergencyOwner = owner;
+        KinematicController.invalidatePresto(ctx, false);
+    }
+
+    @Override
+    public void onReceivePacket(PacketEvent event) {
+        if (event.getState() == EventState.PRE
+                && event.getPacket() instanceof net.minecraft.network.protocol.game.ClientboundPlayerPositionPacket) {
+            prestoCorrection = true;
+        }
+    }
+
+    @Override
+    public void onWorldEvent(WorldEvent event) {
+        KinematicController.invalidatePresto(ctx, false);
+        UnifiedExecutor ux = unified();
+        if (ux != null) {
+            ux.worldChanged(); // Ostinato 2.0 Phase 06: before the arbiter drops every lease
+        }
+        baritone.getInputArbiter().releaseAll(); // Ostinato: disconnect or world change ends every lease
+        prestoCorrection = false;
+    }
+
+    /** Ostinato: whether the executor was held by an emergency hold on the last tickPath. */
+    public boolean emergencyHeldThisTick() {
+        return emergencyHeldThisTick;
+    }
+
+    /** Ostinato 2.0 Phase 06: the physics driver's input ownership, or null while unifiedExecutor is off. */
+    private UnifiedExecutor unified() {
+        return Baritone.settings().unifiedExecutor.value ? baritone.getUnifiedExecutor() : null;
+    }
+
+    /**
+     * Ostinato 2.0 Phase 06: a cancel was refused because the executor is mid-movement. Asked again the next tick, the
+     * physics driver stops at its next footing so the cancel can go through (see PhysicsTravel). No-op with the flag off.
+     */
+    private void cancelRefused() {
+        UnifiedExecutor ux = unified();
+        if (ux != null) {
+            ux.cancelRefused();
+        }
+    }
+
     public boolean cancelSegmentIfSafe() {
         if (isSafeToCancel()) {
             secretInternalSegmentCancel();
             return true;
         }
+        cancelRefused();
         return false;
     }
 
@@ -424,6 +530,13 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
         boolean doIt = isSafeToCancel();
         if (doIt) {
             secretInternalSegmentCancel();
+        } else {
+            cancelRefused();
+            UnifiedExecutor ux = unified();
+            if (ux != null) {
+                // onLostControl below may clear every key; the driver gives up its lease first, so none goes up behind it
+                ux.processesCancelled();
+            }
         }
         baritone.getPathingControlManager().cancelEverything(); // regardless of if we can stop the current segment, we can still stop the processes
         return doIt;
@@ -514,10 +627,12 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
         synchronized (pathPlanLock) {
             getInProgress().ifPresent(AbstractNodeCostSearch::cancel); // only cancel ours
             if (!isSafeToCancel()) {
+                cancelRefused();
                 return;
             }
             current = null;
             next = null;
+            KinematicController.invalidatePresto(ctx, false);
         }
         cancelRequested = true;
         // do everything BUT clear keys
@@ -525,10 +640,15 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
 
     // just cancel the current path
     public void secretInternalSegmentCancel() {
+        KinematicController.invalidatePresto(ctx, false);
         queuePathEvent(PathEvent.CANCELED);
         synchronized (pathPlanLock) {
             getInProgress().ifPresent(AbstractNodeCostSearch::cancel);
             if (current != null) {
+                current.releaseInputLeases();
+                if (next != null) {
+                    next.releaseInputLeases();
+                }
                 current = null;
                 next = null;
                 baritone.getInputOverrideHandler().clearAllKeys();
@@ -822,6 +942,40 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
         return blocks >= Baritone.settings().pathingFarSegmentDistance.value ? w : 1;
     }
 
+    /** Ostinato: the decision matrix's backend for this segment, or null (off, no file, thin row). */
+    static PathDecisionMatrix.Action decide(Goal goal, BlockPos start, CalculationContext context) {
+        if (!Baritone.settings().pathDecisionMatrix.value || !(goal instanceof IGoalRenderPos rp)) {
+            return null;
+        }
+        java.nio.file.Path file = net.minecraft.client.Minecraft.getInstance().gameDirectory.toPath()
+                .resolve(Baritone.settings().pathDecisionMatrixFile.value);
+        var m = PathDecisionMatrix.active(file);
+        if (m == null) {
+            return null;
+        }
+        BlockPos g = rp.getGoalPos();
+        double blocks = goal.heuristic(start.getX(), start.getY(), start.getZ()) / Baritone.settings().costHeuristic.value;
+        return m.choose(PathDecisionMatrix.categorize(context, start.getX(), start.getY(), start.getZ(), g.getX(), g.getZ(), blocks));
+    }
+
+    /** Ostinato 2.0 Phase 05: the player's body now, as the sim-edge search's start state. */
+    public SimEdge.Body playerBody() {
+        var p = ctx.player();
+        var v = p.getDeltaMovement();
+        SimEdge.Body b = new SimEdge.Body();
+        b.known = true;
+        b.x = p.getX();
+        b.y = p.getY();
+        b.z = p.getZ();
+        b.vx = v.x;
+        b.vy = v.y;
+        b.vz = v.z;
+        b.yaw = p.getYRot();
+        b.onGround = p.onGround();
+        b.sprinting = p.isSprinting();
+        return b;
+    }
+
     private AbstractNodeCostSearch createPathfinder(BlockPos start, Goal goal, IPath previous, CalculationContext context) {
         Goal transformed = goal;
         if (Baritone.settings().simplifyUnloadedYCoord.value && goal instanceof IGoalRenderPos) {
@@ -839,8 +993,35 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
         }
         // Ostinato: was always `new AStarPathFinder(..., context)` (weight 1); far segments may now use weighted A*.
         double weight = farSegmentWeight(transformed, start);
-        if (Baritone.settings().pathingHierarchical.value) { // Ostinato: opt-in hierarchical planner
+        boolean hierarchical = Baritone.settings().pathingHierarchical.value;
+        PathDecisionMatrix.Action pick = decide(transformed, start, context); // Ostinato: decision matrix
+        if (pick != null) {
+            weight = pick.weight;
+            hierarchical = pick.hierarchical;
+        }
+        if (hierarchical) { // Ostinato: opt-in hierarchical planner
             return new HierarchicalPathFinder(realStart, start.getX(), start.getY(), start.getZ(), transformed, favoring, context, SectionGraph.INSTANCE, weight);
+        }
+        if (Baritone.settings().simEdgeSearch.value) { // Ostinato 2.0 Phase 05: opt-in simulated-edge planner (falls back to A* itself)
+            SimEdgePathFinder sim = new SimEdgePathFinder(realStart, start.getX(), start.getY(), start.getZ(), transformed, favoring, context, weight);
+            if (feet.equals(start) && ctx.player() != null) {
+                sim.startBody(playerBody());
+            }
+            synchronized (dead) {
+                if (!dead.isEmpty() && Objects.equals(deadGoal, goal)) {
+                    sim.avoidDead(dead.clone());
+                }
+            }
+            return sim;
+        }
+        if (Baritone.settings().maestro.value) { // Ostinato Maestro: opt-in action-aware planner (falls back to A* itself)
+            MaestroPathFinder maestro = new MaestroPathFinder(realStart, start.getX(), start.getY(), start.getZ(), transformed, favoring, context, weight);
+            synchronized (dead) {
+                if (!dead.isEmpty() && Objects.equals(deadGoal, goal)) {
+                    maestro.avoidDead(dead.clone());
+                }
+            }
+            return maestro;
         }
         AStarPathFinder astar = new AStarPathFinder(realStart, start.getX(), start.getY(), start.getZ(), transformed, favoring, context, weight);
         synchronized (dead) {

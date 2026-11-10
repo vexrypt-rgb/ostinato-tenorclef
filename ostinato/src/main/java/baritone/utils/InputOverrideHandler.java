@@ -24,6 +24,7 @@ import baritone.api.event.events.TickEvent;
 import baritone.api.utils.IInputOverrideHandler;
 import baritone.api.utils.input.Input;
 import baritone.behavior.Behavior;
+import baritone.pathing.unified.UnifiedExecutor;
 import net.minecraft.client.player.KeyboardInput;
 
 import java.util.HashMap;
@@ -37,7 +38,7 @@ import java.util.Map;
  * @author Brady
  * @since 7/31/2018
  */
-public final class InputOverrideHandler extends Behavior implements IInputOverrideHandler {
+public final class InputOverrideHandler extends Behavior implements IInputOverrideHandler, UnifiedExecutor.Keys {
 
     /**
      * Maps inputs to whether or not we are forcing their state down.
@@ -46,6 +47,8 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
 
     private final BlockBreakHelper blockBreakHelper;
     private final BlockPlaceHelper blockPlaceHelper;
+    /** Ostinato 2.0 Phase 06: refuses presses while the physics driver owns the keys. Inert while unifiedExecutor is off. */
+    private UnifiedExecutor unified;
 
     public InputOverrideHandler(Baritone baritone) {
         super(baritone);
@@ -61,7 +64,36 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
      */
     @Override
     public final boolean isInputForcedDown(Input input) {
-        return input == null ? false : this.inputForceStateMap.getOrDefault(input, false);
+        if (input == null) return false;
+        // Ostinato: after realizePhysicalKeys, the game sees the hand's chord. Before that, and while the
+        // setting is off, this is the map the callers wrote.
+        if (physicalLive && Baritone.settings().physicalInput.value) return chord.isDown(input);
+        return this.inputForceStateMap.getOrDefault(input, false);
+    }
+
+    /**
+     * Ostinato: start of a client tick, before listeners rewrite the keys. The first tick the setting is on
+     * copies the keys already held, so enabling it does not invent a chord change.
+     */
+    public void openPhysicalTick() {
+        if (!wasPhysical) {
+            chord.snap(inputForceStateMap);
+            stick.disarm();
+            wasPhysical = true;
+        }
+        physicalLive = false;
+    }
+
+    /**
+     * Ostinato: after every listener has written the keys it wants. At most two of them change this tick.
+     * Block breaking runs here so it sees that chord and not the raw request.
+     */
+    public void realizePhysicalKeys() {
+        if (!Baritone.settings().physicalInput.value || physicalLive) return;
+        chord.step(inputForceStateMap, PhysicalInput.MAX_EDGES_PER_TICK);
+        physicalLive = true;
+        blockBreakHelper.tick(isInputForcedDown(Input.CLICK_LEFT));
+        blockPlaceHelper.tick(isInputForcedDown(Input.CLICK_RIGHT));
     }
 
     /**
@@ -72,7 +104,29 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
      */
     @Override
     public final void setInputForceState(Input input, boolean forced) {
+        // Ostinato 2.0 Phase 06: a press over the physics driver's keys this tick is refused. Releases always pass.
+        if (forced && unified != null && unified.refusesPress(input)) return;
         this.inputForceStateMap.put(input, forced);
+    }
+
+    /** Ostinato 2.0 Phase 06: the gate in front of {@link #setInputForceState}. Set once, by {@link Baritone}. */
+    public void setUnifiedExecutor(UnifiedExecutor unified) {
+        this.unified = unified;
+    }
+
+    @Override
+    public boolean forcedRaw(Input input) {
+        return this.inputForceStateMap.getOrDefault(input, false);
+    }
+
+    @Override
+    public boolean analogForced() {
+        return this.analog != null;
+    }
+
+    @Override
+    public void releaseRaw(Input input) {
+        this.inputForceStateMap.remove(input);
     }
 
     /**
@@ -87,8 +141,15 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
     /** Ostinato: the stick position for the next movement tick, or null. */
     private float[] analog;
 
+    /** Ostinato: the chord actually given to the game while physicalInput is on. */
+    private final PhysicalInput.Chord chord = new PhysicalInput.Chord();
+    private final PhysicalInput.Stick stick = new PhysicalInput.Stick();
+    private boolean physicalLive;
+    private boolean wasPhysical;
+
     @Override
     public void setAnalog(float left, float forward) {
+        if (unified != null && unified.refusesAnalog()) return; // Ostinato 2.0 Phase 06: before the allocation
         this.analog = new float[]{Math.max(-1, Math.min(1, left)), Math.max(-1, Math.min(1, forward))};
     }
 
@@ -96,7 +157,16 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
     float[] takeAnalog() {
         float[] a = this.analog;
         this.analog = null;
-        return Baritone.settings().analogMovement.value ? a : null;
+        if (!Baritone.settings().analogMovement.value) {
+            stick.disarm(); // Ostinato: a later physical stick starts from centre
+            return null;
+        }
+        // Ostinato: off, the requested stick is returned as it was. On, it slews instead of jumping.
+        if (a == null || !Baritone.settings().physicalInput.value) {
+            stick.disarm();
+            return a;
+        }
+        return stick.slew(a[0], a[1]);
     }
 
     /** Standing on magma: sneaking is the only thing that stops it burning us, whatever else is steering. */
@@ -113,6 +183,10 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
         if (event.getType() == TickEvent.Type.OUT) {
             return;
         }
+        if (!Baritone.settings().physicalInput.value) {
+            physicalLive = false;
+            wasPhysical = false;
+        }
         if (AltoClefSettings.getInstance().isInteractionPaused()) {
             setInputForceState(Input.CLICK_LEFT, false);
             setInputForceState(Input.CLICK_RIGHT, false);
@@ -120,8 +194,11 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
         if (isInputForcedDown(Input.CLICK_LEFT)) {
             setInputForceState(Input.CLICK_RIGHT, false);
         }
-        blockBreakHelper.tick(isInputForcedDown(Input.CLICK_LEFT));
-        blockPlaceHelper.tick(isInputForcedDown(Input.CLICK_RIGHT));
+        // Ostinato: while physicalInput is on, the break and place run from realizePhysicalKeys after the chord.
+        if (!Baritone.settings().physicalInput.value) {
+            blockBreakHelper.tick(isInputForcedDown(Input.CLICK_LEFT));
+            blockPlaceHelper.tick(isInputForcedDown(Input.CLICK_RIGHT));
+        }
 
         if (inControl()) {
             if (ctx.player().input.getClass() != PlayerMovementInput.class) {

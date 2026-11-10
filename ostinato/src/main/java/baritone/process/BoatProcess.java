@@ -16,6 +16,7 @@ import baritone.api.utils.Rotation;
 import baritone.api.utils.input.Input;
 import baritone.pathing.movement.MovementHelper;
 import baritone.utils.BaritoneProcessHelper;
+import baritone.utils.FastMode;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
@@ -68,7 +69,7 @@ public final class BoatProcess extends BaritoneProcessHelper {
 
     @Override
     public boolean isActive() {
-        if (ctx.player() == null || ctx.world() == null || !Baritone.settings().allowBoats.value) {
+        if (ctx.player() == null || ctx.world() == null || !FastMode.allowBoats()) {
             return reset();
         }
         if (phase != Phase.IDLE) {
@@ -363,8 +364,13 @@ public final class BoatProcess extends BaritoneProcessHelper {
                     // the look target only lands on the next player tick; useItem raycasts (and sends) the current
                     // rotation, so face the surface now or the use misses and we wait for the next retry
                     // Ostinato: capped like every other turn; a far aim takes a few retries instead of one snap
-                    ctx.player().setYRot(HumanInputCaps.capYaw(ctx.player().getYRot(), aim.getYaw(), HumanInputCaps.maxYaw()));
-                    ctx.player().setXRot(HumanInputCaps.capPitch(ctx.player().getXRot(), aim.getPitch(), HumanInputCaps.maxPitch()));
+                    float fromY = ctx.player().getYRot(), fromP = ctx.player().getXRot();
+                    float toY = HumanInputCaps.capYaw(fromY, aim.getYaw(), HumanInputCaps.maxYaw());
+                    float toP = HumanInputCaps.capPitch(fromP, aim.getPitch(), HumanInputCaps.maxPitch());
+                    // Ostinato: physicalInput off returns toY/toP unchanged
+                    float[] aimed = baritone.getLookBehavior().physicalLook(fromY, fromP, toY, toP);
+                    ctx.player().setYRot(aimed[0]);
+                    ctx.player().setXRot(aimed[1]);
                     Minecraft.getInstance().gameMode.useItem(ctx.player(), InteractionHand.MAIN_HAND);
                 }
                 return pause();

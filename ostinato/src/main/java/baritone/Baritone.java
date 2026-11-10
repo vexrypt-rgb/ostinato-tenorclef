@@ -33,6 +33,7 @@ import baritone.process.*;
 import baritone.selection.SelectionManager;
 import baritone.utils.BlockStateInterface;
 import baritone.utils.GuiClick;
+import baritone.utils.InputArbiter;
 import baritone.utils.InputOverrideHandler;
 import baritone.utils.PathingControlManager;
 import baritone.utils.player.BaritonePlayerContext;
@@ -82,6 +83,9 @@ public class Baritone implements IBaritone {
     private final SwarmBehavior swarmBehavior;
     private final FreecamBehavior freecamBehavior;
     private final InputOverrideHandler inputOverrideHandler;
+    private final InputArbiter inputArbiter = new InputArbiter(); // Ostinato: leases; idle unless inputArbitration
+    private final baritone.pathing.unified.UnifiedExecutor unifiedExecutor; // Ostinato 2.0 Phase 06: idle unless unifiedExecutor
+    private final baritone.gracenote.GraceNote graceNote; // Ostinato: Grace Note emergency survival
 
     private final FollowProcess followProcess;
     private final MineProcess mineProcess;
@@ -93,11 +97,16 @@ public class Baritone implements IBaritone {
     private final InventoryPauserProcess inventoryPauserProcess;
     private final IElytraProcess elytraProcess;
     private final PortalBuildProcess portalBuildProcess;
+    private final TunnelProcess tunnelProcess; // Ostinato: #maze.tunnels
+    private final MazeProcess mazeProcess; // Ostinato: underground maze, idle unless mazeMode
+    private final SecondoProcess secondoProcess; // Ostinato: companion, idle unless secondoEnabled
     private final PvpProcess pvpProcess;
     private final baritone.structure.StructureBehavior structureBehavior;
     private final PveProcess pveProcess;
     private final baritone.process.BastionProcess bastionProcess;
     private final baritone.health.HealthEstimator healthEstimator; // Ostinato: health estimator
+    private final baritone.threat.ThreatService threatAssessment;
+    private final baritone.physics.mc.PredictivePhysics predictivePhysics; // Ostinato: predictive physics engine
     private final baritone.spectate.SpectateLearner spectateLearner; // Ostinato: spectator learning
     private final baritone.spectate.ServerSpectate serverSpectate; // Ostinato: auto-spectate
 
@@ -126,22 +135,30 @@ public class Baritone implements IBaritone {
 
         {
             this.lookBehavior         = this.registerBehavior(LookBehavior::new);
+            // Ostinato: before the path executor, so what Grace Note detects it can hold on the same tick
+            this.graceNote            = this.registerBehavior(baritone.gracenote.GraceNote::new);
             this.pathingBehavior      = this.registerBehavior(PathingBehavior::new);
             this.inventoryBehavior    = this.registerBehavior(InventoryBehavior::new);
             this.inputOverrideHandler = this.registerBehavior(InputOverrideHandler::new);
+            this.unifiedExecutor = new baritone.pathing.unified.UnifiedExecutor(inputArbiter, inputOverrideHandler);
+            this.inputOverrideHandler.setUnifiedExecutor(unifiedExecutor);
             this.registerBehavior(WaypointBehavior::new);
             this.swarmBehavior        = this.registerBehavior(SwarmBehavior::new);
             this.freecamBehavior      = this.registerBehavior(FreecamBehavior::new);
             this.healthEstimator      = this.registerBehavior(baritone.health.HealthEstimator::new); // Ostinato
+            this.predictivePhysics    = this.registerBehavior(baritone.physics.mc.PredictivePhysics::new); // Ostinato
+            this.threatAssessment = this.registerBehavior(baritone.threat.ThreatService::new);
             this.spectateLearner      = this.registerBehavior(baritone.spectate.SpectateLearner::new); // Ostinato
             this.serverSpectate       = this.registerBehavior(baritone.spectate.ServerSpectate::new); // Ostinato: auto-spectate
         }
 
         this.pathingControlManager = new PathingControlManager(this);
         {
+            this.pathingControlManager.registerProcess(this.graceNote.process()); // Ostinato: holds other processes off during a maneuver
             this.followProcess           = this.registerProcess(FollowProcess::new);
             this.mineProcess             = this.registerProcess(MineProcess::new);
             this.customGoalProcess       = this.registerProcess(CustomGoalProcess::new); // very high iq
+            this.registerProcess(baritone.process.CompassFollowProcess::new); // Ostinato: compass needle, idle unless trainingLegit and compassFollow
             this.getToBlockProcess       = this.registerProcess(GetToBlockProcess::new);
             this.builderProcess          = this.registerProcess(BuilderProcess::new);
             this.exploreProcess          = this.registerProcess(ExploreProcess::new);
@@ -157,6 +174,9 @@ public class Baritone implements IBaritone {
             this.registerProcess(AirProcess::new);
             this.registerProcess(BoatProcess::new);
             this.portalBuildProcess      = this.registerProcess(PortalBuildProcess::new);
+            this.tunnelProcess           = this.registerProcess(TunnelProcess::new); // Ostinato: #maze.tunnels, idle until started
+            this.mazeProcess             = this.registerProcess(MazeProcess::new); // Ostinato: idle unless mazeMode
+            this.secondoProcess          = this.registerProcess(SecondoProcess::new); // Ostinato: #secondo, idle unless secondoEnabled
             baritone.process.SimBench.install(this);
             baritone.utils.Lockstep.install(this); // Ostinato: -Dostinato.lockstep (before the trace, so a traced tick is one the server has answered)
             baritone.utils.ParityTrace.install(this); // Ostinato: -Dostinato.trace
@@ -166,6 +186,7 @@ public class Baritone implements IBaritone {
         this.selectionManager = new SelectionManager(this);
         this.commandManager = new CommandManager(this);
         this.gameEventHandler.registerEventListener(new baritone.gui.OstinatoGui(this));
+        this.gameEventHandler.registerEventListener(this.graceNote.lateListener()); // Ostinato: last, so its press sees the tick as the keybinds will
     }
 
     public void registerBehavior(IBehavior behavior) {
@@ -195,6 +216,21 @@ public class Baritone implements IBaritone {
         return this.healthEstimator;
     }
 
+    @Override
+    public baritone.api.threat.IThreatAssessment getThreatAssessment() { return threatAssessment; }
+
+    // Ostinato: Grace Note
+    @Override
+    public baritone.gracenote.GraceNote getGraceNote() {
+        return this.graceNote;
+    }
+
+    // Ostinato: predictive physics engine
+    @Override
+    public baritone.physics.mc.PredictivePhysics getPredictivePhysics() {
+        return this.predictivePhysics;
+    }
+
     // Ostinato: spectator learning
     public baritone.spectate.ServerSpectate getServerSpectate() { // Ostinato
         return serverSpectate;
@@ -211,6 +247,16 @@ public class Baritone implements IBaritone {
     @Override
     public InputOverrideHandler getInputOverrideHandler() {
         return this.inputOverrideHandler;
+    }
+
+    /** Ostinato: per-bot input leases. The fall controller reads this only when inputArbitration is on. */
+    public InputArbiter getInputArbiter() {
+        return this.inputArbiter;
+    }
+
+    /** Ostinato 2.0 Phase 06: the physics driver's input ownership. Used only while unifiedExecutor is on. */
+    public baritone.pathing.unified.UnifiedExecutor getUnifiedExecutor() {
+        return this.unifiedExecutor;
     }
 
     @Override
@@ -351,6 +397,19 @@ public class Baritone implements IBaritone {
 
     public PortalBuildProcess getPortalBuildProcess() {
         return this.portalBuildProcess;
+    }
+
+    public TunnelProcess getTunnelProcess() { // Ostinato
+        return this.tunnelProcess;
+    }
+
+    public MazeProcess getMazeProcess() {
+        return this.mazeProcess;
+    }
+
+    @Override
+    public baritone.api.process.ISecondoProcess getSecondoProcess() { // Ostinato
+        return this.secondoProcess;
     }
 
     @Override

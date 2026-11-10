@@ -31,6 +31,16 @@ public final class TestHarness {
         String pk = System.getProperty("ostinato.pktest");
         if (pk != null && !pk.isEmpty()) sb.append("ostinato.pktest ");
         if (Boolean.getBoolean("ostinato.basttest")) sb.append("ostinato.basttest ");
+        if (Boolean.getBoolean("ostinato.mazetest")) sb.append("ostinato.mazetest ");
+        if (Boolean.getBoolean("ostinato.ppetest")) sb.append("ostinato.ppetest ");
+        if (Boolean.getBoolean("ostinato.threattest")) sb.append("ostinato.threattest ");
+        if (Boolean.getBoolean("ostinato.gracenotetest")) sb.append("ostinato.gracenotetest ");
+        if (Boolean.getBoolean("ostinato.prestotest")) sb.append("ostinato.prestotest ");
+        if (Boolean.getBoolean("ostinato.legatotest")) sb.append("ostinato.legatotest ");
+        if (Boolean.getBoolean("ostinato.cadenzatest")) sb.append("ostinato.cadenzatest ");
+        if (Boolean.getBoolean("ostinato.bombardtest")) sb.append("ostinato.bombardtest ");
+        if (Boolean.getBoolean("ostinato.tolerancetrace")) sb.append("ostinato.tolerancetrace ");
+        if (Boolean.getBoolean("ostinato.interacttest")) sb.append("ostinato.interacttest ");
         return sb.toString().trim();
     }
 
@@ -44,5 +54,17 @@ public final class TestHarness {
         }
         baritone.structure.BastTest.install(b);
         baritone.structure.PkTest.install(b);
+        baritone.maze.MazeTest.install(b);
+        baritone.physics.mc.PpeLiveTest.install(b);
+        baritone.threat.ThreatLiveTest.install(b);
+        baritone.gracenote.GraceNoteLiveTest.install(b);
+        baritone.pathing.kinematic.PrestoLiveTest.install(b);
+        baritone.pathing.legato.LegatoLiveTest.install(b);
+        baritone.pathing.cadenza.CadenzaLiveTest.install(b);
+        baritone.bombard.BombardLiveTest.install(b);
+        baritone.scherzo.ScherzoSparTest.install(b); // Ostinato: Scherzo LIVE/OBSERVE spar A/B harness
+        baritone.contract.ToleranceTraceTest.install(b); // Ostinato 2.0 Phase 04 validation: live PredictionTolerance traces
+        InteractLiveTest.install(b); // Ostinato 2.0 Phase 08: navigate -> interact -> verify
+        InteractTerrainLiveTest.install(b); // Ostinato 2.0 Phase 10: the same check on natural terrain
     }
 }

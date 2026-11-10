@@ -16,6 +16,7 @@ public class AltoClefCommands {
         AltoClef.getCommandExecutor().registerNewCommand(
                 new HelpCommand(),
                 new GetCommand(),
+                new EnchantCommand(),
                 new GoalCommand(),
                 new BenchCommand(),
                 new ThreatCommand(),
@@ -78,7 +79,10 @@ public class AltoClefCommands {
                 new GroundZeroCommand(),
                 new WarpCommand(),
                 new PathBenchCommand(),
-                new ShowcaseCommand()
+                new ShowcaseCommand(),
+                new FugueCommand(),
+                new FugueBenchCommand(),
+                new AllBlocksCommand() // Ostinato: @allblocks (also Ostinato #allblocks)
         );
     }
 }

@@ -35,6 +35,7 @@ import net.minecraft.client.gui.screen.ingame.*;
 //$$ import net.minecraft.client.gui.screens.inventory.SmokerScreen;
 //#endif
 import net.minecraft.item.Item;
+import net.minecraft.screen.PlayerScreenHandler;
 import net.minecraft.screen.ScreenHandler;
 import adris.altoclef.util.Pair;
 import net.minecraft.util.hit.BlockHitResult;
@@ -107,9 +108,24 @@ public class ContainerSubTracker extends Tracker {
         hasSentError = false;
     }
 
+    /** Ostinato: #allblocks diagnostics. */
+    public static volatile String debugState = "";
+
     public void onServerTick() {
         if (MinecraftClient.getInstance().player == null)
             return;
+        debugState = "containerOpen=" + containerOpen + " lastPos=" + lastBlockPosInteraction + " lastBlock=" + lastBlockInteraction
+                + " screen=" + adris.altoclef.multiversion.ScreenVer.current(MinecraftClient.getInstance()) + " handler=" + MinecraftClient.getInstance().player.currentScreenHandler;
+        // Ostinato: #allblocks. On 26.3 the screen-open hook never marked a chest screen as a container, so nothing
+        // was ever stored: also trust the open menu when it matches the block we last clicked.
+        // The close hook does not fire there either: with only the player's own inventory open, nothing is open.
+        ScreenHandler openHandler = MinecraftClient.getInstance().player.currentScreenHandler;
+        if (openHandler == null || openHandler instanceof PlayerScreenHandler) {
+            if (containerOpen) onScreenClose();
+        } else if (!containerOpen && lastBlockInteraction != null
+                && ContainerType.screenHandlerMatches(ContainerType.getFromBlock(lastBlockInteraction), openHandler)) {
+            containerOpen = true;
+        }
         // If we haven't registered interacting with a block, try the currently "looking at" block
         if (containerOpen && lastBlockPosInteraction == null && lastBlockInteraction == null) {
             if (MinecraftClient.getInstance().crosshairTarget instanceof BlockHitResult bhit) {
@@ -125,13 +141,18 @@ public class ContainerSubTracker extends Tracker {
                 return;
 
             HashMap<BlockPos, ContainerCache> dimCache = containerCaches.get(WorldHelper.getCurrentDimension());
+            if (dimCache == null) {
+                dimCache = new HashMap<>();
+                containerCaches.put(WorldHelper.getCurrentDimension(), dimCache);
+            }
 
             // Container Type Mismatch, reset.
             if (dimCache.containsKey(containerPos)) {
                 ContainerType currentType = dimCache.get(containerPos).getContainerType();
                 if (!ContainerType.screenHandlerMatches(currentType, handler)) {
                     if (!hasSentError) {
-                        Debug.logMessage("Mismatched container screen at " + containerPos.toShortString() + ", will overwrite container data: " + handler.getType() + " ?=> " + currentType);
+                        // getType() throws for menus without a type (the player's inventory).
+                        Debug.logMessage("Mismatched container screen at " + containerPos.toShortString() + ", will overwrite container data: " + handler.getClass().getSimpleName() + " ?=> " + currentType);
                         hasSentError = true;
                     }
                     dimCache.remove(containerPos);
@@ -171,9 +192,11 @@ public class ContainerSubTracker extends Tracker {
     }
 
     public Optional<ContainerCache> getContainerAtPosition(Dimension dimension, BlockPos pos) {
-        Optional<ContainerCache> cache = Optional.ofNullable(containerCaches.get(dimension).getOrDefault(pos, null));
+        HashMap<BlockPos, ContainerCache> dimMap = containerCaches.get(dimension);
+        if (dimMap == null) return Optional.empty();
+        Optional<ContainerCache> cache = Optional.ofNullable(dimMap.getOrDefault(pos, null));
         if (cache.isPresent() && !isContainerCacheValid(dimension, cache.get())) {
-            containerCaches.get(dimension).remove(pos);
+            dimMap.remove(pos);
             return Optional.empty();
         }
         return cache;
@@ -219,7 +242,9 @@ public class ContainerSubTracker extends Tracker {
         List<BlockPos> toRemove = new ArrayList<>();
 
         ContainerCache bestCache = null;
-        for (ContainerCache cache : containerCaches.get(dim).values()) {
+        HashMap<BlockPos, ContainerCache> dimMap = containerCaches.get(dim);
+        if (dimMap == null) return Optional.empty();
+        for (ContainerCache cache : dimMap.values()) {
             if (!isContainerCacheValid(dim, cache)) {
                 toRemove.add(cache.getBlockPos());
                 continue;
@@ -234,7 +259,7 @@ public class ContainerSubTracker extends Tracker {
         }
         // Clear anything invalid
         for (BlockPos remove : toRemove) {
-            containerCaches.get(dim).remove(remove);
+            dimMap.remove(remove);
         }
         return Optional.ofNullable(bestCache);
     }
