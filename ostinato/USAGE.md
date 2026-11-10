@@ -81,6 +81,7 @@ There are about a hundred settings, but here are some fun / interesting / import
 - `avoidance` (avoidance of mobs / mob spawners)
 - `legitMine`
 - `legitMode` (`auto`, `on`, or `off`; default `auto`. `auto` is on only on a remote multiplayer server. See `docs/legit-mode.md`.)
+- `runMode` (`normal`, `hidden`, or `headless`; default `normal`. `hidden` hides the window and reduces rendering while keeping the GL context. `headless` is accepted but not implemented yet. `-Dostinato.runMode=` wins at window creation. See `docs/hidden-mode.md`.)
 - `followRadius`
 - `backfill` (fill in tunnels behind you)
 - `buildInLayers`

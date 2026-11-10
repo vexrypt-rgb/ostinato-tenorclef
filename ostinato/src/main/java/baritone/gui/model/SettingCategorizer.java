@@ -75,6 +75,7 @@ public final class SettingCategorizer {
                 "secondoEnabled", "secondoFollowDistance", "secondoAssist", "secondoAssistRadius", "secondoAssistStand",
                 "secondoPickup", "secondoPickupRadius", "secondoCombatAssist"); // Ostinato: testHarness, legit track, compass follow, gear choice, every-block race, agent API, Secondo
         put(m, INTERFACE, "guiKeybind", "renderPathHud", "pathHudAnchor", "guiAccentColor", "guiTheme", "renderAcsHud", "acsHudAnchor", "acsHudOpacity", "acsHudScale");
+        put(m, SWARM, "runMode"); // Ostinato: hidden / headless run mode
         OVERRIDES = Collections.unmodifiableMap(m);
 
         rule("^maze", BUILDING);

@@ -2205,6 +2205,18 @@ public final class Settings {
     public final Setting<Boolean> swarmAllowUnsafeRate = new Setting<>(false);
 
     /**
+     * Ostinato: swarm run mode. {@code normal} (the default) leaves the window, rendering, and pathing as they were
+     * before this setting. {@code hidden} hides the window and reduces rendering, and keeps the GL context.
+     * {@code headless} is accepted and stored; true headless (no GL context) is not implemented in this stage, so
+     * the window and the renderer stay on the normal policy until that stage.
+     * <p>
+     * Set with {@code #set runMode normal}, {@code #set runMode hidden}, or {@code #set runMode headless}.
+     * {@code -Dostinato.runMode=} is read when the window is created, before settings load, and a known token wins
+     * for that initial mode. After load, {@code #set} changes the mode. Any other token is rejected.
+     */
+    public final Setting<baritone.api.run.RunMode.Value> runMode = new Setting<>(baritone.api.run.RunMode.Value.NORMAL);
+
+    /**
      * Swarm: outgoing lines waiting for the rate limiter. When full, the newest lower-priority line
      * is dropped for a higher-priority one; otherwise the new line is dropped.
      */
