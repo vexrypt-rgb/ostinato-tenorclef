@@ -30,7 +30,7 @@ Everything experimental ships **off**. Nothing below changes behaviour unless yo
 
 - Ostinato settings: `presto`, `legato`, `legatoSearch`, `maestro`, `cadenza*`, `secondoEnabled`, `unifiedExecutor`,
   `inputArbitration`, `simEdgeSearch`, `pathingStateIdCache`, `pathingHierarchical`, `verifiedGetToBlock`,
-  `predictionTolerance`, `latticeExperiment` (all `false`).
+  `predictionTolerance`, `latticeExperiment`, `swarmCommandProtocol` (all `false`).
 - Grace Note (fall rescue) runs in `observe` mode unless started with `-Dostinato.graceNote=live`.
 - TenorClef: Fugue is opt-in (`@fugue`), and its stall recovery stays off.
 

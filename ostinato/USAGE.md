@@ -62,6 +62,7 @@ Commands in Baritone:
 - `reloadall` to reload Baritone's world cache or `saveall` to save Baritone's world cache.
 - `find` to search through Baritone's cache and attempt to find the location of the block.
 - `surface` or `top` to tell Baritone to head towards the closest surface-like area, this can be the surface or highest available air space.
+- `#swarm` for the sealed swarm link. With `swarmCommandProtocol` on (default off): `#swarm send <bot> <command...>`, `#swarm outcome <id>`, `#swarm cancel <id>`. See `docs/swarm/PHASE1.md`. Ping, status, reload, build, and stop are unchanged when the flag is off.
 - `version` to get the version of Baritone you're running
 - `allblocks start` (needs TenorClef) to collect one of every obtainable item into labeled chests and place every placeable block on a grid, in survival and without commands. `allblocks status` shows obtained / placed / skipped / unsupported / stuck / remaining, `allblocks report` lists what will not complete and why, `allblocks stop` stops (progress is saved per world, `start` resumes). See TenorClef's `docs/guides/allblocks.md` for the layout.
 - `damn` daniel
