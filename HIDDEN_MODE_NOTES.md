@@ -8,7 +8,7 @@ Times below are America/Phoenix (MST).
 
 `runMode` is `normal` (default), `hidden`, or `headless`. The default matches the client from before this branch. `-Dostinato.runMode=` is the window-create policy, because settings load after the SDL window exists. A known token is copied onto the setting once at startup. After that, `#set runMode` wins. An unknown token is rejected. An unknown property does not overwrite a setting that was loaded from disk, and the initial window stays on the normal policy.
 
-`headless` is parsed and stored. `RunMode.isHeadless()` is true. Window and render policies treat it like `normal`. True headless (no GL context) is the next stage, not this one.
+`headless` is parsed and stored. On `swarm/hidden-mode` the window and render policies treated it like `normal`. On `swarm/true-headless` it has its own policy: the window stays hidden, the world renderer is skipped, and the OpenAL playback device is not opened. The GPU device is still created. See `HEADLESS_MODE_NOTES.md`.
 
 ## Window
 

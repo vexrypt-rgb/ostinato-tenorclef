@@ -6,7 +6,7 @@
 | --- | --- |
 | `normal` (default) | The window, rendering, mouse grab, and pathing stay as they were before this setting. |
 | `hidden` | The SDL window stays hidden, the GL context stays alive, and rendering is reduced. The render thread still runs. |
-| `headless` | Accepted and stored. `RunMode.isHeadless()` is true. True headless (no GL context) is not implemented in this stage, so the window and the renderer stay on the normal policy. |
+| `headless` | True headless. See [Headless mode](headless-mode.md). It does not use this page's 1 fps reducer, and it does not show the window. |
 
 ```
 #set runMode normal
@@ -53,6 +53,6 @@ While hidden, and while the bot is not being presented:
 | Textures | atlas stitch uses mip 0; animation uploads stop. The base atlas upload is kept. |
 | Sound | volume 0. The sound engine still exists and still ticks. |
 
-`normal` and `headless` do not apply any of these. `headless` is still the normal window and the normal renderer.
+`normal` does not apply any of these. `headless` does not use this 1 fps reducer. Its own cuts are in [Headless mode](headless-mode.md).
 
 The gate checklist is `docs/hidden-mode-gate.md`. Decisions that the design doc left open are in `HIDDEN_MODE_NOTES.md` at the repo root. Live memory, CPU, tick health, path quality, and the real hide/show are not run from this unit-test stage. The number to beat, from Phase 0 visible 1.75, is about 2341 MB peak private.

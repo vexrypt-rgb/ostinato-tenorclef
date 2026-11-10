@@ -16,7 +16,8 @@ The Phase 0 visible 1.75 baseline is peak private about 2341 MB, steady about 22
 | `hidden` stays hidden and does not grab the cursor | `HiddenWindowPolicyTest.hiddenStaysHiddenAndDoesNotGrabTheCursor` |
 | Presenting shows a hidden window and does not change the stored mode | `HiddenWindowPolicyTest.presentingShowsWithoutChangingTheHideRuleForANormalClient`, `HiddenRenderPolicyTest.flagsFollowTheSettingOnlyWhileHidden` |
 | Show position is `windowPos` or 2600,40 | `HiddenWindowPolicyTest.showPositionUsesThePropertyOrTheDefaultCorner` |
-| `headless` uses the normal window and render policy | `HiddenWindowPolicyTest.headlessUsesTheNormalWindowPolicy`, `HiddenRenderPolicyTest.normalAndHeadlessDoNotReduce` |
+| `headless` does not use the hidden 1 fps reducer | `HiddenRenderPolicyTest.normalAndHeadlessDoNotReduce` |
+| `headless` stays unshown, including `windowPos` and a present | `HiddenWindowPolicyTest.headlessStaysHiddenAndDoesNotShowForWindowPosOrPresent` |
 | Display limiter stays at the caller cap when not hidden, and is at most 20 when hidden | `HiddenRenderPolicyTest.displayCapNeverRaisesTheCallerAndDoesNotSleepAtOneHertz` |
 | World draw is about 1 fps while hidden, and every frame otherwise | `HiddenRenderPolicyTest.worldDrawIsAboutOnePerSecondWhileHidden` |
 | Framebuffer ask is 16; the applied size is 320x240, and only while hidden | `HiddenRenderPolicyTest.framebufferAsksForSixteenAndAppliesTheClientMinimum` |

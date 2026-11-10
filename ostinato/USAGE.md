@@ -81,7 +81,7 @@ There are about a hundred settings, but here are some fun / interesting / import
 - `avoidance` (avoidance of mobs / mob spawners)
 - `legitMine`
 - `legitMode` (`auto`, `on`, or `off`; default `auto`. `auto` is on only on a remote multiplayer server. See `docs/legit-mode.md`.)
-- `runMode` (`normal`, `hidden`, or `headless`; default `normal`. `hidden` hides the window and reduces rendering while keeping the GL context. `headless` is accepted but not implemented yet. `-Dostinato.runMode=` wins at window creation. See `docs/hidden-mode.md`.)
+- `runMode` (`normal`, `hidden`, or `headless`; default `normal`. `hidden` hides the window and reduces rendering while keeping the GL context. `headless` skips the world renderer, async chunk meshes, animation uploads, and the OpenAL playback device. Startup still creates the GPU device and a hidden SDL window, because cancelling those calls throws before the first tick. `-Dostinato.runMode=` wins at window creation. See `docs/hidden-mode.md` and `docs/headless-mode.md`.)
 - `followRadius`
 - `backfill` (fill in tunnels behind you)
 - `buildInLayers`
