@@ -33,8 +33,12 @@ import baritone.pathing.cadenza.CadenzaGoal;
 import baritone.pathing.cadenza.CadenzaSession;
 import baritone.pathing.movement.CalculationContext;
 import baritone.pathing.movement.MovementHelper;
+import baritone.legit.LegitScan;
+import baritone.legit.LegitTargets;
+import baritone.legit.McSeenView;
 import baritone.utils.BaritoneProcessHelper;
 import baritone.utils.BlockStateInterface;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
@@ -43,6 +47,7 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.Vec3;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -68,6 +73,8 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
     private final CadenzaSession cadenza = new CadenzaSession();
     /** Cadenza diagnostics: this tick's mining selection, and the last give-up (read by the live harness trace). */
     public String cadenzaNote = "", cadenzaGaveUp = "";
+    /** Ostinato: positions that passed the seen-only filter during this mine. Not written to disk. */
+    private final LongOpenHashSet legitSeen = new LongOpenHashSet();
 
     public MineProcess(Baritone baritone) {
         super(baritone);
@@ -117,7 +124,12 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         List<BlockPos> curr = new ArrayList<>(knownOreLocations);
         if (mineGoalUpdateInterval != 0 && tickCount++ % mineGoalUpdateInterval == 0) { // big brain
             CalculationContext context = new CalculationContext(baritone, true);
-            Baritone.getExecutor().execute(() -> rescan(curr, context));
+            if (LegitTargets.active()) {
+                // Ostinato: seen-only rescan stays on this thread and does not read the ore cache.
+                rescan(curr, context);
+            } else {
+                Baritone.getExecutor().execute(() -> rescan(curr, context));
+            }
         }
         if (Baritone.settings().legitMine.value) {
             if (!addNearby()) {
@@ -316,11 +328,26 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         if (!locs.isEmpty()) {
             CalculationContext context = new CalculationContext(baritone);
             List<BlockPos> locs2 = prune(context, new ArrayList<>(locs), filter, Baritone.settings().mineMaxOreLocationsCount.value, blacklist, droppedItemsScan());
-            // can't reassign locs, gotta make a new var locs2, because we use it in a lambda right here, and variables you use in a lambda must be effectively final
-            Goal goal = Baritone.settings().cadenza.value ? cadenzaGoal(context, locs2, filter)
-                    : new GoalComposite(locs2.stream().map(loc -> coalesce(loc, locs2, context)).toArray(Goal[]::new));
-            knownOreLocations = locs2;
+            final List<BlockPos> chosen;
+            if (LegitTargets.active()) {
+                // Ostinato: a buried or unseen block is not a mine goal while legit mode is on.
+                // Dropped items are not blocks, so they are not judged by the seen-only filter.
+                List<BlockPos> dropped = droppedItemsScan();
+                chosen = filterLegit(withoutDrops(locs2, dropped), context);
+                chosen.addAll(dropped);
+                knownOreLocations = chosen;
+            } else {
+                chosen = locs2;
+            }
+            if (chosen.isEmpty()) {
+                locs = chosen;
+            } else {
+            // can't reassign locs, gotta make a new var, because we use it in a lambda right here, and variables you use in a lambda must be effectively final
+            Goal goal = Baritone.settings().cadenza.value ? cadenzaGoal(context, chosen, filter)
+                    : new GoalComposite(chosen.stream().map(loc -> coalesce(loc, chosen, context)).toArray(Goal[]::new));
+            knownOreLocations = chosen;
             return new PathingCommand(goal, legit ? PathingCommandType.FORCE_REVALIDATE_GOAL_AND_PATH : PathingCommandType.REVALIDATE_GOAL_AND_PATH);
+            }
         }
         // we don't know any ore locations at the moment
         if (!legit && !Baritone.settings().exploreForBlocks.value) {
@@ -400,6 +427,16 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
     private void rescan(List<BlockPos> already, CalculationContext context) {
         BlockOptionalMetaLookup filter = filterFilter();
         if (filter == null) {
+            return;
+        }
+        if (LegitTargets.active()) {
+            // Ostinato: match nearby blocks, then keep only ones the seen-only filter admits. No ore-cache read.
+            List<BlockPos> matches = LegitScan.nearby(context, filter, LegitScan.RADIUS);
+            matches.addAll(already);
+            List<BlockPos> dropped = droppedItemsScan();
+            List<BlockPos> admitted = filterLegit(matches, context);
+            admitted.addAll(dropped);
+            knownOreLocations = prune(context, admitted, filter, Baritone.settings().mineMaxOreLocationsCount.value, blacklist, dropped);
             return;
         }
         if (Baritone.settings().legitMine.value) {
@@ -531,6 +568,10 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
     }
 
     public static List<BlockPos> searchWorld(CalculationContext ctx, BlockOptionalMetaLookup filter, int max, List<BlockPos> alreadyKnown, List<BlockPos> blacklist, List<BlockPos> dropped) {
+        if (LegitTargets.active()) {
+            // Ostinato: cached ore positions are not targets while legit mode is on.
+            return new ArrayList<>();
+        }
         List<BlockPos> locs = new ArrayList<>();
         List<Block> untracked = new ArrayList<>();
         int maxTotal = max * filter.blocks().size();
@@ -598,8 +639,36 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
                 }
             }
         }
-        knownOreLocations = prune(new CalculationContext(baritone), knownOreLocations, filter, Baritone.settings().mineMaxOreLocationsCount.value, blacklist, dropped);
+        CalculationContext context = new CalculationContext(baritone);
+        if (LegitTargets.active()) {
+            // Ostinato: legitMine's nearby pass still cannot keep a block the seen-only filter rejected.
+            knownOreLocations = filterLegit(withoutDrops(knownOreLocations, dropped), context);
+            knownOreLocations.addAll(dropped);
+        }
+        knownOreLocations = prune(context, knownOreLocations, filter, Baritone.settings().mineMaxOreLocationsCount.value, blacklist, dropped);
         return true;
+    }
+
+    /** Ostinato: admit only blocks that pass {@link baritone.api.legit.SeenOnly}, plus ones already admitted this task. */
+    private static List<BlockPos> withoutDrops(List<BlockPos> locs, List<BlockPos> dropped) {
+        if (dropped.isEmpty()) {
+            return locs;
+        }
+        List<BlockPos> blocks = new ArrayList<>();
+        for (BlockPos pos : locs) {
+            if (!dropped.contains(pos)) {
+                blocks.add(pos);
+            }
+        }
+        return blocks;
+    }
+
+    private List<BlockPos> filterLegit(List<BlockPos> locs, CalculationContext context) {
+        if (ctx.player() == null || context == null) {
+            return LegitTargets.select(locs, legitSeen, null, 0, 0, 0, true);
+        }
+        Vec3 eye = ctx.player().getEyePosition(1.0F);
+        return LegitTargets.select(locs, legitSeen, new McSeenView(context.world, context.bsi), eye.x, eye.y, eye.z, true);
     }
 
     private static List<BlockPos> prune(CalculationContext ctx, List<BlockPos> locs2, BlockOptionalMetaLookup filter, int max, List<BlockPos> blacklist, List<BlockPos> dropped) {
@@ -697,6 +766,7 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         this.branchPointRunaway = null;
         this.anticipatedDrops = new HashMap<>();
         this.cadenza.reset();
+        this.legitSeen.clear();
         if (filter != null) {
             rescan(new ArrayList<>(), new CalculationContext(baritone));
         }
