@@ -23,11 +23,13 @@ import baritone.api.command.ICommand;
 import baritone.api.command.manager.ICommandManager;
 import baritone.api.pathing.calc.IPathingControlManager;
 import baritone.api.process.IBaritoneProcess;
+import baritone.api.pathing.goals.Goal; // Ostinato:
 import baritone.api.swarm.protocol.ExecutionState;
 import baritone.api.swarm.protocol.ExternalCommandHook;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
@@ -42,6 +44,8 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
     private final IBaritone baritone;
     private final Supplier<ExternalCommandHook> hook;
     private final Map<UUID, String> started = new ConcurrentHashMap<>();
+    private final Map<UUID, Goal> goals = new ConcurrentHashMap<>(); // Ostinato:
+    private final Set<UUID> seenActivity = ConcurrentHashMap.newKeySet(); // Ostinato:
     private final Map<String, CommandCatalog.Entry> atCommands;
 
     public RegistryExecutor(IBaritone baritone, Supplier<ExternalCommandHook> hook) {
@@ -92,6 +96,10 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
             boolean ok = commands().execute(line);
             if (ok) {
                 started.put(id, name);
+                captureGoal(id, name); // Ostinato: record the goal if execute() already activated pathing.
+                if (baritone.getCustomGoalProcess() != null && baritone.getCustomGoalProcess().isActive()) { // Ostinato:
+                    seenActivity.add(id); // Ostinato:
+                } // Ostinato:
             }
             return ok;
         }
@@ -115,17 +123,21 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
         }
         // Ostinato: actually request a stop, then confirm nothing is still in control.
         try {
-            if (baritone.getPathingBehavior() != null) {
-                baritone.getPathingBehavior().cancelEverything();
-            }
+            if (baritone.getPathingBehavior() == null // Ostinato:
+                    || !baritone.getPathingBehavior().cancelEverything() // Ostinato:
+                    || baritone.getPathingBehavior().isPathing() // Ostinato:
+                    || baritone.getPathingBehavior().getInProgress().isPresent() // Ostinato:
+                    || baritone.getCustomGoalProcess().isActive()) { // Ostinato:
+                return false; // Ostinato: an unsafe segment may still be moving after cancellation.
+            } // Ostinato:
         } catch (Throwable ignored) {
             return false;
         }
         try {
             IPathingControlManager mgr = baritone.getPathingControlManager();
-            if (mgr == null) {
-                return true;
-            }
+            if (mgr == null) { // Ostinato:
+                return false; // Ostinato: cannot confirm without observing control.
+            } // Ostinato:
             Optional<IBaritoneProcess> cur = mgr.mostRecentInControl();
             if (cur.isPresent() && cur.get().isActive()) {
                 return false;
@@ -156,13 +168,47 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
             }
             Optional<IBaritoneProcess> cur = mgr.mostRecentInControl();
             if (cur.isPresent() && cur.get().isActive()) {
+                seenActivity.add(id); // Ostinato:
+                captureGoal(id, name); // Ostinato:
                 return null;
             }
-            // Ostinato: a finished # pathing process is the verified success signal.
-            // Leaving the command running forever would make busy() reject every later command.
-            return ExecutionState.SUCCEEDED;
+            // Ostinato: an idle control slot is not completion, especially before the first process tick.
+            captureGoal(id, name); // Ostinato: execute() may activate the custom-goal process on a later tick.
+            if (baritone.getCustomGoalProcess() != null && baritone.getCustomGoalProcess().isActive()) { // Ostinato:
+                seenActivity.add(id); // Ostinato:
+                return null; // Ostinato:
+            } // Ostinato:
+            if (baritone.getPathingBehavior() != null // Ostinato:
+                    && (baritone.getPathingBehavior().isPathing() // Ostinato:
+                    || baritone.getPathingBehavior().getInProgress().isPresent())) { // Ostinato:
+                seenActivity.add(id); // Ostinato:
+                return null; // Ostinato:
+            } // Ostinato:
+            if (!seenActivity.contains(id)) { // Ostinato:
+                return null; // Ostinato: still waiting for the first process tick.
+            } // Ostinato:
+            Goal goal = goals.get(id); // Ostinato:
+            if (goal == null) { // Ostinato:
+                return ExecutionState.SUCCEEDED; // Ostinato: a non-goto process is done once it has run and gone idle.
+            } // Ostinato:
+            return goal.isInGoal(baritone.getPlayerContext().playerFeet()) // Ostinato:
+                    ? ExecutionState.SUCCEEDED : ExecutionState.FAILED; // Ostinato: idle away from the captured goal is failure, not a hang.
         } catch (Throwable ignored) {
             return null;
         }
     }
+
+    // Ostinato: remember this command's goal once, including when activation is delayed.
+    private void captureGoal(UUID id, String name) { // Ostinato:
+        if (!"goto".equalsIgnoreCase(name) || goals.containsKey(id) || baritone.getCustomGoalProcess() == null) { // Ostinato:
+            return; // Ostinato:
+        } // Ostinato:
+        if (!baritone.getCustomGoalProcess().isActive()) { // Ostinato:
+            return; // Ostinato:
+        } // Ostinato:
+        Goal goal = baritone.getCustomGoalProcess().getGoal(); // Ostinato:
+        if (goal != null) { // Ostinato:
+            goals.put(id, goal); // Ostinato:
+        } // Ostinato:
+    } // Ostinato:
 }
