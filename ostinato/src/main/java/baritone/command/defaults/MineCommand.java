@@ -20,6 +20,7 @@ package baritone.command.defaults;
 import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.command.Command;
+import baritone.api.command.CommandPermission;
 import baritone.api.command.argument.IArgConsumer;
 import baritone.api.command.datatypes.ForBlockOptionalMeta;
 import baritone.api.command.exception.CommandException;
@@ -34,6 +35,12 @@ public class MineCommand extends Command {
 
     public MineCommand(IBaritone baritone) {
         super(baritone, "mine");
+    }
+
+    // Ostinato: roster members may send this when swarmCommandProtocol is on. Local # chat is unchanged.
+    @Override
+    public CommandPermission getPermission() {
+        return CommandPermission.SWARM;
     }
 
     @Override

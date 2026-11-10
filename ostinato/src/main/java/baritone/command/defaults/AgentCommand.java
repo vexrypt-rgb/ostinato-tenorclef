@@ -16,6 +16,7 @@ import baritone.api.Settings;
 import baritone.api.agent.AgentReply;
 import baritone.api.agent.AgentRequest;
 import baritone.api.command.Command;
+import baritone.api.command.CommandPermission;
 import baritone.api.command.argument.IArgConsumer;
 import baritone.api.command.exception.CommandException;
 import net.minecraft.client.Minecraft;
@@ -32,6 +33,12 @@ public class AgentCommand extends Command {
 
     public AgentCommand(IBaritone baritone) {
         super(baritone, "agent");
+    }
+
+    // Ostinato: AI tool calls use AgentPolicy. Local # chat is unchanged when swarmCommandProtocol is off.
+    @Override
+    public CommandPermission getPermission() {
+        return CommandPermission.AI;
     }
 
     @Override

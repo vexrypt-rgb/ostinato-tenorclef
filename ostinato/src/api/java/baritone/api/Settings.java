@@ -2136,6 +2136,12 @@ public final class Settings {
     public final Setting<Boolean> swarmEnabled = new Setting<>(false);
 
     /**
+     * Swarm: Phase 1 command protocol (command ids, signed acks, dedup, safe cancel).
+     * Off, {@code #swarm} ping, status, reload, build and stop behave as before.
+     */
+    public final Setting<Boolean> swarmCommandProtocol = new Setting<>(false);
+
+    /**
      * Swarm: only accept messages signed by a pinned member signet (S2S), and sign what we send. Needs
      * {@code signet-*.json} records in the sigil home. Off accepts unsigned circle messages (S1C/S2C).
      */

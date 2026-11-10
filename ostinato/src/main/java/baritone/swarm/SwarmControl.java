@@ -21,6 +21,7 @@ package baritone.swarm;
 import baritone.swarm.frame.SwarmFrame;
 import baritone.swarm.frame.SwarmMessage;
 import baritone.swarm.frame.SwarmReject;
+import baritone.swarm.protocol.CommandProtocol;
 import baritone.swarm.roster.SwarmRoster;
 import baritone.swarm.transport.SwarmPriority;
 
@@ -92,6 +93,8 @@ public final class SwarmControl {
     private final Map<String, Peer> peers = new LinkedHashMap<>();
     private final Map<Long, Long> pingsSent = new HashMap<>();
     private SwarmBuild build;
+    /** Ostinato: Phase 1 command protocol. Null when {@code swarmCommandProtocol} is off. */
+    private CommandProtocol commandProtocol;
     private long ignored;
     private long sendFailures;
     private final Map<String, Consumer<SwarmMessage>> extraHandlers = new HashMap<>();
@@ -120,7 +123,9 @@ public final class SwarmControl {
      */
     public synchronized void registerHandler(String type, Consumer<SwarmMessage> handler) {
         if (PING.equals(type) || PONG.equals(type) || SwarmBuild.BUILD.equals(type)
-                || SwarmBuild.STAT.equals(type) || SwarmBuild.STOP.equals(type)) {
+                || SwarmBuild.STAT.equals(type) || SwarmBuild.STOP.equals(type)
+                || CommandProtocol.TYPE_CMD.equals(type) || CommandProtocol.TYPE_ACK.equals(type)
+                || CommandProtocol.TYPE_HELLO.equals(type)) {
             throw new IllegalArgumentException("reserved swarm message type " + type);
         }
         extraHandlers.put(type, handler);
@@ -134,6 +139,17 @@ public final class SwarmControl {
 
     /** Region build coordinator, or {@code null} if not enabled. */
     public SwarmBuild build() { return build; }
+
+    /** Ostinato: attach the Phase 1 command protocol. Null detaches it. */
+    public synchronized void setCommandProtocol(CommandProtocol protocol) {
+        this.commandProtocol = protocol;
+    }
+
+    /** Ostinato: the command protocol, or null when the setting is off. */
+    public CommandProtocol commandProtocol() { return commandProtocol; }
+
+    /** Frames of a type this bot does not handle. Phase 1 frames count here while the protocol is off. */
+    public synchronized long ignoredCount() { return ignored; }
 
     /** Number of roster groups this member is in. */
     public int groupCount() {
@@ -198,6 +214,16 @@ public final class SwarmControl {
         if (build != null) {
             build.tick();
         }
+        // Ostinato: retry unacked commands and refresh verified outcomes. No effect when the protocol is off.
+        CommandProtocol protocol = commandProtocol;
+        if (protocol != null) {
+            try {
+                protocol.pump();
+                protocol.pollExecutions();
+            } catch (RuntimeException e) {
+                log.accept("swarm: command protocol tick failed: " + e.getMessage());
+            }
+        }
     }
 
     private void handle(SwarmMessage m) {
@@ -212,6 +238,21 @@ public final class SwarmControl {
                 } catch (Exception e) {
                     sendFailures++;
                     log.accept("swarm: pong to " + m.from() + " failed: " + e.getMessage());
+                }
+                break;
+            case CommandProtocol.TYPE_CMD:
+            case CommandProtocol.TYPE_ACK:
+            case CommandProtocol.TYPE_HELLO:
+                // Ostinato: already sealed and roster-checked by the endpoint. Off, these are ignored
+                // the same way as any other unknown type.
+                if (commandProtocol != null) {
+                    try {
+                        commandProtocol.receive("link", m.from(), m.type(), m.body());
+                    } catch (RuntimeException e) {
+                        log.accept("swarm: command protocol rejected " + m.type() + ": " + e.getMessage());
+                    }
+                } else {
+                    ignored++;
                 }
                 break;
             case PONG:

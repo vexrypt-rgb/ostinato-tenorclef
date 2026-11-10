@@ -18,11 +18,19 @@ import baritone.swarm.SwarmConfig;
 import baritone.swarm.SwarmControl;
 import baritone.swarm.SwarmEndpoint;
 import baritone.swarm.SwarmKeys;
+import baritone.api.swarm.protocol.CapabilityDescriptor;
+import baritone.swarm.crypto.SigilEd25519;
 import baritone.swarm.crypto.SigilCircle;
+import baritone.swarm.protocol.AtCatalogBridge;
+import baritone.swarm.frame.SwarmFrame;
+import baritone.swarm.protocol.CommandProtocol;
+import baritone.swarm.protocol.RegistryExecutor;
 import baritone.swarm.roster.SwarmRoster;
 import baritone.swarm.transport.ChatSwarmTransport;
 import baritone.swarm.transport.SwarmChannel;
+import baritone.swarm.transport.SwarmPriority;
 import baritone.swarm.transport.SwarmRateLimiter;
+import baritone.api.swarm.protocol.ExternalCommandHook;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.Vec3i;
 
@@ -33,10 +41,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 /** Runs the swarm link when swarmEnabled. */
@@ -46,11 +58,14 @@ public final class SwarmBehavior extends Behavior implements Helper {
         final String self;
         final ChatSwarmTransport transport;
         final SwarmControl control;
+        /** Ostinato: null when swarmCommandProtocol is off. */
+        final CommandProtocol protocol;
 
-        Link(String self, ChatSwarmTransport transport, SwarmControl control) {
+        Link(String self, ChatSwarmTransport transport, SwarmControl control, CommandProtocol protocol) {
             this.self = self;
             this.transport = transport;
             this.control = control;
+            this.protocol = protocol;
         }
     }
 
@@ -58,6 +73,12 @@ public final class SwarmBehavior extends Behavior implements Helper {
     private CompletableFuture<Link> loading;
     private String loadingFor;
     private String failure;
+    /** Ostinato: kept after a drop so status can still show running + unknown. Cleared when the protocol is off. */
+    private CommandProtocol retainedProtocol;
+    private volatile ExternalCommandHook externalHook;
+    private volatile boolean ownerEmergency;
+    private volatile boolean immediateSafety;
+    private volatile boolean localSurvival;
     /** swarm* setting values the link was started with; a change (e.g. from the GUI) restarts it. */
     private String startedWith;
 
@@ -151,6 +172,9 @@ public final class SwarmBehavior extends Behavior implements Helper {
         boolean unsafe = s.swarmAllowUnsafeRate.value;
         int queueMax = s.swarmSendQueueMax.value;
         loadingFor = self;
+        // Ostinato: @ catalog text, read on this thread. Null when the protocol is off or TenorClef is absent.
+        final boolean protocolOn = s.swarmCommandProtocol.value;
+        final String atCatalog = protocolOn ? AtCatalogBridge.exportInstalled() : null;
         loading = CompletableFuture.supplyAsync(() -> {
             try {
                 Path rp = Paths.get(rosterFile);
@@ -179,7 +203,45 @@ public final class SwarmBehavior extends Behavior implements Helper {
                         + limiter.dropped() + ", too long " + transport.tooLong() + String.format(", rate %.2f/s burst %d",
                         limiter.rate(), limiter.burst()));
                 control.enableBuild(new Regions());
-                return new Link(self, transport, control);
+                // Ostinato: command protocol rides the same sealed link. Off, this stays null.
+                CommandProtocol protocol = null;
+                if (protocolOn) {
+                    Set<String> members = new HashSet<>();
+                    Set<String> groupIds = new HashSet<>();
+                    members.add(self);
+                    for (SwarmRoster.Group g : roster.groupsOf(self)) {
+                        members.addAll(g.members());
+                        groupIds.add(g.id());
+                    }
+                    CommandProtocol created = new CommandProtocol(
+                            new CommandProtocol.BotIdentity(self, endpoint.localSignetKeyId()),
+                            members,
+                            (to, type, body) -> sendSealed(endpoint, roster, self, to, type, body),
+                            new RegistryExecutor(baritone, () -> externalHook, atCatalog),
+                            new CommandProtocol.Policy(s.agentOwner.value, s.agentOwnerOnly.value,
+                                    s.agentDryRun.value, s.agentTools.value),
+                            System::currentTimeMillis, this::logDirect, 2000L);
+                    created.setOwnerEmergency(ownerEmergency);
+                    created.setImmediateSafety(immediateSafety);
+                    created.setLocalSurvival(localSurvival);
+                    created.setGroups(groupIds);
+                    created.setLocalCapabilities(CapabilityDescriptor.gameplay());
+                    try {
+                        Map<String, SigilEd25519> pins = SwarmKeys.signets(sigilHome);
+                        for (Map.Entry<String, SigilEd25519> e : pins.entrySet()) {
+                            SigilEd25519 key = e.getValue();
+                            if (key != null && key.keyid() != null) {
+                                created.pinSignet(e.getKey(), CapabilityDescriptor.hex(key.keyid()));
+                            }
+                        }
+                    } catch (Exception ignoredPins) {
+                        // No pins: peer capabilities stay unknown and cap-requiring commands are refused.
+                    }
+                    control.setCommandProtocol(created);
+                    created.advertise();
+                    protocol = created;
+                }
+                return new Link(self, transport, control, protocol);
             } catch (RuntimeException e) {
                 throw e;
             } catch (Exception e) {
@@ -208,8 +270,128 @@ public final class SwarmBehavior extends Behavior implements Helper {
         }
         loading = null;
         loadingFor = null;
+        if (link != null && link.protocol != null) {
+            // Ostinato: a drop is running + unknown, not a silent success.
+            link.protocol.onDisconnect();
+            retainedProtocol = link.protocol;
+        }
         link = null;
         startedWith = null;
+        if (!Baritone.settings().swarmCommandProtocol.value) {
+            retainedProtocol = null;
+        }
+    }
+
+    private static boolean sendSealed(SwarmEndpoint endpoint, SwarmRoster roster, String self, String to, String type,
+                                      String body) {
+        try {
+            String group = null;
+            for (SwarmRoster.Group g : roster.groupsOf(self)) {
+                if ("*".equals(to) || "all".equalsIgnoreCase(to) || g.has(to)) {
+                    group = g.id();
+                    break;
+                }
+            }
+            if (group == null) {
+                return false;
+            }
+            String dest = ("*".equals(to) || "all".equalsIgnoreCase(to)) ? SwarmFrame.BROADCAST : to;
+            endpoint.send(group, dest, type, body, SwarmPriority.HIGH);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private CommandProtocol liveProtocol() {
+        return link == null ? null : link.protocol;
+    }
+
+    private CommandProtocol anyProtocol() {
+        CommandProtocol live = liveProtocol();
+        return live != null ? live : retainedProtocol;
+    }
+
+    /** Ostinato: owner pause. No effect when the command protocol is not attached. */
+    public void noteOwnerPause(boolean paused) {
+        noteOwnerEmergency(paused);
+    }
+
+    /** Ostinato: safety hierarchy level 2. */
+    public void noteOwnerEmergency(boolean on) {
+        ownerEmergency = on;
+        CommandProtocol p = anyProtocol();
+        if (p != null) {
+            p.setOwnerEmergency(on);
+        }
+    }
+
+    /** Ostinato: safety hierarchy level 1. */
+    public void noteImmediateSafety(boolean on) {
+        immediateSafety = on;
+        CommandProtocol p = anyProtocol();
+        if (p != null) {
+            p.setImmediateSafety(on);
+        }
+    }
+
+    /** Ostinato: safety hierarchy level 3. */
+    public void noteLocalSurvival(boolean on) {
+        localSurvival = on;
+        CommandProtocol p = anyProtocol();
+        if (p != null) {
+            p.setLocalSurvival(on);
+        }
+    }
+
+    /** Ostinato: {@code @} command hook. Ignored until the protocol is on. */
+    public void setExternalCommandHook(ExternalCommandHook hook) {
+        this.externalHook = hook;
+    }
+
+    /** Ostinato: send one registry command. Does nothing useful when the protocol is off. */
+    public String submitCommand(String target, String commandLine) {
+        if (!Baritone.settings().swarmCommandProtocol.value) {
+            return "swarm: swarmCommandProtocol is false";
+        }
+        CommandProtocol p = liveProtocol();
+        if (p == null) {
+            return "swarm: link is not running (" + state() + ")";
+        }
+        return p.submit(target, commandLine);
+    }
+
+    /** Ostinato: cancel a command this bot sent. The cancel carries that command id. */
+    public String cancelCommand(String commandId) {
+        if (!Baritone.settings().swarmCommandProtocol.value) {
+            return "swarm: swarmCommandProtocol is false";
+        }
+        CommandProtocol p = liveProtocol();
+        if (p == null) {
+            return "swarm: link is not running (" + state() + ")";
+        }
+        UUID id;
+        try {
+            id = UUID.fromString(commandId == null ? "" : commandId.trim());
+        } catch (IllegalArgumentException e) {
+            return "swarm: not a command id";
+        }
+        CommandProtocol.Sent sent = p.lookupSent(id);
+        if (sent == null) {
+            return "swarm: no outgoing command " + id;
+        }
+        return p.submit(sent.target, "cancel " + id);
+    }
+
+    /** Ostinato: ack and outcome for one id, including after the link drops. */
+    public String commandOutcome(String commandId) {
+        CommandProtocol p = anyProtocol();
+        if (p == null) {
+            return Baritone.settings().swarmCommandProtocol.value
+                    ? "swarm: link is not running (" + state() + ")"
+                    : "swarm: swarmCommandProtocol is false";
+        }
+        return p.outcomeLine(commandId);
     }
 
     public void reload() {
@@ -253,7 +435,15 @@ public final class SwarmBehavior extends Behavior implements Helper {
 
     public List<String> statusLines() {
         Link l = link;
-        return l == null ? Collections.singletonList("swarm: " + state()) : l.control.statusLines();
+        List<String> base = l == null ? Collections.singletonList("swarm: " + state()) : l.control.statusLines();
+        CommandProtocol p = anyProtocol();
+        if (p == null) {
+            return base;
+        }
+        // Ostinato: read-only protocol lines. Building this list does not touch execution.
+        List<String> all = new ArrayList<>(base);
+        all.addAll(p.statusLines());
+        return all;
     }
 
     /** Builds one region of a file in the schematics folder, as ordered over the link. */

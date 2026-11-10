@@ -33,6 +33,7 @@ import baritone.behavior.SwarmBehavior;
 import baritone.swarm.SwarmBuild;
 import baritone.swarm.SwarmControl;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -109,8 +110,45 @@ public class SwarmCommand extends Command {
                 logDirect("swarm: build stopped");
                 return;
             }
+            case "send": {
+                // Ostinato: one registry command, sealed, with an id. Flag off keeps the old error.
+                if (!Baritone.settings().swarmCommandProtocol.value) {
+                    throw new CommandInvalidTypeException(args.consumed(), "ping, status, reload, build or stop");
+                }
+                args.requireMin(2);
+                String target = args.getString();
+                StringBuilder line = new StringBuilder();
+                while (args.hasAny()) {
+                    if (line.length() > 0) {
+                        line.append(' ');
+                    }
+                    line.append(args.getString());
+                }
+                logDirect(swarm.submitCommand(target, line.toString()));
+                return;
+            }
+            case "outcome": {
+                if (!Baritone.settings().swarmCommandProtocol.value) {
+                    throw new CommandInvalidTypeException(args.consumed(), "ping, status, reload, build or stop");
+                }
+                args.requireExactly(1);
+                logDirect(swarm.commandOutcome(args.getString()));
+                return;
+            }
+            case "cancel": {
+                if (!Baritone.settings().swarmCommandProtocol.value) {
+                    throw new CommandInvalidTypeException(args.consumed(), "ping, status, reload, build or stop");
+                }
+                args.requireExactly(1);
+                logDirect(swarm.cancelCommand(args.getString()));
+                return;
+            }
             default:
-                throw new CommandInvalidTypeException(args.consumed(), "ping, status, reload, build or stop");
+                // Ostinato: the extra words appear only while swarmCommandProtocol is on.
+                String expected = Baritone.settings().swarmCommandProtocol.value
+                        ? "ping, status, reload, build, stop, send, outcome or cancel"
+                        : "ping, status, reload, build or stop";
+                throw new CommandInvalidTypeException(args.consumed(), expected);
         }
     }
 
@@ -125,7 +163,11 @@ public class SwarmCommand extends Command {
     @Override
     public Stream<String> tabComplete(String label, IArgConsumer args) throws CommandException {
         if (args.hasExactlyOne()) {
-            return new TabCompleteHelper().append("ping", "status", "reload", "build", "stop").filterPrefix(args.getString()).stream();
+            TabCompleteHelper help = new TabCompleteHelper().append("ping", "status", "reload", "build", "stop");
+            if (Baritone.settings().swarmCommandProtocol.value) {
+                help.append("send", "outcome", "cancel");
+            }
+            return help.filterPrefix(args.getString()).stream();
         }
         if (args.hasExactly(2) && (args.peekString().equalsIgnoreCase("ping") || args.peekString().equalsIgnoreCase("build"))) {
             SwarmControl control = baritone instanceof Baritone ? ((Baritone) baritone).getSwarmBehavior().control() : null;
@@ -143,7 +185,7 @@ public class SwarmCommand extends Command {
 
     @Override
     public List<String> getLongDesc() {
-        return Arrays.asList(
+        List<String> lines = new ArrayList<>(Arrays.asList(
                 "Controls the encrypted swarm link (needs swarmEnabled, a roster file and a sigil keyring).",
                 "Every line sent is a sealed sigil token; there is no plaintext mode.",
                 "",
@@ -155,6 +197,12 @@ public class SwarmCommand extends Command {
                 "> swarm build <group> <file> [x y z] - as the group's lead, split a schematic (in the schematics",
                 "  folder) over the group, one region per member, using the buildPartition* settings",
                 "> swarm stop - stop the build job you lead, and your own region"
-        );
+        ));
+        if (Baritone.settings().swarmCommandProtocol.value) {
+            lines.add("> swarm send <bot> <command> - send one command and wait for its ack");
+            lines.add("> swarm outcome <id> - the ack and execution state for that command id");
+            lines.add("> swarm cancel <id> - ask that bot to stop the command; canceled only after it confirms");
+        }
+        return lines;
     }
 }

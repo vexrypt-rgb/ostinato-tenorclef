@@ -64,4 +64,20 @@ public interface ICommand extends Helper {
     default boolean hiddenFromHelp() {
         return false;
     }
+
+    /**
+     * Ostinato: who may run this command through the swarm command protocol.
+     * Default {@link CommandPermission#OWNER}. Local {@code #} chat does not read this.
+     */
+    default CommandPermission getPermission() {
+        return CommandPermission.OWNER;
+    }
+
+    /**
+     * Ostinato: default target bot for this command, or null for the local bot.
+     * A swarm envelope can name a different target. Local {@code #} chat does not read this.
+     */
+    default String getTargetBot() {
+        return null;
+    }
 }
