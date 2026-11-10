@@ -33,6 +33,8 @@ import baritone.pathing.cadenza.CadenzaGoal;
 import baritone.pathing.cadenza.CadenzaSession;
 import baritone.pathing.movement.CalculationContext;
 import baritone.pathing.movement.MovementHelper;
+import baritone.legit.LegitGather;
+import baritone.legit.LegitGatherLive;
 import baritone.legit.LegitScan;
 import baritone.legit.LegitTargets;
 import baritone.legit.McSeenView;
@@ -75,6 +77,9 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
     public String cadenzaNote = "", cadenzaGaveUp = "";
     /** Ostinato: positions that passed the seen-only filter during this mine. Not written to disk. */
     private final LongOpenHashSet legitSeen = new LongOpenHashSet();
+    /** Ostinato: how far the current legit branch has walked, and which parallel branch it is on. */
+    private int legitBranchStep;
+    private int legitBranchIndex;
 
     public MineProcess(Baritone baritone) {
         super(baritone);
@@ -350,6 +355,10 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
             }
         }
         // we don't know any ore locations at the moment
+        if (LegitTargets.active()) {
+            // Ostinato: no visible ore. One bot may cave, branch, or swim. This is not a path toward a cached ore.
+            return legitGather();
+        }
         if (!legit && !Baritone.settings().exploreForBlocks.value) {
             return null;
         }
@@ -649,6 +658,77 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         return true;
     }
 
+    /**
+     * Ostinato: gather while legit mode is on and nothing visible is left to mine. The goal is the next open cave
+     * cell, the next branch cell, or one block toward air. A torch or door click is not sent from here.
+     */
+    private PathingCommand legitGather() {
+        if (ctx.player() == null || ctx.world() == null) {
+            return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
+        }
+        if (branchPoint == null) {
+            branchPoint = ctx.playerFeet();
+        }
+        int salt = Math.floorMod(branchPoint.getX() * 734287 + branchPoint.getZ() * 912931, 100_000);
+        boolean grace = baritone.getGraceNote().holdsControl();
+        LegitGather.Facts facts = LegitGatherLive.capture(ctx, baritone.bsi, grace, salt, tickCount,
+                legitBranchIndex, legitBranchStep, branchPoint.getX(), branchPoint.getZ(), legitTargetName());
+        LegitGather.Plan plan = LegitGather.plan(facts);
+        if (plan.strategy == LegitGather.Strategy.BRANCH && plan.hasGoal && standingOn(plan)) {
+            legitBranchStep++;
+            if (legitBranchStep >= LegitGather.runLength(salt, legitBranchIndex)) {
+                legitBranchStep = 0;
+                legitBranchIndex++;
+            }
+            facts.branchIndex = legitBranchIndex;
+            facts.branchStep = legitBranchStep;
+            plan = LegitGather.plan(facts);
+        }
+        PathingCommand pause = new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
+        switch (plan.strategy) {
+            case REJECT:
+                logDirect(plan.refusal == null ? LegitGather.MULTI_BOT_REFUSAL : plan.refusal);
+                cancel();
+                return null;
+            case LOOK:
+                float yaw = ctx.player().getYRot();
+                int turn = ((salt & 1) == 0 ? 40 : -40);
+                baritone.getLookBehavior().updateTarget(new Rotation(yaw + turn, ctx.player().getXRot()), false);
+                return pause;
+            case SWAP_TOOL:
+                MovementHelper.switchToBestToolFor(ctx, Blocks.STONE.defaultBlockState());
+                return pause;
+            case YIELD:
+            case LIGHT:
+            case WATER_DOOR:
+                // Ostinato: lighting and door placement need a live client. Pausing does not walk into the dark or the water.
+                return pause;
+            case RETREAT:
+            case SINK_FOR_DOOR:
+            case CAVE:
+            case BRANCH:
+                if (!plan.hasGoal) {
+                    return pause;
+                }
+                return new PathingCommand(new GoalBlock(plan.x, plan.y, plan.z), PathingCommandType.REVALIDATE_GOAL_AND_PATH);
+            default:
+                return pause;
+        }
+    }
+
+    private boolean standingOn(LegitGather.Plan plan) {
+        BetterBlockPos feet = ctx.playerFeet();
+        return feet.getX() == plan.x && feet.getY() == plan.y && feet.getZ() == plan.z;
+    }
+
+    private String legitTargetName() {
+        BlockOptionalMetaLookup current = filterFilter();
+        if (current == null || current.blocks().isEmpty()) {
+            return "stone";
+        }
+        return current.blocks().get(0).getBlock().getDescriptionId();
+    }
+
     /** Ostinato: admit only blocks that pass {@link baritone.api.legit.SeenOnly}, plus ones already admitted this task. */
     private static List<BlockPos> withoutDrops(List<BlockPos> locs, List<BlockPos> dropped) {
         if (dropped.isEmpty()) {
@@ -767,6 +847,8 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         this.anticipatedDrops = new HashMap<>();
         this.cadenza.reset();
         this.legitSeen.clear();
+        this.legitBranchStep = 0;
+        this.legitBranchIndex = 0;
         if (filter != null) {
             rescan(new ArrayList<>(), new CalculationContext(baritone));
         }
