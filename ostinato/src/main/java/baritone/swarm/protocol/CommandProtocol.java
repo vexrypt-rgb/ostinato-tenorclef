@@ -856,6 +856,17 @@ public final class CommandProtocol {
             if (s == null) {
                 return;
             }
+            // Ostinato: only the command's target (or a member, when the target is a group/all) may ack it.
+            if (!ackFromIntendedTarget(from, s.target)) {
+                log.accept("swarm: ignored ack from " + from + " for command aimed at " + s.target);
+                return;
+            }
+            if (s.acked && s.accepted && s.execution != null && s.execution.terminal()
+                    && s.observation == ObservationState.CONFIRMED
+                    && (!ack.accepted || !ack.execution.terminal())) {
+                log.accept("swarm: ignored later ack that would unwind " + ack.id);
+                return;
+            }
             s.acked = true;
             s.gaveUp = false;
             s.accepted = ack.accepted;
@@ -871,6 +882,20 @@ public final class CommandProtocol {
                     + (ack.reason == null || ack.reason.isEmpty() ? "" : " " + ack.reason)
                     + " " + ack.execution.label() + " observation " + ack.observation.label());
         }
+    }
+
+    /** Caller holds {@link #lock}. */
+    private boolean ackFromIntendedTarget(String from, String target) {
+        if (from == null || target == null) {
+            return false;
+        }
+        if (from.equals(target)) {
+            return true;
+        }
+        if ("*".equals(target) || "all".equalsIgnoreCase(target) || groups.contains(target)) {
+            return members.contains(from);
+        }
+        return false;
     }
 
     private boolean isTarget(String target) {

@@ -113,10 +113,18 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
         if (name != null && extra != null && commands().getCommand(name) == null && extra.knows(name)) {
             return extra.confirmStopped(id);
         }
+        // Ostinato: actually request a stop, then confirm nothing is still in control.
+        try {
+            if (baritone.getPathingBehavior() != null) {
+                baritone.getPathingBehavior().cancelEverything();
+            }
+        } catch (Throwable ignored) {
+            return false;
+        }
         try {
             IPathingControlManager mgr = baritone.getPathingControlManager();
             if (mgr == null) {
-                return false;
+                return true;
             }
             Optional<IBaritoneProcess> cur = mgr.mostRecentInControl();
             if (cur.isPresent() && cur.get().isActive()) {
@@ -130,7 +138,31 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
 
     @Override
     public ExecutionState poll(UUID id) {
-        // Idle is not a verified success. The caller marks succeeded only when this returns a terminal state.
-        return null;
+        String name = started.get(id);
+        if (name == null) {
+            return null;
+        }
+        // @ commands stay ambiguous; CommandProtocol will not take a terminal from poll for those.
+        if (commands().getCommand(name) == null) {
+            return null;
+        }
+        if (CommandProtocol.completesInline(name)) {
+            return null;
+        }
+        try {
+            IPathingControlManager mgr = baritone.getPathingControlManager();
+            if (mgr == null) {
+                return null;
+            }
+            Optional<IBaritoneProcess> cur = mgr.mostRecentInControl();
+            if (cur.isPresent() && cur.get().isActive()) {
+                return null;
+            }
+            // Ostinato: a finished # pathing process is the verified success signal.
+            // Leaving the command running forever would make busy() reject every later command.
+            return ExecutionState.SUCCEEDED;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 }

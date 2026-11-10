@@ -21,6 +21,7 @@ import baritone.api.command.CommandPermission;
 import baritone.api.swarm.protocol.CapabilityDescriptor;
 import baritone.swarm.SwarmConfig;
 import baritone.swarm.SwarmControl;
+import baritone.api.swarm.protocol.ExecutionState;
 import baritone.swarm.SwarmControlTest;
 import baritone.swarm.SwarmEndpoint;
 import baritone.swarm.TestCircles;
@@ -48,6 +49,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -225,6 +227,40 @@ public class Phase1UnexpectedExecutionTest {
         String body = Phase1Support.cmd(pair.clock.get(), UUID.randomUUID(), "Alice", "Bob", "goto", "1 2 3");
         pair.bob.receive("mem", "Alice", CommandProtocol.TYPE_CMD, body);
         assertEquals(0, pair.bobExec.count("goto"));
+    }
+
+    @Test
+    public void ackFromNonTargetIsIgnored() {
+        Pair pair = new Pair();
+        String line = pair.alice.submit("Bob", "eta");
+        UUID id = Phase1Support.idOf(line);
+        CommandProtocol.Sent sent = pair.alice.lookupSent(id);
+        assertNotNull(sent);
+        assertTrue(sent.acked);
+        assertTrue(sent.accepted);
+        assertEquals(ExecutionState.SUCCEEDED, sent.execution);
+        String fake = "1|ack|" + id + "|rejected|spoofed|failed (verified)|confirmed";
+        pair.alice.receive("mem", "Alice", CommandProtocol.TYPE_ACK, fake);
+        sent = pair.alice.lookupSent(id);
+        assertTrue(sent.accepted);
+        assertEquals(ExecutionState.SUCCEEDED, sent.execution);
+    }
+
+    @Test
+    public void laterRejectedAckDoesNotUnwindConfirmedSuccess() {
+        Pair pair = new Pair();
+        String line = pair.alice.submit("Bob", "eta");
+        UUID id = Phase1Support.idOf(line);
+        CommandProtocol.Sent sent = pair.alice.lookupSent(id);
+        assertNotNull(sent);
+        assertTrue(sent.acked);
+        assertTrue(sent.accepted);
+        assertEquals(ExecutionState.SUCCEEDED, sent.execution);
+        String later = "1|ack|" + id + "|rejected|rewind|failed (verified)|confirmed";
+        pair.alice.receive("mem", "Bob", CommandProtocol.TYPE_ACK, later);
+        sent = pair.alice.lookupSent(id);
+        assertTrue(sent.accepted);
+        assertEquals(ExecutionState.SUCCEEDED, sent.execution);
     }
 
     private static SwarmControl.LocalStatus status(String name) {
