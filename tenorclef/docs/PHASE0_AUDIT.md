@@ -71,13 +71,13 @@ See [`DEPENDENCIES.md`](./DEPENDENCIES.md). Short form:
 
 ```bat
 :: Ostinato tip
-cd C:\Users\redfa\Documents\MinecraftDev\Ostinato && gradlew.bat :fabric:build
+cd C:\Users\<user>\Documents\MinecraftDev\Ostinato && gradlew.bat :fabric:build
 
 :: Ostinato 1.16.1 (JDK 8)
-cd C:\Users\redfa\Documents\MinecraftDev\Ostinato-1.16.1 && gradlew.bat build -Pbaritone.fabric_build
+cd C:\Users\<user>\Documents\MinecraftDev\Ostinato-1.16.1 && gradlew.bat build -Pbaritone.fabric_build
 
 :: TenorClef
-cd C:\Users\redfa\Documents\MinecraftDev\altoclef
+cd C:\Users\<user>\Documents\MinecraftDev\altoclef
 gradlew.bat :1.21.11:compileJava
 gradlew.bat :1.16.1:compileJava
 ```

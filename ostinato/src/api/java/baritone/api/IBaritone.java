@@ -153,10 +153,13 @@ public interface IBaritone {
     /** Ostinato: the sealed swarm link (always non-null; check {@code isOnline()}). */
     baritone.api.swarm.ISwarm getSwarm();
 
-    /** Ostinato: the movement engine selected by the {@code movementBackend} setting. */
+    /** Ostinato: travel facade. The block route stays Baritone's search. */
     baritone.api.movement.IMovementEngine getMovementEngine();
 
-    /** Ostinato: which backend {@link #getMovementEngine()} prefers. */
+    /**
+     * Ostinato: route preference TenorClef reads. Stays {@link baritone.api.movement.MovementBackendKind#BARITONE}.
+     * Key order is the {@code travelStack} setting, read by the path executor.
+     */
     baritone.api.movement.MovementBackendKind getMovementBackendPreference();
 
     /**
@@ -168,6 +171,17 @@ public interface IBaritone {
     /** Ostinato: pathfinder-consistent world questions (water/lava, place-against, avoid-break, tool speed, path block changes). */
     baritone.api.utils.IWorldQueries getWorldQueries();
 
+    /** Ostinato: the predictive physics engine (trajectories, falls, projectiles, explosions over a world snapshot). */
+    baritone.api.physics.IPredictivePhysics getPredictivePhysics();
+
+    /** Read-only contextual threat intelligence (26.3). */
+    baritone.api.threat.IThreatAssessment getThreatAssessment();
+
+    /**
+     * Ostinato: Grace Note, the emergency survival layer (fall clutch). Observe-only unless switched to LIVE.
+     */
+    baritone.api.gracenote.IGraceNote getGraceNote();
+
     // Ostinato: health estimator
     /**
      * @return The estimated health of nearby living entities (see {@link baritone.api.utils.IHealthEstimator}). The
@@ -176,4 +190,7 @@ public interface IBaritone {
     default baritone.api.utils.IHealthEstimator getHealthEstimator() {
         return e -> new baritone.api.utils.HealthEstimate(e.getHealth(), e.getAbsorptionAmount(), e.getMaxHealth(), 1, 0, "synced");
     }
+
+    /** Ostinato: companion coordinator. Idle unless secondoEnabled and a follow session are both on. */
+    ISecondoProcess getSecondoProcess();
 }

@@ -3,14 +3,14 @@
   Unattended 1.16.1 runClient + @testrun2 overnight harness (Baritone preferred).
 
 .NOTES
-  Repo: C:\Users\redfa\Documents\MinecraftDev\altoclef
+  Repo: C:\Users\<user>\Documents\MinecraftDev\altoclef
   JDK:  C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot
   Keep idleCommand empty; send @testrun2 via chat AFTER join.
   Prefer Baritone.
 #>
 [CmdletBinding()]
 param(
-  [string]$Repo = "C:\Users\redfa\Documents\MinecraftDev\altoclef",
+  [string]$Repo = "C:\Users\<user>\Documents\MinecraftDev\altoclef",
   [string]$JavaHome = "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot",
   [int]$JoinTimeoutSec = 420,
   [int]$StallSec = 90,

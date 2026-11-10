@@ -31,12 +31,17 @@ import java.util.Set;
 public final class OstinatoPins {
 
     private static final Set<String> PINNED = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
-            "kinematicTravel", "slowKinematic", "physicsTravel", "pitfallAvoidance", "sprintJump",
+            "kinematicTravel", "slowKinematic", "physicsTravel", "travelStack", "simTravel", "pitfallAvoidance", "sprintJump", "fastMode", "fastModeMinHealth",
             "allowBoats", "allowBoatFall", "maxFallHeightBoat", "allowDoorAirPockets", "swimInWater",
             "elytraGlideWithoutFireworks", "elytraGlideRatio", "elytraGlidePitch",
             "guiKeybind", "renderPathHud", "pathHudAnchor", "guiAccentColor", "guiTheme",
             "pvpAutotune", "renderAcsHud", "acsHudAnchor", "acsHudOpacity", "acsHudScale",
-            "renderKinCorridor", "renderKinRollouts", "renderKinJumps", "renderPhysSpeedTrail", "renderPhysInputs", "renderPhysSearch"
+            "renderKinCorridor", "renderKinRollouts", "renderKinJumps", "renderPhysSpeedTrail", "renderPhysInputs", "renderPhysSearch",
+            "trainingTask", "trainingLegit", "compassFollow", "trainingSeed", "trainingTasks", "trainingModel", "trainingModelFile", "trainingOutDir", "trainingGearChoice", "raceEveryBlockItem",
+            "overnightRaces", "overnightEveryBlockItem", "overnightDir", "overnightTimeoutMs",
+            "agentApi", "agentChat", "agentProvider", "agentBaseUrl", "agentModel", "agentApiKey",
+            "agentDryRun", "agentOwnerOnly", "agentOwner", "agentKeyFile", "agentOneSession", "agent429ToOllama",
+            "agentMemory", "agentTools", "agentRouteDir"
     )));
 
     private OstinatoPins() {}

@@ -2,11 +2,11 @@
 
 **Date:** 2026-09-20 ~05:00 PT  
 **Target machine:** `b7b8e2e7-d629-4a3e-9809-04f69b7bdd10`  
-**Repo (Windows):** `C:\Users\redfa\Documents\MinecraftDev\altoclef`  
+**Repo (Windows):** `C:\Users\<user>\Documents\MinecraftDev\altoclef`  
 **Also searched:** Ostinato, Ostinato-1.16.1, `*sim*` trees (box mirrors + prior Windows-agent transcripts)
 
 > **Executor note:** This pass ran with **box-bound Shell** (no `machineId` on Shell/Read). Live Windows probes (java/Minecraft process, `versions\1.16.1\run\crash-reports`, on-disk settings) were **not** run here. Parent should CopyFromBox this file to  
-> `C:\Users\redfa\Documents\MinecraftDev\altoclef\docs\SIM_HARNESS_FINDINGS.md`  
+> `C:\Users\<user>\Documents\MinecraftDev\altoclef\docs\SIM_HARNESS_FINDINGS.md`  
 > and confirm live state with a `machine: { sameMachine: {} }` executor.
 
 ---
@@ -16,7 +16,7 @@
 | Question | Answer |
 |----------|--------|
 | True headless / GameTest / dedicated-server **sim** for `@testrun2`? | **No.** |
-| Overnight **live-client** automation harness? | **In progress.** Spec: `sim-harness/docs/SIM_HARNESS.md`. Script: `sim-harness/scripts/overnight-testrun2.ps1`. Prior art: `C:\Users\redfa\agent-tools\altoclef-auto\` (1.21-era create-world / launch / kill / overnight-loop). |
+| Overnight **live-client** automation harness? | **In progress.** Spec: `sim-harness/docs/SIM_HARNESS.md`. Script: `sim-harness/scripts/overnight-testrun2.ps1`. Prior art: `C:\Users\<user>\agent-tools\altoclef-auto\` (1.21-era create-world / launch / kill / overnight-loop). |
 | Overnight without a human? | **Only via live Fabric `runClient` + UI focus** (create-world Tab/Enter or coords, then chat `@testrun2`). Not headless MC. |
 | Verdict | **Finish/harden the live-client harness** — do not build a GameTest sim. Offline `BenchmarkHarness` is mock-only and does not drive `@testrun2`. |
 
@@ -43,7 +43,7 @@ No standalone `SIM.md` / `TESTING.md` / `HARNESS.md` / `OVERNIGHT.md` beyond the
 | Location | Notes |
 |----------|--------|
 | **`sim-harness/scripts/overnight-testrun2.ps1`** | Unattended 1.16.1 draft: patch settings → `:1.16.1:runClient` → keyboard create-world → chat `@testrun2` → stall/crash monitor → `logs/overnight-status.json` |
-| **`C:\Users\redfa\agent-tools\altoclef-auto\`** (Windows, from transcripts) | `launch-mc.ps1`, `kill-mc.ps1`, `create-world-and-start.ps1`, `overnight-loop.ps1`, `replay-create-world.ps1`, teach/replay CSV+JSON, `status.txt` |
+| **`C:\Users\<user>\agent-tools\altoclef-auto\`** (Windows, from transcripts) | `launch-mc.ps1`, `kill-mc.ps1`, `create-world-and-start.ps1`, `overnight-loop.ps1`, `replay-create-world.ps1`, teach/replay CSV+JSON, `status.txt` |
 | Repo `APPLY-*-ON-WINDOWS.ps1` (box) | Patch helpers only |
 
 ### Teach / click recordings (create-world)
@@ -93,7 +93,7 @@ Overnight script also forces baritone in run-dir settings and clears `idleComman
 ```powershell
 Get-CimInstance Win32_Process -Filter "Name='java.exe' OR Name='javaw.exe'" |
   Where-Object { $_.CommandLine -match '1\.16\.1|altoclef|fabric' }
-Get-ChildItem "C:\Users\redfa\Documents\MinecraftDev\altoclef\versions\1.16.1\run\crash-reports" |
+Get-ChildItem "C:\Users\<user>\Documents\MinecraftDev\altoclef\versions\1.16.1\run\crash-reports" |
   Sort-Object LastWriteTime -Descending | Select-Object -First 5
 ```
 

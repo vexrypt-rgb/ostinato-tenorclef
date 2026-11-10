@@ -13,7 +13,7 @@ param([switch]$AllowWindow)
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 if (-not (Test-Path (Join-Path $root "gradlew.bat"))) {
-    $root = "C:\Users\redfa\Documents\MinecraftDev\Ostinato-combat-1.21.11"
+    $root = "C:\Users\<user>\Documents\MinecraftDev\Ostinato-combat-1.21.11"
 }
 $pmc = Join-Path $env:APPDATA "Python\Python314\Scripts\portablemc.exe"
 if (-not (Test-Path $pmc)) { throw "portablemc 4.4.1 is not installed. Run: python -m pip install --user portablemc==4.4.1" }

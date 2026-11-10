@@ -18,6 +18,7 @@
 package baritone.pathing.movement.movements;
 
 import baritone.utils.BoatUtil;
+import baritone.utils.FastMode;
 import baritone.utils.MountUtil;
 import baritone.altoclef.AltoClefSettings;
 import baritone.api.IBaritone;
@@ -297,6 +298,17 @@ public class MovementFall extends Movement {
         }
 
         BlockPos playerFeet = ctx.playerFeet();
+        // Ostinato: a caught ladder is slid. Forward would climb it, and sneak would freeze the slide.
+        // Ostinato: fastMode behaves as if allowLadderClutch were on. Off, this is the setting.
+        if (MovementDescend.slideOnGrabbedLadder(FastMode.allowLadderClutch(), ctx.player().onClimbable(),
+                playerFeet.getX(), playerFeet.getY(), playerFeet.getZ(), fx, fz, src.y, dest.y)) {
+            double dx = ctx.player().position().x - (fx + 0.5);
+            double dz = ctx.player().position().z - (fz + 0.5);
+            if (dx * dx + dz * dz > 0.04) {
+                MovementHelper.moveTowards(ctx, state, new BlockPos(fx, playerFeet.getY(), fz));
+            }
+            return state;
+        }
         Rotation toDest = RotationUtils.calcRotationFromVec3d(ctx.playerHead(), VecUtils.getBlockPosCenter(dest), ctx.playerRotations());
         Rotation targetRotation = null;
         BlockState destState = ctx.world().getBlockState(dest);
@@ -437,7 +449,7 @@ public class MovementFall extends Movement {
         Vec3 aim = m.getBoundingBox().getCenter();
         Rotation r = RotationUtils.calcRotationFromVec3d(ctx.playerHead(), aim, ctx.playerRotations());
         double reach = MountUtil.reach(ctx.player(), m);
-        double nextY = ctx.player().position().y + (ctx.player().getDeltaMovement().y - 0.08) * 0.98;
+        double nextY = ctx.player().position().y + (ctx.player().getDeltaMovement().y - 0.08) * 0.98f;
         if (reach <= MountUtil.REACH || nextY <= dest.y + 0.5 && reach < MountUtil.SERVER_REACH - 0.5) {
             emptyHand();
             Minecraft.getInstance().gameMode.interact(ctx.player(), m, new net.minecraft.world.phys.EntityHitResult(m, aim), InteractionHand.MAIN_HAND);

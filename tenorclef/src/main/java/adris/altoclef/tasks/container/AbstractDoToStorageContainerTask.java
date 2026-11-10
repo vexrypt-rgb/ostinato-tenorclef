@@ -8,8 +8,11 @@ import adris.altoclef.tasksystem.Task;
 import adris.altoclef.trackers.storage.ContainerCache;
 import adris.altoclef.trackers.storage.ContainerType;
 import adris.altoclef.util.helpers.WorldHelper;
+import net.minecraft.block.AbstractSignBlock;
 import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
 
 import java.util.Optional;
 
@@ -19,6 +22,7 @@ import java.util.Optional;
 public abstract class AbstractDoToStorageContainerTask extends Task {
 
     private ContainerType currentContainerType = null;
+    private int waitForCacheTicks;
 
     @Override
     protected void onStart() {
@@ -46,6 +50,19 @@ public abstract class AbstractDoToStorageContainerTask extends Task {
             if (cache.isPresent()) {
                 return onContainerOpenSubtask(mod, cache.get());
             }
+            // Ostinato: #allblocks. The screen is open but the tracker files it a tick or two later. Interacting again
+            // here closed it (InteractWithBlockTask closes any open screen before clicking), so on 26.3 a chest was
+            // opened and shut every few ticks and never filled.
+            if (++waitForCacheTicks < 40) {
+                setDebugState("Container open, waiting for its contents");
+                return null;
+            }
+            if (waitForCacheTicks == 40) {
+                adris.altoclef.Debug.logMessage("Container screen open at " + targetPos.toShortString()
+                        + " but the storage tracker has no cache for it after 2s: " + adris.altoclef.trackers.storage.ContainerSubTracker.debugState);
+            }
+        } else {
+            waitForCacheTicks = 0;
         }
 
         // Get to the container
@@ -58,12 +75,41 @@ public abstract class AbstractDoToStorageContainerTask extends Task {
             return new DestroyBlockTask(targetPos.up());
         }
         setDebugState("Opening container: " + targetPos.toShortString());
+        // Ostinato: run52. The no-direction interact stands in the block above the barrel. A ceiling
+        // barrel (42,72,140) never opened, so the fill timed out. Click an open face instead.
+        Direction face = openFace(mod, targetPos);
+        if (face != null) {
+            return new InteractWithBlockTask(adris.altoclef.util.ItemTarget.EMPTY, face, targetPos, baritone.api.utils.input.Input.CLICK_RIGHT, false, false);
+        }
         return new InteractWithBlockTask(targetPos);
     }
 
     @Override
     protected void onStop(Task interruptTask) {
 
+    }
+
+    // Ostinato: run52. A side with room to stand, else the underside of a ceiling container.
+    private static Direction openFace(AltoClef mod, BlockPos pos) {
+        for (Direction d : new Direction[]{Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST}) {
+            BlockPos n = pos.offset(d);
+            // Ostinato: run53. Was open(n) && open(n.down()): n.down() is the floor beside a floor barrel, so no side ever
+            // qualified and the no-direction fallback ran. A stand cell has feet+head open and something solid below.
+            if (open(mod, n) && open(mod, n.up()) && !open(mod, n.down())) return d;
+            if (open(mod, n) && open(mod, n.down()) && !open(mod, n.down(2))) return d;
+        }
+        if (open(mod, pos.down()) && open(mod, pos.down(2))) return Direction.DOWN;
+        return null;
+    }
+
+    private static boolean open(AltoClef mod, BlockPos p) {
+        BlockState s = mod.getWorld().getBlockState(p);
+        // Ostinato: #allblocks. Water and lava have no collision shape either, but a face whose stand cell is fluid
+        // sent the bot swimming at a lakeside chest until the deposit timed out.
+        // A sign has no collision either, but the pathfinder will not stand in one it may not break (an #allblocks
+        // label in front of its chest), so the chest was never reached.
+        return s.isAir() || (s.getCollisionShape(mod.getWorld(), p).isEmpty() && s.getFluidState().isEmpty()
+                && !(s.getBlock() instanceof AbstractSignBlock));
     }
 
     protected abstract Optional<BlockPos> getContainerTarget();

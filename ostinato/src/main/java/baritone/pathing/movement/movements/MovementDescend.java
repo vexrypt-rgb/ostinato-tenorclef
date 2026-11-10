@@ -19,6 +19,7 @@ package baritone.pathing.movement.movements;
 
 import baritone.Baritone;
 import baritone.utils.ExperimentalMovement;
+import baritone.utils.FastTravel;
 import baritone.altoclef.AltoClefSettings;
 import baritone.api.IBaritone;
 import baritone.api.pathing.movement.MovementStatus;
@@ -139,12 +140,12 @@ public class MovementDescend extends Movement {
         }
 
         // we walk half the block plus 0.3 to get to the edge, then we walk the other 0.2 while simultaneously falling (math.max because of how it's in parallel)
-        double walk = WALK_OFF_BLOCK_COST;
+        double walk = context.walkOffCost; // Ostinato: TickSim when tickAccurateCosts
         if (fromDown == Blocks.SOUL_SAND) {
             // use this ratio to apply the soul sand speed penalty to our 0.8 block distance
             walk *= WALK_ONE_OVER_SOUL_SAND_COST / WALK_ONE_BLOCK_COST;
         }
-        totalCost += walk + Math.max(FALL_N_BLOCKS_COST[1], CENTER_AFTER_FALL_COST);
+        totalCost += walk + context.descendLandCost; // Ostinato: TickSim when tickAccurateCosts
         res.x = destX;
         res.y = y - 1;
         res.z = destZ;
@@ -288,9 +289,9 @@ public class MovementDescend extends Movement {
                 res.cost = tentativeCost;
                 return false;
             }
-            if (unprotectedFallHeight <= 11 && MovementHelper.isClimbable(ontoBlock.getBlock())) {
-                // if fall height is greater than or equal to 11, we don't actually grab on to vines or ladders. the more you know
-                // this effectively "resets" our falling speed
+            if (MovementHelper.isClimbable(ontoBlock.getBlock()) && grabClimbable(context, effectiveStartHeight, newY, unprotectedFallHeight)) {
+                // Ostinato: under 11 blocks this is the old cutoff, so a default search is unchanged. allowLadderClutch
+                // also catches a cell a faster fall still starts a tick inside. Either way the grab resets falling speed.
                 costSoFar += FALL_N_BLOCKS_COST[unprotectedFallHeight - 1];// we fall until the top of this block (not including this block)
                 costSoFar += LADDER_DOWN_ONE_COST;
                 effectiveStartHeight = newY;
@@ -531,8 +532,45 @@ public class MovementDescend extends Movement {
         if (plan == null) {
             return COST_INF;
         }
+        // Ostinato: a missed place is the whole fall. Don't offer one that would kill, or that drops below the experimental floor.
+        if (!clutchMissSurvivable(context, startY - landY)) {
+            return COST_INF;
+        }
         // a ladder comes back off the wall after we land (MovementFall.pickUpLadder), mining it and waiting on the drop is about a second
         return plan.ticks() + context.placeBucketCost() + (context.clutchPicksUp ? LADDER_PICKUP_COST : 0);
+    }
+
+    /**
+     * Ostinato: the old "drop into this cell is 11 blocks or less" grab. Past that, only when {@code ladderGrab}
+     * and a tick of the fall actually starts inside the cell.
+     */
+    private static boolean grabClimbable(CalculationContext context, int startY, int cellY, int unprotectedFallHeight) {
+        if (unprotectedFallHeight <= 11) {
+            return true;
+        }
+        return context.ladderGrab && LadderClutch.grabs(startY, cellY);
+    }
+
+    /**
+     * Ostinato: half-hearts a missed ladder place would cost. Survivable means at least 1 left, and at least
+     * {@code experimentalMinHealth} while that preset is on, or {@code fastModeMinHealth} while fastMode is on.
+     * Both on: the higher floor.
+     */
+    static boolean clutchMissSurvivable(CalculationContext context, int blocksFallen) {
+        int damage = ExperimentalMovement.fallDamage(blocksFallen);
+        // Ostinato: off, the floor is 1, same as before.
+        double floor = context.experimental || context.fastMode
+                ? Math.max(1.0, FastTravel.fallFloor(context.experimental, context.experimentalMinHealth, context.fastMode, context.fastModeMinHealth))
+                : 1.0;
+        return ExperimentalMovement.canAffordFall(context.health, damage, floor);
+    }
+
+    /**
+     * Ostinato: this fall has caught a ladder or vine in its own column, and the landing is still below.
+     * Holding forward here climbs back up. No keys lets vanilla slide down the climbable.
+     */
+    static boolean slideOnGrabbedLadder(boolean clutchOn, boolean onClimbable, int feetX, int feetY, int feetZ, int columnX, int columnZ, int srcY, int destY) {
+        return clutchOn && onClimbable && feetX == columnX && feetZ == columnZ && feetY < srcY && feetY > destY;
     }
 
     static final double LADDER_PICKUP_COST = 20;
@@ -579,7 +617,7 @@ public class MovementDescend extends Movement {
                 y += vy;
             }
             peak = Math.max(peak, y);
-            vy = (vy - 0.08) * 0.98;
+            vy = (vy - 0.08) * 0.98f;
         }
         return Math.max(1, ticks - Math.max(firstFall, 0));
     }
@@ -604,11 +642,13 @@ public class MovementDescend extends Movement {
     private static void hurtingFall(CalculationContext context, int destX, int destZ, int newY, int blocks, double tentativeCost, BlockState onto, MutableMoveResult res) {
         int damage = onto.is(Blocks.HAY_BLOCK) ? softFallDamage(blocks, HAY_FALL_MULTIPLIER) : ExperimentalMovement.fallDamage(blocks);
         int hit = damage + ExperimentalMovement.SAFE_FALL; // the plain fall that hurts as much, which is what the caps are in
-        if (context.experimental) {
+        // Ostinato: fastMode uses the same hurting-fall gate, with fastModeMinHealth. Off, the old budget.
+        if (context.experimental || context.fastMode) {
             if (hit > ExperimentalMovement.MAX_HURT_FALL) {
                 return;
             }
-            if (!ExperimentalMovement.canAffordFall(context.health, damage, context.experimentalMinHealth)) {
+            double floor = FastTravel.fallFloor(context.experimental, context.experimentalMinHealth, context.fastMode, context.fastModeMinHealth);
+            if (!ExperimentalMovement.canAffordFall(context.health, damage, floor)) {
                 return;
             }
         } else if (hit > FallBudget.maxBlocks(context.health, FallBudget.FLOOR, context.maxFallHeightNoWater, FallBudget.CAP)) {

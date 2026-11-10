@@ -136,6 +136,19 @@ public final class Settings {
     public final Setting<Double> jumpPenalty = new Setting<>(2D);
 
     /**
+     * Ostinato: estimate ascend and descend costs with a short tick simulation of vanilla movement (friction,
+     * acceleration, air control, gravity, drag) instead of the fixed tables. Off keeps the stock costs.
+     */
+    public final Setting<Boolean> tickAccurateCosts = new Setting<>(false);
+
+    /**
+     * Ostinato: price 1 and 2 block flat parkour gaps that have a straight run-up behind the take-off block as
+     * sprint jumps (tick-simulated, never below sprint speed) instead of walking speed, and sprint them. Off keeps
+     * the stock costs and execution.
+     */
+    public final Setting<Boolean> momentumJumpCosts = new Setting<>(false);
+
+    /**
      * Walking on water uses up hunger really quick, so penalize it
      */
     public final Setting<Double> walkOnWaterOnePenalty = new Setting<>(3D);
@@ -263,8 +276,12 @@ public final class Settings {
     public final Setting<Float> parkourTurnCap = new Setting<>(180f);
 
     /**
-     * Survive a long fall by placing a ladder or vine on a wall beside the last blocks of it, like a water bucket clutch.
-     * Needs a ladder or vine on the hotbar.
+     * Survive a long fall by grabbing a ladder or vine already in the column, or by placing one on a wall beside the
+     * last blocks of it, like a water bucket clutch. Placing needs a ladder or vine on the hotbar. Off, an existing
+     * ladder is still caught only when the drop into that cell is 11 blocks or less, so default paths do not move.
+     * A place is not offered when missing it would leave you below 1 health, or below {@link #experimentalMinHealth}
+     * while {@link #experimentalMovement} is on, or below {@link #fastModeMinHealth} while {@link #fastMode} is on.
+     * If both presets are on, the higher floor wins.
      */
     public final Setting<Boolean> allowLadderClutch = new Setting<>(false);
 
@@ -272,6 +289,14 @@ public final class Settings {
      * After a ladder clutch, break the ladder and pick it back up so one ladder can save you more than once.
      */
     public final Setting<Boolean> pickupLadders = new Setting<>(true);
+
+    /**
+     * Ostinato: when the only face to place a bridge block against is the one underfoot, turn around and walk
+     * backward, and click that far face instead of sneaking to the edge. Off, those traverses still sneak, so
+     * default paths do not move. Stays off ice, slime, honey, magma, water, ladders, vines and blocks a click
+     * opens. Side placement is unchanged. Ignored while {@link #assumeSafeWalk} is on.
+     */
+    public final Setting<Boolean> allowGodBridge = new Setting<>(false);
 
     /**
      * Move like a speedrunner: allowParkour, allowParkourAscend, allowNeos, allowMomentumJumps, allowClimbJumps,
@@ -300,9 +325,29 @@ public final class Settings {
     public final Setting<Double> experimentalMinHealth = new Setting<>(12D);
 
     /**
-     * Cost in ticks of every half heart a damaging fall takes off you, while experimentalMovement is on.
+     * Cost in ticks of every half heart a damaging fall takes off you, while experimentalMovement or fastMode is on.
      */
     public final Setting<Double> fallDamageCost = new Setting<>(20D);
+
+    /**
+     * Ostinato: speedrunner preset. Off by default, and while it is off path costs stay on whatever the other
+     * settings already say. On, those settings are not rewritten. Parkour, parkour ascend, parkour place, neos,
+     * momentum jumps, climb jumps, diagonal ascend and descend, sprint jumping, ladder clutch, swimming, boats
+     * and an elytra takeoff from the ground behave as if they were on. Jumps use {@link #experimentalJumpBias},
+     * placement is capped by {@link #experimentalBlockPlacementPenalty}, and a fall that hurts is allowed only
+     * while health stays at or above {@link #fastModeMinHealth} (the higher floor wins if
+     * {@link #experimentalMovement} is also on). Straight runs aim further ahead, a turn of 60 degrees or less is
+     * cut and sprinted, and a flat bend is walked straight across when the body fits. Head-hitter jumps are the
+     * parkour templates, so they are considered because parkour is on. God bridging is not part of this switch.
+     * Kinematic travel and the TAS jump search stay on their own settings.
+     */
+    public final Setting<Boolean> fastMode = new Setting<>(false);
+
+    /**
+     * Ostinato: while {@link #fastMode} is on, a fall that hurts is taken only when health afterwards is still at
+     * least this (half-hearts, plus absorption). 10 is five hearts. Ignored while fastMode is off.
+     */
+    public final Setting<Double> fastModeMinHealth = new Setting<>(10D);
 
     /**
      * Allow mining the block directly beneath its feet
@@ -607,6 +652,22 @@ public final class Settings {
      */
     public final Setting<Boolean> pathingHierarchical = new Setting<>(false);
 
+    /**
+     * Ostinato 2.0 Phase 07: look block-state ids up through a small direct-mapped cache (StateIdCache) instead of the
+     * block-state registry's identity hash map, in the planner's per-state property tables. Same ids, so the same
+     * costs; only faster. Off until proven.
+     */
+    public final Setting<Boolean> pathingStateIdCache = new Setting<>(false);
+
+    /**
+     * Ostinato: let the trained path decision matrix pick the backend (A*, weighted A*, hierarchical) per segment from its
+     * terrain and distance category. Off until proven; with no matrix file or a thin row the settings above decide.
+     */
+    public final Setting<Boolean> pathDecisionMatrix = new Setting<>(false);
+
+    /** Ostinato: matrix file, relative to the game directory (export from pathbench: build/pathbench/path-matrix.tsv). */
+    public final Setting<String> pathDecisionMatrixFile = new Setting<>("ostinato/path-matrix.tsv");
+
     /** Ostinato: how many sections beyond the start/goal box the abstract search may detour through. */
     public final Setting<Integer> pathingHierarchyMargin = new Setting<>(3);
 
@@ -728,6 +789,15 @@ public final class Settings {
     public final Setting<Boolean> rightClickContainerOnArrival = new Setting<>(true);
 
     /**
+     * Ostinato 2.0 Phase 08: a goto to a container counts as done only once the server opened the matching container
+     * for this request. A timed-out, unreachable or refused right click ends the request as failed (with a reason)
+     * instead of looking like an arrival; a container left open from before is closed first; and with no known
+     * target (none found, vanished, or every one unreachable) it fails instead of exploring. The task builder checks
+     * the result. Off, the old behaviour. Default off until a live run shows it is no worse.
+     */
+    public final Setting<Boolean> verifiedGetToBlock = new Setting<>(false);
+
+    /**
      * When running a goto towards a nether portal block, walk all the way into the portal
      * instead of stopping one block before.
      */
@@ -781,6 +851,14 @@ public final class Settings {
      * Default size of the Long2ObjectOpenHashMap used in pathing
      */
     public final Setting<Integer> pathingMapDefaultSize = new Setting<>(1024);
+
+    /**
+     * Ostinato: pathfinding for one core and about 512 MB of heap. On, the search stores nodes in y-slices instead of
+     * full 16×8×16 cells, reuses its open-set arrays and a small block-read cache, recycles unchecked-move offers, and
+     * skips an edge that cannot beat a node already reached at the same or a lower cost. The route cost and the nodes
+     * expanded stay the same. Off (the default) is the usual search, so recorded path costs stay identical.
+     */
+    public final Setting<Boolean> piCheapPathing = new Setting<>(false);
 
     /**
      * Load factor coefficient for the Long2ObjectOpenHashMap used in pathing
@@ -879,6 +957,41 @@ public final class Settings {
      * Ostinato: largest pitch change per tick, degrees, when humanInputCaps is on
      */
     public final Setting<Double> maxPitchPerTick = new Setting<>(90.0);
+
+    /**
+     * Ostinato: when on, mouse looks and key chords stay inside what a hand can do in one tick.
+     * A look has a speed and an acceleration limit, so the aim cannot snap, and at most two keys
+     * change state (releases first). Off, the look and the keys are exactly what they already were.
+     */
+    public final Setting<Boolean> physicalInput = new Setting<>(false);
+
+    /**
+     * Ostinato: when on, the fall controller submits one complete key frame per tick
+     * to the input arbiter. Off, it writes keys directly, as before.
+     */
+    public final Setting<Boolean> inputArbitration = new Setting<>(false);
+
+    /**
+     * Ostinato: when on, the kinodynamic lattice experiment is allowed to run.
+     * Path execution, A*, and the kinematic controllers do not read this.
+     * The lattice benchmark calls the prototype directly, so the default stays off.
+     */
+    public final Setting<Boolean> latticeExperiment = new Setting<>(false);
+
+    /**
+     * Ostinato: when on, SimTrace and PhysicsTravel judge a predicted tick against the per-mode bounds in
+     * PredictionTolerance.MEASURED instead of their fixed constants (0.05 Euclidean, 0.1 summed axes).
+     * Off keeps the old checks. Several bounds are Tier-S only, so the default stays off.
+     */
+    public final Setting<Boolean> predictionTolerance = new Setting<>(false);
+
+    /**
+     * Ostinato 2.0 Phase 06: when on, the physics driver runs under one movement lease. While it presses keys it is
+     * the only writer of the movement, jump and sneak keys; other writers are refused and counted, releases still
+     * pass. It checks the predicted tick, tries one re-anchor on drift before replanning, and records how each
+     * stretch ended. Off, the physics driver runs as before. Default off until a live run shows it is no worse.
+     */
+    public final Setting<Boolean> unifiedExecutor = new Setting<>(false);
 
     /**
      * Ostinato: relative heuristic nudge so equal-f nodes nearer the goal expand first (0 = stock tie order)
@@ -2132,6 +2245,11 @@ public final class Settings {
 
         @Override
         public String toString() {
+            // Ostinato: printing a setting must not print agentApiKey. Saving uses settingToString instead.
+            if (SettingsUtil.isSecretSetting(name)) {
+                Object current = value;
+                return getName() + (current == null || String.valueOf(current).isBlank() ? "" : " (hidden)");
+            }
             return SettingsUtil.settingToString(this);
         }
 
@@ -2194,6 +2312,140 @@ public final class Settings {
     public final Setting<Boolean> kinematicTrace = new Setting<>(false);
 
     /**
+     * Presto: predictive checks on kinematic travel. Each driven tick the kinematic simulation's one-tick prediction is
+     * compared with what the player really did; when it keeps missing (or the server moves the player), long-jump
+     * stretches Baritone's parkour can take are handed to it and needless hops are skipped until the prediction holds
+     * again. Gap takeoffs are also flown in the predictive physics engine first (see prestoPhysicsCheck). Off by default.
+     */
+    public final Setting<Boolean> presto = new Setting<>(false);
+
+    /**
+     * With presto on: before a gap jump is pressed, fly the same takeoff in the predictive physics engine (current
+     * version's physics) and take a later takeoff, or Baritone's parkour, when it lands short, lower or hurt.
+     */
+    public final Setting<Boolean> prestoPhysicsCheck = new Setting<>(true);
+
+    /**
+     * With presto on: log Presto's trust changes and vetoes, and a PRESTO counter line to stdout every 600 driven ticks.
+     */
+    public final Setting<Boolean> prestoDebug = new Setting<>(false);
+
+    /**
+     * Legato: any-angle walking on flat ground. Runs of plain walking moves (no gaps, jumps, mining, placing, climbing,
+     * swimming or doors) are joined into straight lines at any angle where the whole player box, with a safety margin,
+     * fits along the line over solid, ordinary floor. Off by default.
+     */
+    public final Setting<Boolean> legato = new Setting<>(false);
+
+    /**
+     * With legato on: straighten the finished path (join walking runs into straight lines after the search).
+     */
+    public final Setting<Boolean> legatoSmoothing = new Setting<>(true);
+
+    /**
+     * With legato on: experimental any-angle search (Theta*) on flat walking moves, so the search itself finds
+     * straight lines. Falls back to the normal search everywhere else.
+     */
+    public final Setting<Boolean> legatoSearch = new Setting<>(false);
+
+    /**
+     * With legato on: log the lines Legato makes and refuses, and a LEGATO counter line when a path is made.
+     */
+    public final Setting<Boolean> legatoDebug = new Setting<>(false);
+
+    /**
+     * Experimental: let the kinematic travel driver steer 2-by-1 knight moves (MovementLine) as it does straight and
+     * diagonal walks, instead of handing each one to Baritone's own movement. Only lines whose whole rectangle is
+     * plain ground (full, ordinary floor; nothing in the way; no fluid, door, climbable or hazard). Off: unchanged.
+     */
+    public final Setting<Boolean> kinematicLine = new Setting<>(false);
+
+    /**
+     * Cadenza: task-aware positioning. Mining, opening a container and building pick the cell to stand in by where the
+     * block can actually be reached and seen from (the same pick ray the crosshair uses), with a safe floor, instead of
+     * walking into or right next to the block. The search weighs travel against what is left to do from each cell.
+     * Off: the old goals, unchanged.
+     */
+    public final Setting<Boolean> cadenza = new Setting<>(false);
+
+    /**
+     * With cadenza on: at most this many of the nearest targets get positioning goals per goal update; the rest keep
+     * their old goals.
+     */
+    public final Setting<Integer> cadenzaMaxTargets = new Setting<>(8);
+
+    /**
+     * With cadenza on: prefer cells that reach several targets at once (mine several ores, place several blocks from
+     * one spot). Order is unchanged: the process still does the reachable targets nearest first.
+     */
+    public final Setting<Boolean> cadenzaShortHorizon = new Setting<>(false);
+
+    /**
+     * With cadenza on: also position Builder placements. Off by default: the live A/B measured placement laps 1.14-1.30x
+     * slower than the stock goal (Cadenza does not model the yaw turn left after arrival).
+     */
+    public final Setting<Boolean> cadenzaBuilder = new Setting<>(false);
+
+    /**
+     * With cadenza on: charge the camera turn left after arriving (yaw and pitch from the arrival heading to the aim, in
+     * ticks at the aim processor's per-tick cap) when choosing where to stand, and act first on the reachable target
+     * that needs the least turn. Experimental, off by default.
+     */
+    public final Setting<Boolean> cadenzaTurnAware = new Setting<>(false);
+
+    /**
+     * With cadenza on: price a standing cell by the whole batch of supplied targets (everything reachable from it done
+     * there in one sweep, every other target charged a reposition and the walk to the nearest) instead of by its single
+     * best target. Mining and Builder placements may be done in any order. Implies cadenzaTurnAware. Experimental, off
+     * by default.
+     */
+    public final Setting<Boolean> cadenzaBatch = new Setting<>(false);
+
+    /**
+     * With cadenza on: log each positioning goal and why a target got no cell.
+     */
+    public final Setting<Boolean> cadenzaDebug = new Setting<>(false);
+
+    /**
+     * Maestro: plan with an action-aware search instead of the usual A*. Same moves and move costs, but the search also
+     * knows which way the bot is heading and charges for turning, so it prefers routes the bot can keep its sprint and
+     * line through. Falls back to the usual A* when it finds nothing. Off: the usual planner, unchanged.
+     */
+    public final Setting<Boolean> maestro = new Setting<>(false);
+
+    /**
+     * With maestro on: ticks charged for turning around (180 degrees); a turn of angle a costs this * 6 * (a/180)^2,
+     * so a right angle costs 1.5 ticks at 1.0 and going straight costs nothing.
+     */
+    public final Setting<Double> maestroTurnCost = new Setting<>(1.0);
+
+    /**
+     * With maestro on: the most search states (cell and heading) one search may create before it stops with its best
+     * partial path, as a timed-out search does. 0 means no cap.
+     */
+    public final Setting<Integer> maestroMaxStates = new Setting<>(1_500_000);
+
+    /**
+     * Ostinato 2.0 Phase 05: plan with simulated movement edges. Walking, turning and one-block jumps are priced by
+     * stepping the player physics model from the state the previous step ends in (keeping momentum), instead of by
+     * fixed costs; other moves keep their usual costs. Falls back to the usual A* when it finds nothing. Off: the
+     * usual planner, unchanged.
+     */
+    public final Setting<Boolean> simEdgeSearch = new Setting<>(false);
+
+    /**
+     * With simEdgeSearch on: the most search states (cell and motion) one search may create before it stops with its
+     * best partial path, as a timed-out search does. 0 means no cap.
+     */
+    public final Setting<Integer> simEdgeMaxStates = new Setting<>(1_500_000);
+
+    /**
+     * With simEdgeSearch on: steps are simulated only within this many blocks of where the search starts; further out
+     * they keep their usual costs. 0 simulates everywhere (slow on long or rough routes).
+     */
+    public final Setting<Integer> simEdgeHorizon = new Setting<>(32);
+
+    /**
      * Receives movement failures as (code, evidence), e.g. so a bot can record them in its fault log.
      * Codes: M01 kinematic stuck, M02 off path, M03 movement timeout, M04 movement failed.
      */
@@ -2201,8 +2453,23 @@ public final class Settings {
 
     /**
      * Experimental: drive land stretches with keys found by searching simulated player physics.
+     * Ostinato: the travel stack tries this after kinematic when {@code travelStack} is auto or physics.
+     * This switch still forces a physics attempt when the stack did not ask.
      */
     public final Setting<Boolean> physicsTravel = new Setting<>(false);
+
+    /**
+     * Ostinato: which layer drives a spot. auto is kinematic, then physics, then the sim probe, then Baritone's
+     * own movement as a temporary backup. kinematic, physics, sim, or baritone pin one layer (then the backup,
+     * except baritone, which is the backup alone).
+     */
+    public final Setting<String> travelStack = new Setting<>("auto");
+
+    /**
+     * Ostinato: when kinematic and physics leave a jump, search jump versus no-jump each tick in the player sim,
+     * cache the keys, and fly them. A miss leaves the spot to Baritone's movement. Off skips that probe.
+     */
+    public final Setting<Boolean> simTravel = new Setting<>(true);
 
     // Ostinato: in-game path visualizations for the kinematic and physics movers (baritone.pathing.viz.PathViz).
 
@@ -2277,11 +2544,15 @@ public final class Settings {
     public final Setting<Double> spectateRadius = new Setting<>(48.0);
 
     /**
-     * Ostinato: decide by itself who in render distance is fighting (hits, damage, swings at someone in reach) and
-     * record those fights, with no spectate command or server menu. Fighters are watched at any loaded distance,
-     * beyond {@code spectateRadius}. On a multiplayer server {@code spectateLearnOnServers} still applies.
+     * Ostinato: decide by itself who in render distance is fighting (a swing while facing someone in reach, a hurt
+     * next to another player, or a knockback shove) and record that fight, with no spectate command or server menu.
+     * Recording starts on its own and stops when the fight ends, the players walk apart, or they leave render
+     * distance. A ledge shove counts when the victim then falls, dies, or drops below the arena; the kill goes to
+     * the last attacker within a few seconds. Off by default, so {@code spectateLearn} is unchanged until this is
+     * turned on. On a multiplayer server {@code spectateLearnOnServers} still applies. Watched past
+     * {@code spectateRadius}, out to whoever the client has loaded.
      */
-    public final Setting<Boolean> spectateAutoDetect = new Setting<>(true);
+    public final Setting<Boolean> spectateAutoDetect = new Setting<>(false);
 
     /** Most processor time (milliseconds a game tick, on its own low-priority thread) spent working out keys. */
     public final Setting<Double> spectateBudgetMs = new Setting<>(1.5);
@@ -2411,6 +2682,213 @@ public final class Settings {
      * {@code -Dostinato.testHarness=true} turns this on for one launch. Off, those properties do nothing.
      */
     public final Setting<Boolean> testHarness = new Setting<>(false);
+
+    /** Ostinato: headless training circuits. Off, {@code #train} does nothing and pathing is unchanged. */
+    public final Setting<Boolean> trainingTask = new Setting<>(false);
+
+    /**
+     * Ostinato: legit training track. On, pathing reads loaded chunks inside render distance (no world cache, no seed
+     * predictor) and training decisions may use only that view, F3 biome and temperature, the debug pie while it is
+     * open, client-audible sounds, and a held compass. Off, pathing and the full-information circuits are unchanged.
+     */
+    public final Setting<Boolean> trainingLegit = new Setting<>(false);
+
+    /**
+     * Ostinato: follow the compass in the main hand, offhand, or hotbar. The goal is the needle's target (lodestone,
+     * spawn, last death, or a player entity loaded on this client). Does nothing unless {@code trainingLegit} is also on.
+     */
+    public final Setting<Boolean> compassFollow = new Setting<>(false);
+
+    /** Ostinato: default circuit seed. The suite still runs 71001, 71002, 71003 and 71004. */
+    public final Setting<String> trainingSeed = new Setting<>("71001");
+
+    /** Ostinato: comma-separated circuit ids for {@code #train}. */
+    public final Setting<String> trainingTasks = new Setting<>("log-planks,stone-step,night-listen,compass-hunt");
+
+    /** Ostinato: task model id. A file may replace it. heuristic is the built-in stub. */
+    public final Setting<String> trainingModel = new Setting<>("heuristic");
+
+    /** Ostinato: optional model file ({@code id=} and {@code delegate=}). Empty uses the built-in heuristic. */
+    public final Setting<String> trainingModelFile = new Setting<>("");
+
+    /** Ostinato: directory for training JSONL and CSV. Relative to the game directory. */
+    public final Setting<String> trainingOutDir = new Setting<>("baritone/training");
+
+    /**
+     * Ostinato: when training, try the armor and tools the circuit can supply and keep the kit with the best
+     * score of time, deaths and durability. Off, the circuits and their result files stay on the harness baseline.
+     * Does not change pathfinding.
+     */
+    public final Setting<Boolean> trainingGearChoice = new Setting<>(false);
+
+    /**
+     * Ostinato: every-block and every-item race. Off, #train every_block_item does nothing and the default
+     * training suite is unchanged. On, that named circuit enumerates collectables and records a race score.
+     * Does not change pathfinding.
+     */
+    public final Setting<Boolean> raceEveryBlockItem = new Setting<>(false);
+
+    /**
+     * Ostinato: overnight A/B hypothesis races. Off, #overnight does nothing, no world is created or deleted,
+     * and pathing is unchanged. On, #overnight start runs the queue in baritone/overnight/queue.jsonl.
+     */
+    public final Setting<Boolean> overnightRaces = new Setting<>(false);
+
+    /**
+     * Ostinato: when an overnight run scores, also run every_block_item. Off, the race records the agent
+     * outcome only and does not enumerate the block or item registry. Does not change pathfinding.
+     */
+    public final Setting<Boolean> overnightEveryBlockItem = new Setting<>(false);
+
+    /**
+     * Ostinato: directory for the overnight queue, state, and races.jsonl, relative to the game directory.
+     */
+    public final Setting<String> overnightDir = new Setting<>("baritone/overnight");
+
+    /**
+     * Ostinato: per-run timeout in milliseconds when a queue line does not set timeoutMs. The run is recorded
+     * as timeout and its world is deleted.
+     */
+    public final Setting<Integer> overnightTimeoutMs = new Setting<>(600000);
+
+    /**
+     * Ostinato: master switch for the AI agent API. Off, {@code #agent} does not call a provider and pathing is unchanged.
+     */
+    public final Setting<Boolean> agentApi = new Setting<>(false);
+
+    /**
+     * Ostinato: in-game chat hook. Off, {@code #agent} does not send chat to a provider. Needs {@link #agentApi} as well.
+     */
+    public final Setting<Boolean> agentChat = new Setting<>(false);
+
+    /**
+     * Ostinato: provider id {@code groq}, {@code gemini}, {@code openrouter}, {@code ollama}, or empty for auto.
+     * Auto uses the first configured cloud key and otherwise Ollama. A cloud provider with no key also uses Ollama.
+     */
+    public final Setting<String> agentProvider = new Setting<>("");
+
+    /** Ostinato: OpenAI-compatible base URL. Empty uses the preset for {@link #agentProvider}. */
+    public final Setting<String> agentBaseUrl = new Setting<>("");
+
+    /** Ostinato: model id. Empty uses the preset default. */
+    public final Setting<String> agentModel = new Setting<>("");
+
+    /**
+     * Ostinato: API key. Empty reads {@code GROQ_API_KEY}, {@code GEMINI_API_KEY}, {@code OPENROUTER_API_KEY},
+     * or {@code OSTINATO_AGENT_API_KEY}. Never logged, never tab-completed, never printed in chat.
+     */
+    public final Setting<String> agentApiKey = new Setting<>("");
+
+    /**
+     * Ostinato: when on, {@code #agent} prints the commands it would run and does not run them.
+     */
+    public final Setting<Boolean> agentDryRun = new Setting<>(true);
+
+    /**
+     * Ostinato: when on, only the local player, or {@link #agentOwner} when that name is set, may use {@code #agent}.
+     */
+    public final Setting<Boolean> agentOwnerOnly = new Setting<>(true);
+
+    /** Ostinato: player name allowed to use {@code #agent} when {@link #agentOwnerOnly} is on. Empty allows the local player. */
+    public final Setting<String> agentOwner = new Setting<>("");
+
+    /**
+     * Ostinato: file whose first line is an API key, read after the setting and the environment variables. Never logged.
+     * A key file alone does not choose a cloud host.
+     */
+    public final Setting<String> agentKeyFile = new Setting<>("");
+
+    /** Ostinato: one in-flight provider call per client. Status and saved routes do not take this lock. */
+    public final Setting<Boolean> agentOneSession = new Setting<>(true);
+
+    /** Ostinato: on HTTP 429, retry that turn once against Ollama and do not retry again. */
+    public final Setting<Boolean> agent429ToOllama = new Setting<>(true);
+
+    /** Ostinato: keep the last few chat turns in {@code baritone/agent-memory.jsonl}. The key is never written. */
+    public final Setting<Boolean> agentMemory = new Setting<>(true);
+
+    /** Ostinato: comma-separated tools {@code #agent} may run. Unknown names are ignored. {@code set} means settings. */
+    public final Setting<String> agentTools = new Setting<>("goto,mine,follow,pvp,gear,settings,route");
+
+    /** Ostinato: directory of saved task routes, relative to the game directory. */
+    public final Setting<String> agentRouteDir = new Setting<>("baritone/agent-routes");
+
+    /**
+     * Ostinato: underground maze mode. Off, {@code #maze} does nothing and pathing is unchanged.
+     * On, {@code #maze build} may plan one sealed room and hand it to the builder.
+     */
+    public final Setting<Boolean> mazeMode = new Setting<>(false);
+
+    /**
+     * Ostinato: seed for maze rooms, themes, and loot. The same seed and cell always produce the same room.
+     * Zero is a normal seed, not a random one.
+     */
+    public final Setting<Long> mazeSeed = new Setting<>(0L);
+
+    /**
+     * Ostinato: minimum ticks to wait before a maze action. 20 ticks is one second.
+     * The maze process waits this long, plus up to {@link #mazeMaxActionDelay} and {@link #mazeActionJitter}, before the builder starts.
+     */
+    public final Setting<Integer> mazeMinActionDelay = new Setting<>(4);
+
+    /** Ostinato: maximum ticks, before jitter, to wait before a maze action. Clamped up to {@link #mazeMinActionDelay} when it is lower. */
+    public final Setting<Integer> mazeMaxActionDelay = new Setting<>(9);
+
+    /**
+     * Ostinato: extra ticks added or subtracted from the maze action delay, chosen from the room seed.
+     * Zero means the delay stays between {@link #mazeMinActionDelay} and {@link #mazeMaxActionDelay}.
+     */
+    public final Setting<Integer> mazeActionJitter = new Setting<>(2);
+
+    /**
+     * Ostinato: maze map file of claimed cells and containers that must not be refilled.
+     * Relative paths are inside the current world's baritone data (per save or server, per dimension), so claims never
+     * outlive their world. A shared file is how several bots avoid digging the same room.
+     */
+    public final Setting<String> mazeMapFile = new Setting<>("maze-map.txt");
+
+    /**
+     * Ostinato: absolute room floor Y for maze levels. {@link Integer#MIN_VALUE} (default) keeps the backrooms rule,
+     * 16 under the ground. Set it to e.g. -40 to build rooms and tunnels in the deepslate band (y <= 8, bedrock ~-60).
+     * Clamped to the world; first room and every neighbour start their depth search here.
+     */
+    public final Setting<Integer> mazeDepthY = new Setting<>(Integer.MIN_VALUE);
+
+    /**
+     * Ostinato: master switch for Secondo, the companion that follows Primo.
+     * Off, {@code #secondo} can bind a player but pathing is unchanged.
+     */
+    public final Setting<Boolean> secondoEnabled = new Setting<>(false);
+
+    /**
+     * Ostinato: GoalNear range, in blocks, around Primo while following.
+     * This does not change {@link #followRadius}. Clamped to 0..16 when used.
+     */
+    public final Setting<Integer> secondoFollowDistance = new Setting<>(4);
+
+    /**
+     * Ostinato: when on, and {@link #secondoEnabled} is on, path next to a block Primo is breaking
+     * and onto a nearby drop. The break click itself is not issued in v1.
+     */
+    public final Setting<Boolean> secondoAssist = new Setting<>(false);
+
+    /** Ostinato: a break farther than this from Secondo is ignored and follow continues. Clamped to 1..32. */
+    public final Setting<Integer> secondoAssistRadius = new Setting<>(6);
+
+    /** Ostinato: GoalNear range around the block Primo is breaking. Clamped to 0..8. */
+    public final Setting<Integer> secondoAssistStand = new Setting<>(2);
+
+    /** Ostinato: when assist is on, path onto a dropped item within {@link #secondoPickupRadius}. */
+    public final Setting<Boolean> secondoPickup = new Setting<>(true);
+
+    /** Ostinato: drops farther than this from Secondo are left alone. Clamped to 1..32. Used only while assist is on. */
+    public final Setting<Integer> secondoPickupRadius = new Setting<>(6);
+
+    /**
+     * Ostinato: when assist is on and Primo is fighting, stay on the follow GoalNear and record a combat request.
+     * v1 does not start {@code IPvpProcess}. Off, a fight is just follow.
+     */
+    public final Setting<Boolean> secondoCombatAssist = new Setting<>(false);
 
     // here be dragons
 

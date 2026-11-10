@@ -12,7 +12,7 @@
 
 ## Build / wire into TenorClef
 ```bat
-cd C:\Users\redfa\Documents\MinecraftDev\Ostinato-1.16.1
+cd C:\Users\<user>\Documents\MinecraftDev\Ostinato-1.16.1
 git pull
 gradlew.bat build
 copy /Y dist\baritone-unoptimized-fabric-ostinato-1.16.1.jar ..\altoclef\libs\

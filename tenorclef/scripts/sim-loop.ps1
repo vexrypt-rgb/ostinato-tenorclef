@@ -6,7 +6,7 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$Repo = 'C:\Users\redfa\Documents\MinecraftDev\altoclef',
+  [string]$Repo = 'C:\Users\<user>\Documents\MinecraftDev\altoclef',
   [string]$JavaHome = 'C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot',
   [int]$JoinTimeoutSec = 480,
   [int]$StallSec = 120,

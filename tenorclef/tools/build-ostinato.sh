@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds the Ostinato 1.21.11 worktree and stages the unoptimized jar where the altoclef 1.21.11 build picks it up.
-cd /c/Users/redfa/Documents/MinecraftDev/Ostinato-combat-1.21.11 || exit 1
+cd /c/Users/<user>/Documents/MinecraftDev/Ostinato-combat-1.21.11 || exit 1
 ./gradlew :fabric:build -Pavailable_loaders=fabric --offline -x test -q > /tmp/ost-build.log 2>&1
 rc=$?
 J=baritone-unoptimized-fabric-1.17.0-167-g25c42e6e-dirty.jar

@@ -6,7 +6,7 @@ import adris.altoclef.util.MiningRequirement;
 import adris.altoclef.util.helpers.StorageHelper;
 import net.minecraft.util.math.Vec3d;
 
-import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Sometimes we will try to access something and fail TOO many times.
@@ -15,7 +15,12 @@ import java.util.HashMap;
  */
 public abstract class AbstractObjectBlacklist<T> {
 
-    private final HashMap<T, BlacklistEntry> entries = new HashMap<>();
+    // Ostinato: read from the BlockScanner scan thread (scanChunk -> isUnreachable) while the client thread writes
+    // here from tasks, and cleared from the scan thread by BlockScanner.reset(). A plain HashMap read during another
+    // thread's put/clear can return garbage or corrupt a bin; this map is small and touched a few dozen times per
+    // tick, so the concurrent map costs nothing measurable and removes the whole class of failure.
+    private final ConcurrentHashMap<T, BlacklistEntry> entries = new ConcurrentHashMap<>();
+    private volatile int hardCapCount = 0; // Ostinato: run57. Written by the client thread, reset by the scan thread.
 
     public void blackListItem(AltoClef mod, T item, int numberOfFailuresAllowed) {
         if (!entries.containsKey(item)) {
@@ -28,6 +33,8 @@ public abstract class AbstractObjectBlacklist<T> {
             entries.put(item, entry);
         }
         BlacklistEntry entry = entries.get(item);
+        // Ostinato: run57. Already hard-capped: stay unreachable, do not count or re-log (19k HARD-CAP lines, 42 MB log).
+        if (entry.hardCapped) return;
         entry.totalAttempts++;
         double newDistance = getPos(item).squaredDistanceTo(mod.getPlayer().getPos());
         MiningRequirement newTool = StorageHelper.getCurrentMiningRequirement();
@@ -36,12 +43,18 @@ public abstract class AbstractObjectBlacklist<T> {
         if (entry.totalAttempts > hardCap) {
             entry.numberOfFailures = numberOfFailuresAllowed + 1;
             entry.numberOfFailuresAllowed = numberOfFailuresAllowed;
+            entry.hardCapped = true; // Ostinato: run57 log once per pos
+            hardCapCount++;
             Debug.logMessage("Blacklist HARD-CAP: " + item.toString()
-                    + " after " + entry.totalAttempts + " attempts (allowed=" + numberOfFailuresAllowed + ")");
+                    + " after " + entry.totalAttempts + " attempts (allowed=" + numberOfFailuresAllowed + ") total-capped=" + hardCapCount);
             return;
         }
         // For distance, add a slight threshold so it doesn't reset EVERY time we move a tiny bit closer.
-        if (newTool.ordinal() > entry.bestTool.ordinal() || (newDistance < entry.bestDistanceSq - 1)) {
+        // Ostinato: run39 iron_ore. DestroyBlockTask (4) and MineAndCollect (2) report the same pos, so the allowance flipped
+        // 2<->4 and each 1-block-closer approach RESET the count (~40 ores x 6s). Keep the strictest allowance; only a better
+        // tool, or a 3+ block closer approach on the first two attempts, resets.
+        numberOfFailuresAllowed = Math.min(numberOfFailuresAllowed, entry.numberOfFailuresAllowed);
+        if (newTool.ordinal() > entry.bestTool.ordinal() || (entry.totalAttempts <= 2 && newDistance < entry.bestDistanceSq - 9)) {
             if (newTool.ordinal() > entry.bestTool.ordinal()) entry.bestTool = newTool;
             if (newDistance < entry.bestDistanceSq) entry.bestDistanceSq = newDistance;
             entry.numberOfFailures = 0;
@@ -55,15 +68,19 @@ public abstract class AbstractObjectBlacklist<T> {
     protected abstract Vec3d getPos(T item);
 
     public boolean unreachable(T item) {
-        if (entries.containsKey(item)) {
-            BlacklistEntry entry = entries.get(item);
-            return entry.numberOfFailures > entry.numberOfFailuresAllowed;
-        }
-        return false;
+        // Ostinato: one lookup instead of containsKey + get.
+        BlacklistEntry entry = entries.get(item);
+        return entry != null && entry.numberOfFailures > entry.numberOfFailuresAllowed;
+    }
+
+    /** Drops one item's record (Fugue removes its own temporary exclusions when its objective ends). */
+    public void forget(T item) {
+        entries.remove(item);
     }
 
     public void clear() {
         entries.clear();
+        hardCapCount = 0; // Ostinato: run57
     }
 
     // Key: BlockPos
@@ -73,5 +90,6 @@ public abstract class AbstractObjectBlacklist<T> {
         public int totalAttempts;
         public double bestDistanceSq;
         public MiningRequirement bestTool;
+        public boolean hardCapped; // Ostinato: run57
     }
 }

@@ -38,14 +38,19 @@ import baritone.pathing.kinematic.LadderController;
 import baritone.pathing.kinematic.MineController;
 import baritone.pathing.kinematic.PillarController;
 import baritone.pathing.kinematic.SwimController;
+import baritone.pathing.kinematic.SimTravel;
 import baritone.pathing.kinematic.TakeoffController;
 import baritone.pathing.physics.PhysicsTravel;
+import baritone.pathing.travel.TravelStack;
 import baritone.pathing.viz.PathViz;
 import baritone.pathing.movement.CalculationContext;
 import baritone.pathing.movement.Movement;
 import baritone.pathing.movement.MovementHelper;
 import baritone.pathing.movement.movements.*;
+import baritone.pathing.unified.UnifiedExecutor;
 import baritone.utils.BlockStateInterface;
+import baritone.utils.FastMode;
+import baritone.utils.FastTravel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Vec3i;
 import net.minecraft.world.phys.Vec3;
@@ -97,9 +102,10 @@ public class PathExecutor implements IPathExecutor, Helper {
     private final TakeoffController takeoff;
     private final BoatFallController boatFall;
     private final PhysicsTravel physics;
+    private final SimTravel sim;
 
     /** Which mover drove the player on the last tick; read-only status for the HUD. */
-    public enum Driver { BARITONE, KINEMATIC, PHYSICS, SWIM, CLUTCH, LADDER, MINE, FALL, PILLAR, EXTEND, BOAT }
+    public enum Driver { BARITONE, KINEMATIC, PHYSICS, SIM, SWIM, CLUTCH, LADDER, MINE, FALL, PILLAR, EXTEND, BOAT }
 
     private volatile Driver lastDriver = Driver.BARITONE;
 
@@ -119,6 +125,7 @@ public class PathExecutor implements IPathExecutor, Helper {
         this.takeoff = new TakeoffController(ctx);
         this.boatFall = new BoatFallController(ctx);
         this.physics = new PhysicsTravel(ctx);
+        this.sim = new SimTravel(ctx);
         this.path = path;
         this.pathPosition = 0;
     }
@@ -143,6 +150,7 @@ public class PathExecutor implements IPathExecutor, Helper {
         this.takeoff = from.takeoff;
         this.boatFall = from.boatFall;
         this.physics = from.physics;
+        this.sim = from.sim;
         this.lastDriver = from.lastDriver;
         this.path = path;
         this.pathPosition = 0;
@@ -161,7 +169,7 @@ public class PathExecutor implements IPathExecutor, Helper {
      * 4: walls laid one block a tick along seven blocks of sprint-jumping).
      */
     public boolean pausableNow() {
-        return (lastDriver == Driver.KINEMATIC || lastDriver == Driver.PHYSICS) && ctx.player().onGround();
+        return (lastDriver == Driver.KINEMATIC || lastDriver == Driver.PHYSICS || lastDriver == Driver.SIM) && ctx.player().onGround();
     }
 
     public boolean onTick() {
@@ -171,7 +179,11 @@ public class PathExecutor implements IPathExecutor, Helper {
         }
         tickDepth++;
         try {
-            return tickOnce();
+            boolean r = tickOnce();
+            if (tickDepth == 1) {
+                watchProgress(); // Ostinato
+            }
+            return r;
         } finally {
             tickDepth--;
         }
@@ -218,8 +230,19 @@ public class PathExecutor implements IPathExecutor, Helper {
             cancel();
             return false;
         }
+        // Ostinato 2.0 Phase 06: null while unifiedExecutor is off. A pass closes the gate until physics opens it again.
+        UnifiedExecutor ux = Baritone.settings().unifiedExecutor.value ? behavior.baritone.getUnifiedExecutor() : null;
+        if (ux != null) {
+            ux.beginPass();
+        }
         int driven = -1;
         lastDriver = Driver.BARITONE;
+        // Ostinato: kinematic family, then physics, then the cached jump/no-jump probe. Baritone movement is the backup below.
+        java.util.List<TravelStack.Layer> stack = TravelStack.order(
+                TravelStack.preference(Baritone.settings().travelStack.value),
+                baritone.utils.ExperimentalMovement.kinematicTravel(),
+                Baritone.settings().simTravel.value);
+        boolean skipLookAhead = false;
         if (takeoff.engaged()) {
             driven = takeoff.tick(behavior.baritone, path, pathPosition);
             if (driven >= 0) {
@@ -228,89 +251,62 @@ public class PathExecutor implements IPathExecutor, Helper {
         }
         if (driven >= 0) {
             // a standing takeoff keeps the controls until it hands over
+            skipLookAhead = true;
         } else if (driverRest > 0) {
             driverRest--;
-        } else {
-            long t0 = System.nanoTime(); // Ostinato: planning-time stats
-            driven = physics.tick(behavior.baritone, path, pathPosition);
+            skipLookAhead = true;
+        }
+        if (!skipLookAhead && driven < 0 && stack.contains(TravelStack.Layer.KINEMATIC)) {
             long t1 = System.nanoTime();
-            baritone.utils.PlanStats.physNs.addAndGet(t1 - t0);
+            driven = kinematic.tick(behavior.baritone, path, pathPosition);
+            baritone.utils.PlanStats.kinNs.addAndGet(System.nanoTime() - t1);
+            if (driven >= 0) {
+                lastDriver = Driver.KINEMATIC;
+            }
+        }
+        if (driven < 0 && stack.contains(TravelStack.Layer.KINEMATIC)) {
+            driven = kinematicFamily();
+        }
+        if (!skipLookAhead && driven < 0 && stack.contains(TravelStack.Layer.PHYSICS)) {
+            long t0 = System.nanoTime();
+            driven = physics.tick(behavior.baritone, path, pathPosition, true);
+            baritone.utils.PlanStats.physNs.addAndGet(System.nanoTime() - t0);
             if (driven >= 0) {
                 lastDriver = Driver.PHYSICS;
-            } else {
-                driven = kinematic.tick(behavior.baritone, path, pathPosition);
-                baritone.utils.PlanStats.kinNs.addAndGet(System.nanoTime() - t1);
-                if (driven >= 0) {
-                    lastDriver = Driver.KINEMATIC;
-                }
             }
         }
-        if (driven < 0) {
-            driven = fall.tick(behavior.baritone, path, pathPosition);
+        if (!skipLookAhead && driven < 0 && stack.contains(TravelStack.Layer.SIM)) {
+            long t0 = System.nanoTime();
+            driven = sim.tick(behavior.baritone, path, pathPosition);
+            baritone.utils.PlanStats.simNs.addAndGet(System.nanoTime() - t0);
             if (driven >= 0) {
-                lastDriver = Driver.FALL;
+                lastDriver = Driver.SIM;
             }
         }
-        if (driven < 0) {
-            driven = swim.tick(behavior.baritone, path, pathPosition);
-            if (driven >= 0) {
-                lastDriver = Driver.SWIM;
-            }
-        }
-        if (driven < 0) {
-            driven = clutch.tick(behavior.baritone, path, pathPosition);
-            if (driven >= 0) {
-                lastDriver = Driver.CLUTCH;
-            }
-        }
-        if (driven < 0) {
-            driven = ladder.tick(behavior.baritone, path, pathPosition);
-            if (driven >= 0) {
-                lastDriver = Driver.LADDER;
-            }
-        }
-        if (driven < 0) {
-            driven = mine.tick(behavior.baritone, path, pathPosition);
-            if (driven >= 0) {
-                lastDriver = Driver.MINE;
-            }
-        }
-        if (driven < 0) {
-            driven = pillar.tick(behavior.baritone, path, pathPosition);
-            if (driven >= 0) {
-                lastDriver = Driver.PILLAR;
-            }
-        }
-        if (driven < 0) {
-            driven = extension.tick(behavior.baritone, path, pathPosition);
-            if (driven >= 0) {
-                lastDriver = Driver.EXTEND;
-            }
-        }
-        if (driven < 0) {
-            driven = takeoff.tick(behavior.baritone, path, pathPosition);
-            if (driven >= 0) {
-                lastDriver = Driver.EXTEND;
-            }
-        }
-        if (driven < 0) {
-            driven = boatFall.tick(behavior.baritone, path, pathPosition);
-            if (driven >= 0) {
-                lastDriver = Driver.BOAT;
-            }
+        if (ux != null && lastDriver != Driver.PHYSICS) {
+            ux.yield(pathPosition); // Ostinato 2.0 Phase 06: another driver has this tick, or Baritone's movement below will
         }
         if (driven >= 0) {
             if (driven != pathPosition) {
+                for (int k = pathPosition; k < driven && k < path.movements().size(); k++) {
+                    if (path.movements().get(k) instanceof baritone.pathing.movement.movements.MovementStraight) {
+                        baritone.pathing.legato.LegatoStats.straightDone(); // Ostinato Legato: a straight driven to its end
+                    }
+                }
                 pathPosition = driven;
                 ticksOnCurrent = 0;
                 drivenOnCurrent = 0;
-            } else if ((lastDriver == Driver.PHYSICS || lastDriver == Driver.KINEMATIC) && ++drivenOnCurrent > DRIVER_PATIENCE) {
+            } else if ((lastDriver == Driver.PHYSICS || lastDriver == Driver.KINEMATIC || lastDriver == Driver.SIM) && ++drivenOnCurrent > DRIVER_PATIENCE) {
                 // moving, yet not along the path: none of the timeouts below run while a mover drives, so it steps aside.
                 // Only the look-ahead movers: the others (mining, a long fall) hold a position for as long as the work takes.
                 Baritone.settings().movementFault.value.accept("M01", lastDriver + " held " + movement.getClass().getSimpleName() + " " + movement.getSrc() + "->" + movement.getDest() + " for " + drivenOnCurrent + " ticks, handing back to Baritone");
                 PathViz.get().stuck(ctx.player().getX(), ctx.player().getY(), ctx.player().getZ(), "M01 " + lastDriver + " held a movement"); // Ostinato path viz
+                legatoFailed(movement);
                 drivenOnCurrent = 0;
                 driverRest = DRIVER_REST;
+                if (ux != null && lastDriver == Driver.PHYSICS) {
+                    ux.fail(UnifiedExecutor.Cause.M01); // Ostinato 2.0 Phase 06
+                }
                 lastDriver = Driver.BARITONE;
                 clearKeys();
                 driven = -1;
@@ -322,8 +318,10 @@ public class PathExecutor implements IPathExecutor, Helper {
             // A pause or a cancel is only taken when this says it is safe. "Never while a controller drives" meant a
             // process that asked to stop was run on down the path until the driver happened to hand back: bastion run
             // 123 asked to stop and tower, and was carried nine blocks first. On its feet the kinematic driver is no
-            // worse a place to stop than a Traverse
-            return lastDriver == Driver.KINEMATIC && ctx.player().onGround();
+            // worse a place to stop than a Traverse. Ostinato 2.0 Phase 06: nor is physics on the tick it stopped, keys up and
+            // on its feet, for a cancel it had refused twice.
+            return (lastDriver == Driver.KINEMATIC || lastDriver == Driver.SIM) && ctx.player().onGround()
+                    || lastDriver == Driver.PHYSICS && ux != null && ux.stoppedForCancel();
         }
         BetterBlockPos whereAmI = ctx.playerFeet();
         if (!movement.getValidPositions().contains(whereAmI)) {
@@ -360,6 +358,7 @@ public class PathExecutor implements IPathExecutor, Helper {
             if (ticksAway > MAX_TICKS_AWAY) {
                 logDebug("Too far away from path for too long, cancelling path");
                 Baritone.settings().movementFault.value.accept("M02", "off path for too long at " + ctx.playerFeet());
+                legatoFailed(pathPosition < path.movements().size() ? path.movements().get(pathPosition) : null);
                 cancel();
                 return false;
             }
@@ -369,6 +368,7 @@ public class PathExecutor implements IPathExecutor, Helper {
         if (possiblyOffPath(status, MAX_MAX_DIST_FROM_PATH)) { // ok, stop right away, we're way too far.
             logDebug("too far from path");
             Baritone.settings().movementFault.value.accept("M02", "too far from path at " + ctx.playerFeet());
+            legatoFailed(pathPosition < path.movements().size() ? path.movements().get(pathPosition) : null);
             cancel();
             return false;
         }
@@ -456,6 +456,16 @@ public class PathExecutor implements IPathExecutor, Helper {
             return true;
         }
         MovementStatus movementStatus = movement.update();
+        // Ostinato: fastMode aims across a shallow corner or a clear flat bend. Off, the movement's own look stands.
+        if (movementStatus == RUNNING && FastMode.on()) {
+            FastTravel.Steer steer = fastSteer();
+            if (steer.aim) {
+                behavior.baritone.getLookBehavior().updateTarget(
+                        RotationUtils.calcRotationFromVec3d(ctx.playerHead(), new Vec3(steer.x, ctx.player().getY(), steer.z), ctx.playerRotations())
+                                .withPitch(ctx.playerRotations().getPitch()),
+                        false);
+            }
+        }
         if (movementStatus == UNREACHABLE || movementStatus == FAILED) {
             logDebug("Movement returns status " + movementStatus);
             Baritone.settings().movementFault.value.accept("M04", movement.getClass().getSimpleName() + " " + movementStatus + " at " + ctx.playerFeet());
@@ -470,6 +480,9 @@ public class PathExecutor implements IPathExecutor, Helper {
         if (movementStatus == SUCCESS) {
             CostCalibration.record(movement.calibrationKey(), currentMovementOriginalCostEstimate, ticksOnCurrent);
             //System.out.println("Movement done, next path");
+            if (movement instanceof baritone.pathing.movement.movements.MovementStraight) {
+                baritone.pathing.legato.LegatoStats.straightDone(); // Ostinato Legato: a straight walked to its end
+            }
             pathPosition++;
             onChangeInPathPosition();
             onTick();
@@ -487,11 +500,20 @@ public class PathExecutor implements IPathExecutor, Helper {
                 // this is why we cache cost at the beginning, and don't recalculate for this comparison every tick
                 logDebug("This movement has taken too long (" + ticksOnCurrent + " ticks, expected " + currentMovementOriginalCostEstimate + ") " + movement.getClass().getSimpleName() + " " + movement.getSrc() + "->" + movement.getDest() + ". Cancelling.");
                 Baritone.settings().movementFault.value.accept("M03", movement.getClass().getSimpleName() + " " + movement.getSrc() + "->" + movement.getDest() + " took " + ticksOnCurrent + " ticks");
+                legatoFailed(movement);
                 cancel();
                 return true;
             }
         }
         return canCancel; // movement is in progress, but if it reports cancellable, PathingBehavior is good to cut onto the next path
+    }
+
+    /** Ostinato Legato: a straight line that stalled, timed out or left the path is not planned again for a while. */
+    private void legatoFailed(IMovement movement) {
+        if (movement instanceof baritone.pathing.movement.movements.MovementStraight) {
+            ((baritone.pathing.movement.movements.MovementStraight) movement).failed(ctx.playerFeet());
+            baritone.pathing.RouteReuse.forget(movement.getSrc(), movement.getDest());
+        }
     }
 
     private Pair<Double, BlockPos> closestPathPos(IPath path) {
@@ -716,7 +738,100 @@ public class PathExecutor implements IPathExecutor, Helper {
                 return true;
             }
         }
+        // Ostinato: fastMode keeps sprint through a turn of 60 degrees or less. Off, sprint still drops here.
+        if (FastMode.on() && fastSteer().keepSprint) {
+            return true;
+        }
         return false;
+    }
+
+    /**
+     * Ostinato: where fastMode wants the camera, and whether sprint survives the corner. Called only while the
+     * setting is on, so the search and the default executor do no extra work.
+     */
+    private FastTravel.Steer fastSteer() {
+        if (pathPosition >= path.movements().size() - 1 || !ctx.player().onGround() || ctx.player().isShiftKeyDown()) {
+            return FastTravel.Steer.NONE;
+        }
+        IMovement current = path.movements().get(pathPosition);
+        IMovement next = path.movements().get(pathPosition + 1);
+        if (current.getDirection().getY() != 0 || next.getDirection().getY() != 0) {
+            return FastTravel.Steer.NONE;
+        }
+        if (!(current instanceof MovementTraverse || current instanceof MovementDiagonal)) {
+            return FastTravel.Steer.NONE;
+        }
+        if (!(next instanceof MovementTraverse || next instanceof MovementDiagonal)) {
+            return FastTravel.Steer.NONE;
+        }
+        boolean nether = ctx.world().dimension() == net.minecraft.world.level.Level.NETHER;
+        boolean busy = placesOrBreaks(current) || placesOrBreaks(next);
+        BetterBlockPos corner = current.getDest();
+        boolean lava = lavaNear(corner) || lavaNear(next.getDest());
+        boolean safe = FastTravel.sprintCutAllowed(ctx.player().getHealth(), nether, lava, busy);
+        int dx1 = current.getDirection().getX();
+        int dz1 = current.getDirection().getZ();
+        int run = 1;
+        int cap = Math.min(path.movements().size(), pathPosition + 4);
+        for (int i = pathPosition + 1; i < cap; i++) {
+            IMovement step = path.movements().get(i);
+            if (step.getDirection().getY() != 0 || step.getDirection().getX() != dx1 || step.getDirection().getZ() != dz1 || placesOrBreaks(step)) {
+                break;
+            }
+            run++;
+        }
+        BetterBlockPos straight = path.movements().get(pathPosition + run - 1).getDest();
+        double turn = FastTravel.turnDegrees(dx1, dz1, next.getDirection().getX(), next.getDirection().getZ());
+        // A shallow cut stays on the path blocks. Only a wider bend pays for the chord clearance.
+        boolean shortcut = turn > FastTravel.MAX_CORNER_DEG && turn <= 90
+                && current instanceof MovementTraverse && next instanceof MovementTraverse
+                && shortcutClear(current.getSrc(), next.getDest());
+        return FastTravel.choose(
+                dx1, dz1, next.getDirection().getX(), next.getDirection().getZ(),
+                corner.x, corner.y, corner.z,
+                next.getDest().x, next.getDest().z,
+                run, straight.x, straight.z,
+                safe, shortcut, run >= 3);
+    }
+
+    private boolean placesOrBreaks(IMovement movement) {
+        if (!(movement instanceof Movement mv)) {
+            return true;
+        }
+        if (mv.toPlaceCached != null && mv.toBreakCached != null) {
+            return !mv.toPlaceCached.isEmpty() || !mv.toBreakCached.isEmpty();
+        }
+        BlockStateInterface bsi = new BlockStateInterface(ctx);
+        return !mv.toPlace(bsi).isEmpty() || !mv.toBreak(bsi).isEmpty();
+    }
+
+    private boolean lavaNear(BlockPos pos) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                BlockPos at = pos.offset(dx, 0, dz);
+                if (MovementHelper.isLava(ctx.world().getBlockState(at)) || MovementHelper.isLava(ctx.world().getBlockState(at.below()))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean shortcutClear(BetterBlockPos from, BetterBlockPos to) {
+        if (from.y != to.y) {
+            return false;
+        }
+        return FastTravel.shortcutClear(from.x, from.z, to.x, to.z, from.y, new FastTravel.Cells() {
+            @Override
+            public boolean air(int x, int y, int z) {
+                return MovementHelper.canWalkThrough(ctx, new BetterBlockPos(x, y, z));
+            }
+
+            @Override
+            public boolean floor(int x, int y, int z) {
+                return MovementHelper.canWalkOn(ctx, new BetterBlockPos(x, y, z));
+            }
+        });
     }
 
     /**
@@ -724,7 +839,8 @@ public class PathExecutor implements IPathExecutor, Helper {
      * that many more same-direction flat moves with open air two above their floor (the jump peaks ~1.25 up).
      */
     private boolean shouldSprintJump(IMovement current) {
-        if (!Baritone.settings().sprintJump.value || !(current instanceof MovementTraverse || current instanceof MovementDiagonal)) {
+        // Ostinato: fastMode sprint-jumps the same straight runs. Off, this is sprintJump.
+        if (!FastMode.sprintJump() || !(current instanceof MovementTraverse || current instanceof MovementDiagonal)) {
             return false;
         }
         if (!ctx.player().onGround() || ctx.player().isInWater() || ctx.player().isInLava() || ctx.player().isShiftKeyDown()) {
@@ -751,7 +867,7 @@ public class PathExecutor implements IPathExecutor, Helper {
             if (!((Movement) m).toBreak(bsi).isEmpty() || !((Movement) m).toPlace(bsi).isEmpty()) {
                 return false;
             }
-            BetterBlockPos d = m.getDest();
+            baritone.api.utils.BetterBlockPos d = m.getDest();
             if (!MovementHelper.canWalkThrough(bsi, d.x, d.y + 2, d.z) || MovementHelper.isWater(bsi.get0(d.x, d.y, d.z))) {
                 return false;
             }
@@ -874,6 +990,55 @@ public class PathExecutor implements IPathExecutor, Helper {
         return next instanceof MovementDiagonal && Baritone.settings().allowOvershootDiagonalDescend.value;
     }
 
+    // Ostinato: path-level no-progress watchdog. Every per-movement timeout here is per pathPosition, and the
+    // look-ahead/swim/kinematic drivers are exempt from it; a rewind (feet back in an earlier movement) or a driver
+    // flipping between two positions resets them all. run59/run61 bobbed underwater between two feet positions for
+    // 8+ min with pathing=true and no replan. This counts ticks since the furthest pathPosition grew or the player
+    // got closer to that movement's dest, whatever drives; past the budget the stretch is marked failed so the next
+    // search routes around it, and the path is cancelled.
+    private static final int WATCH_BASE_TICKS = 400;
+    private int watchBest = -1, watchTicks;
+    private double watchDist = Double.MAX_VALUE;
+
+    private void watchProgress() {
+        if (failed || path == null || pathPosition >= path.length() - 1) {
+            return;
+        }
+        if (pathPosition > watchBest) {
+            watchBest = pathPosition;
+            watchTicks = 0;
+            watchDist = Double.MAX_VALUE;
+        }
+        IMovement m = path.movements().get(Math.min(watchBest, path.movements().size() - 1));
+        baritone.api.utils.BetterBlockPos d = m.getDest();
+        double dist = ctx.player().position().distanceTo(new Vec3(d.x + 0.5, d.y, d.z + 0.5));
+        if (dist < watchDist - 0.5) {
+            watchDist = dist;
+            watchTicks = 0;
+            return;
+        }
+        double est = currentMovementOriginalCostEstimate == null ? 0 : currentMovementOriginalCostEstimate;
+        int budget = WATCH_BASE_TICKS + (int) Math.min(Double.isFinite(est) ? Math.max(est, 0) : 0, 1600);
+        if (++watchTicks <= budget) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        for (int i = Math.max(0, watchBest - 1); i <= Math.min(path.movements().size() - 1, watchBest + 1); i++) {
+            IMovement f = path.movements().get(i);
+            baritone.api.utils.BetterBlockPos fs = f.getSrc(), fd = f.getDest();
+            baritone.pathing.RouteReuse.forget(fs, fd);
+            long key = baritone.pathing.movement.JumpFailures.moveKey(fs.x, fs.y, fs.z, fd.x, fd.y, fd.z);
+            for (int k = 0; k < 3; k++) {
+                baritone.pathing.movement.JumpFailures.mark(key, now);
+            }
+        }
+        String ev = "no path progress for " + watchTicks + " ticks at " + ctx.playerFeet() + " driver=" + lastDriver + " pos=" + pathPosition + "/best=" + watchBest
+                + " move=" + m.getClass().getSimpleName() + " " + m.getSrc() + "->" + m.getDest() + " inWater=" + ctx.player().isInWater();
+        System.out.println("PATH no-progress watchdog: " + ev + ", cancelling for replan");
+        Baritone.settings().movementFault.value.accept("M05", ev);
+        logDebug("PATH no-progress watchdog: " + ev);
+        cancel();
+    }
     private void onChangeInPathPosition() {
         clearKeys();
         ticksOnCurrent = 0;
@@ -888,8 +1053,20 @@ public class PathExecutor implements IPathExecutor, Helper {
     private void cancel() {
         clearKeys();
         behavior.baritone.getInputOverrideHandler().getBlockBreakHelper().stopBreakingBlock();
+        if (Baritone.settings().unifiedExecutor.value) {
+            behavior.baritone.getUnifiedExecutor().fail(UnifiedExecutor.Cause.EXECUTOR_CANCEL); // Ostinato 2.0 Phase 06
+        }
+        releaseInputLeases();
         pathPosition = path.length() + 3;
         failed = true;
+    }
+
+    /** Ostinato: give back any input lease this executor's controllers hold. No-op with inputArbitration and unifiedExecutor off. */
+    public void releaseInputLeases() {
+        fall.release(behavior.baritone);
+        if (Baritone.settings().unifiedExecutor.value) {
+            behavior.baritone.getUnifiedExecutor().cancelConfirmed(UnifiedExecutor.Cause.SEGMENT_CANCEL); // Ostinato 2.0 Phase 06
+        }
     }
 
     @Override
@@ -946,6 +1123,16 @@ public class PathExecutor implements IPathExecutor, Helper {
         return lastDriver;
     }
 
+    /** Ostinato Presto v4.1: the sim driver, for the live harness's trace. */
+    public SimTravel sim() {
+        return sim;
+    }
+
+    /** Ostinato Presto v4.1: this path's kinematic controller, for its trace snapshot (status only). */
+    public KinematicController kinematic() {
+        return kinematic;
+    }
+
     /**
      * Ostinato: whether kinematic or physics travel drove the last tick. Baritone's own path ribbon is hidden then; it
      * shows again once they hand back (M01) or leave a segment to Baritone's movement logic.
@@ -988,7 +1175,60 @@ public class PathExecutor implements IPathExecutor, Helper {
     }
 
     public boolean travelDriving() {
-        return lastDriver == Driver.KINEMATIC || lastDriver == Driver.PHYSICS;
+        return lastDriver == Driver.KINEMATIC || lastDriver == Driver.PHYSICS || lastDriver == Driver.SIM;
+    }
+
+    /**
+     * Ostinato: swim, fall, ladder, mine, pillar and the other kinematic controllers. They are how kinematic travel
+     * covers the spots the walk look-ahead does not, so they stay in that layer rather than a fourth stack.
+     */
+    private int kinematicFamily() {
+        int driven = fall.tick(behavior.baritone, path, pathPosition);
+        if (driven >= 0) {
+            lastDriver = Driver.FALL;
+            return driven;
+        }
+        driven = swim.tick(behavior.baritone, path, pathPosition);
+        if (driven >= 0) {
+            lastDriver = Driver.SWIM;
+            return driven;
+        }
+        driven = clutch.tick(behavior.baritone, path, pathPosition);
+        if (driven >= 0) {
+            lastDriver = Driver.CLUTCH;
+            return driven;
+        }
+        driven = ladder.tick(behavior.baritone, path, pathPosition);
+        if (driven >= 0) {
+            lastDriver = Driver.LADDER;
+            return driven;
+        }
+        driven = mine.tick(behavior.baritone, path, pathPosition);
+        if (driven >= 0) {
+            lastDriver = Driver.MINE;
+            return driven;
+        }
+        driven = pillar.tick(behavior.baritone, path, pathPosition);
+        if (driven >= 0) {
+            lastDriver = Driver.PILLAR;
+            return driven;
+        }
+        driven = extension.tick(behavior.baritone, path, pathPosition);
+        if (driven >= 0) {
+            lastDriver = Driver.EXTEND;
+            return driven;
+        }
+        driven = takeoff.tick(behavior.baritone, path, pathPosition);
+        if (driven >= 0) {
+            lastDriver = Driver.EXTEND;
+            return driven;
+        }
+        driven = boatFall.tick(behavior.baritone, path, pathPosition);
+        if (driven >= 0) {
+            lastDriver = Driver.BOAT;
+            return driven;
+        }
+        return -1;
     }
 
     @Override

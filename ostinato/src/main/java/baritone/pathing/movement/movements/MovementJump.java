@@ -17,6 +17,7 @@
 
 package baritone.pathing.movement.movements;
 
+import baritone.contract.PredictionTolerance;
 import baritone.pathing.kinematic.BsiWorld;
 
 import baritone.utils.PositionSync;
@@ -1336,6 +1337,17 @@ public class MovementJump extends Movement {
 
     private SimTrace trace;
 
+    /**
+     * Ostinato Presto v4.1: this jump's execution state for the live harness's trace (allocates; trace only): template,
+     * running/landed, plan jumped and air ticks, replans, slew-capped search, a beam plan, turn and stop waits.
+     */
+    public String traceState() {
+        return "tpl=" + (t == null ? "-" : t.a + "," + t.dy + "," + t.b + "/r" + t.runUp) + " run=" + running + " landed=" + landed
+                + (js == null ? " js=-" : " jumped=" + js.jumped + " air=" + js.airTicks + " slew=" + js.slewYaw)
+                + " replans=" + replans + " tas=" + (tasPlan != null) + " turnWait=" + turnWait + " stopWait=" + stopWait
+                + " carry=" + carrySearched;
+    }
+
     /** With kinematicTrace on, compare the sim with the real player for this tick (see {@link SimTrace}). */
     private void trace(float yaw, int in, boolean jump) {
         if (!Baritone.settings().kinematicTrace.value || !running) {
@@ -1343,7 +1355,7 @@ public class MovementJump extends Movement {
         }
         SimTrace.files = true;
         if (trace == null) {
-            trace = new SimTrace("jump " + t.a + "," + t.dy + "," + t.b + " runUp=" + t.runUp, new ClientWorld(ctx));
+            trace = new SimTrace("jump " + t.a + "," + t.dy + "," + t.b + " runUp=" + t.runUp, new ClientWorld(ctx), PredictionTolerance.active());
         }
         trace.observe(real, ctx.player().getYRot());
         trace.commit(real, yaw, in, in > 0, jump);

@@ -19,10 +19,12 @@ package baritone.pathing.movement;
 
 import baritone.Baritone;
 import baritone.utils.ExperimentalMovement;
+import baritone.utils.FastMode;
 import baritone.altoclef.AltoClefSettings;
 import baritone.api.IBaritone;
 import baritone.api.pathing.movement.ActionCosts;
 import baritone.cache.WorldData;
+import baritone.pathing.calc.PiCheap;
 import baritone.pathing.kinematic.ClientWorld;
 import baritone.pathing.precompute.PrecomputedData;
 import baritone.utils.BlockStateInterface;
@@ -97,6 +99,10 @@ public class CalculationContext {
     public final boolean allowMomentumJumps;
     /** A ladder or vine on the hotbar and allowLadderClutch on, see MovementDescend.dynamicFallCost. */
     public final boolean hasClutchItem;
+    /** Ostinato: allowLadderClutch, snapshotted. Existing ladders past the old 11 block cutoff use LadderClutch.grabs. */
+    public final boolean ladderGrab;
+    /** Ostinato: allowGodBridge, and assumeSafeWalk is off. A backplace traverse costs a walk instead of a sneak. */
+    public final boolean allowGodBridge;
     /** The clutch item is a ladder (vines win if both are there) and pickupLadders is on, so a clutch also costs the pickup. */
     public final boolean clutchPicksUp;
     /** The clutch item is a ladder (a vine can go on any wall, a ladder needs us to be about 0.6 off it). */
@@ -105,8 +111,12 @@ public class CalculationContext {
     public final boolean experimental;
     public final double experimentalMinHealth;
     public final double fallDamageCost;
-    /** 1 unless experimentalMovement wants jumps to look a bit cheaper. */
+    /** 1 unless experimentalMovement or fastMode wants jumps to look a bit cheaper. */
     public final double jumpBias;
+    /** Ostinato: fastMode, snapshotted. Off, fall budgets and parkour flags stay on the other settings. */
+    public final boolean fastMode;
+    /** Ostinato: fastModeMinHealth, snapshotted. Unused while {@link #fastMode} is false. */
+    public final double fastModeMinHealth;
     /** Health plus absorption when the context was made, for falls that hurt. */
     public final double health;
     public final boolean assumeWalkOnWater;
@@ -122,6 +132,15 @@ public class CalculationContext {
     public final double breakBlockAdditionalCost;
     public double backtrackCostFavoringCoefficient;
     public double jumpPenalty;
+    /** Ostinato: ascend walk part, descend walk-off and landing, from TickSim when tickAccurateCosts is on. */
+    public final double ascendWalkCost;
+    public final double walkOffCost;
+    public final double descendLandCost;
+    /** Ostinato: momentumJumpCosts, see MovementParkour.momentumCost. */
+    public final boolean momentumJumpCosts;
+    /** Ostinato Legato: straighten flat walking runs after the search / any-angle (Theta*) search on flat walking moves. */
+    public final boolean legatoSmooth;
+    public final boolean legatoSearch;
     public final double walkOnWaterOnePenalty;
     public final boolean allowWalkOnMagmaBlocks;
     public final BetterWorldBorder worldBorder;
@@ -195,7 +214,7 @@ public class CalculationContext {
         this.avoidWalkThrough = null;
         this.allowBreakAnyway = new ArrayList<>(Baritone.settings().allowBreakAnyway.value);
         this.allowParkour = ExperimentalMovement.allowParkour();
-        this.allowParkourPlace = Baritone.settings().allowParkourPlace.value;
+        this.allowParkourPlace = FastMode.allowParkourPlace(); // Ostinato
         this.nativeSearch = Baritone.settings().nativeAcceleration.value;
         this.allowJumpAtBuildLimit = Baritone.settings().allowJumpAtBuildLimit.value;
         this.allowParkourAscend = ExperimentalMovement.allowParkourAscend();
@@ -205,11 +224,15 @@ public class CalculationContext {
         this.allowTasJumps = ExperimentalMovement.allowTasJumps();
         this.allowMomentumJumps = ExperimentalMovement.allowMomentumJumps();
         this.hasClutchItem = false;
+        this.ladderGrab = FastMode.allowLadderClutch(); // Ostinato
+        this.allowGodBridge = Baritone.settings().allowGodBridge.value && !Baritone.settings().assumeSafeWalk.value;
         this.clutchIsLadder = false;
         this.clutchPicksUp = false;
         this.blockReach = Baritone.settings().blockReachDistance.value;
         this.experimental = ExperimentalMovement.on();
         this.experimentalMinHealth = Baritone.settings().experimentalMinHealth.value;
+        this.fastMode = FastMode.on(); // Ostinato
+        this.fastModeMinHealth = Baritone.settings().fastModeMinHealth.value;
         this.fallDamageCost = Baritone.settings().fallDamageCost.value;
         this.jumpBias = ExperimentalMovement.jumpBias();
         this.health = 20;
@@ -226,6 +249,13 @@ public class CalculationContext {
         this.breakBlockAdditionalCost = Baritone.settings().blockBreakAdditionalPenalty.value;
         this.backtrackCostFavoringCoefficient = Baritone.settings().backtrackCostFavoringCoefficient.value;
         this.jumpPenalty = Baritone.settings().jumpPenalty.value;
+        boolean tickAccurate = Baritone.settings().tickAccurateCosts.value;
+        this.ascendWalkCost = tickAccurate ? TickCosts.ASCEND : Math.max(ActionCosts.JUMP_ONE_BLOCK_COST, ActionCosts.WALK_ONE_BLOCK_COST);
+        this.walkOffCost = tickAccurate ? TickCosts.WALK_OFF : ActionCosts.WALK_OFF_BLOCK_COST;
+        this.descendLandCost = tickAccurate ? TickCosts.DESCEND_LAND : Math.max(ActionCosts.FALL_N_BLOCKS_COST[1], ActionCosts.CENTER_AFTER_FALL_COST);
+        this.momentumJumpCosts = Baritone.settings().momentumJumpCosts.value; // Ostinato
+        this.legatoSmooth = Baritone.settings().legato.value && Baritone.settings().legatoSmoothing.value;
+        this.legatoSearch = Baritone.settings().legato.value && Baritone.settings().legatoSearch.value;
         this.walkOnWaterOnePenalty = Baritone.settings().walkOnWaterOnePenalty.value;
         this.allowWalkOnMagmaBlocks = Baritone.settings().allowWalkOnMagmaBlocks.value;
         this.worldBorder = bsi.worldBorder;
@@ -248,10 +278,10 @@ public class CalculationContext {
         this.aquaAffinity = player.getAttributeValue(net.minecraft.world.entity.ai.attributes.Attributes.SUBMERGED_MINING_SPEED) > 0.5;
         this.hasThrowaway = !AltoClefSettings.getInstance().isInteractionPaused() && Baritone.settings().allowPlace.value && ((Baritone) baritone).getInventoryBehavior().hasGenericThrowaway();
         this.hasWaterBucket = Baritone.settings().allowWaterBucketFall.value && Inventory.isHotbarSlot(player.getInventory().findSlotMatchingItem(BucketHolder.STACK_BUCKET_WATER)) && world.dimension() != Level.NETHER;
-        this.hasBoat = Baritone.settings().allowBoats.value && Baritone.settings().allowBoatFall.value && !AltoClefSettings.getInstance().isInteractionPaused()
-                && BoatUtil.hasBoat(player.getInventory().getNonEquipmentItems());
-        this.freeBoats = Baritone.settings().allowBoats.value && Baritone.settings().allowBoatFall.value && !AltoClefSettings.getInstance().isInteractionPaused()
-                ? BoatUtil.freeBoats(world, player, 64) : java.util.Collections.emptySet();
+        // Ostinato: fastMode behaves as if allowBoats were on. Off, this is allowBoats.
+        boolean boats = FastMode.allowBoats() && Baritone.settings().allowBoatFall.value && !AltoClefSettings.getInstance().isInteractionPaused();
+        this.hasBoat = boats && BoatUtil.hasBoat(player.getInventory().getNonEquipmentItems());
+        this.freeBoats = boats ? BoatUtil.freeBoats(world, player, 64) : java.util.Collections.emptySet();
         this.allowSteeredFalls = Baritone.settings().allowSteeredFalls.value;
         this.freeMounts = Baritone.settings().allowMountClutch.value && !AltoClefSettings.getInstance().isInteractionPaused()
                 ? MountUtil.freeMounts(world, player, 128) : java.util.Collections.emptySet();
@@ -266,7 +296,7 @@ public class CalculationContext {
         // every jump over a gap is planned for a plain fall: under Levitation or Slow Falling none lands where planned
         this.allowParkour = ExperimentalMovement.allowParkour()
                 && ClientWorld.plainGravity(baritone.getPlayerContext());
-        this.allowParkourPlace = Baritone.settings().allowParkourPlace.value;
+        this.allowParkourPlace = FastMode.allowParkourPlace(); // Ostinato
         this.nativeSearch = Baritone.settings().nativeAcceleration.value;
         this.allowJumpAtBuildLimit = Baritone.settings().allowJumpAtBuildLimit.value;
         this.allowParkourAscend = ExperimentalMovement.allowParkourAscend();
@@ -278,13 +308,18 @@ public class CalculationContext {
         this.allowClimbJumps = ExperimentalMovement.allowClimbJumps() && fullPace;
         this.allowTasJumps = ExperimentalMovement.allowTasJumps() && fullPace;
         this.allowMomentumJumps = ExperimentalMovement.allowMomentumJumps() && fullPace;
-        net.minecraft.world.item.Item clutchItem = Baritone.settings().allowLadderClutch.value ? ((Baritone) baritone).getInventoryBehavior().pickClutchItem(false) : null;
+        boolean ladderClutch = FastMode.allowLadderClutch(); // Ostinato
+        net.minecraft.world.item.Item clutchItem = ladderClutch ? ((Baritone) baritone).getInventoryBehavior().pickClutchItem(false) : null;
         this.hasClutchItem = clutchItem != null;
+        this.ladderGrab = ladderClutch;
+        this.allowGodBridge = Baritone.settings().allowGodBridge.value && !Baritone.settings().assumeSafeWalk.value;
         this.clutchIsLadder = clutchItem == net.minecraft.world.item.Items.LADDER;
         this.clutchPicksUp = clutchItem == net.minecraft.world.item.Items.LADDER && Baritone.settings().pickupLadders.value;
         this.blockReach = Baritone.settings().blockReachDistance.value;
         this.experimental = ExperimentalMovement.on();
         this.experimentalMinHealth = Baritone.settings().experimentalMinHealth.value;
+        this.fastMode = FastMode.on(); // Ostinato
+        this.fastModeMinHealth = Baritone.settings().fastModeMinHealth.value;
         this.fallDamageCost = Baritone.settings().fallDamageCost.value;
         this.jumpBias = ExperimentalMovement.jumpBias();
         this.health = player.getHealth() + player.getAbsorptionAmount();
@@ -336,6 +371,13 @@ public class CalculationContext {
         this.breakBlockAdditionalCost = Baritone.settings().blockBreakAdditionalPenalty.value;
         this.backtrackCostFavoringCoefficient = Baritone.settings().backtrackCostFavoringCoefficient.value;
         this.jumpPenalty = Baritone.settings().jumpPenalty.value;
+        boolean tickAccurate = Baritone.settings().tickAccurateCosts.value;
+        this.ascendWalkCost = tickAccurate ? TickCosts.ASCEND : Math.max(ActionCosts.JUMP_ONE_BLOCK_COST, ActionCosts.WALK_ONE_BLOCK_COST);
+        this.walkOffCost = tickAccurate ? TickCosts.WALK_OFF : ActionCosts.WALK_OFF_BLOCK_COST;
+        this.descendLandCost = tickAccurate ? TickCosts.DESCEND_LAND : Math.max(ActionCosts.FALL_N_BLOCKS_COST[1], ActionCosts.CENTER_AFTER_FALL_COST);
+        this.momentumJumpCosts = Baritone.settings().momentumJumpCosts.value; // Ostinato
+        this.legatoSmooth = Baritone.settings().legato.value && Baritone.settings().legatoSmoothing.value;
+        this.legatoSearch = Baritone.settings().legato.value && Baritone.settings().legatoSearch.value;
         this.walkOnWaterOnePenalty = Baritone.settings().walkOnWaterOnePenalty.value;
         this.allowWalkOnMagmaBlocks = Baritone.settings().allowWalkOnMagmaBlocks.value;
         // why cache these things here, why not let the movements just get directly from settings?
@@ -380,7 +422,40 @@ public class CalculationContext {
         return baritone;
     }
 
+    /** Ostinato: block-read cache while piCheapPathing is on for this search. Null the rest of the time. */
+    private PiCheap.BlockCache piBlocks;
+    private int piDepth;
+
+    /**
+     * Ostinato: start the block-read cache for this search. Nested searches on the same context share it.
+     * {@code on} false does nothing, which is every search while piCheapPathing is off.
+     */
+    public void beginPiCheap(boolean on) {
+        if (!on) {
+            return;
+        }
+        if (piDepth == 0) {
+            piBlocks = PiCheap.claim();
+        }
+        piDepth++;
+    }
+
+    /** Ostinato: pair of {@link #beginPiCheap}. The cache arrays stay on the thread for the next search. */
+    public void endPiCheap(boolean on) {
+        if (!on || piDepth == 0) {
+            return;
+        }
+        piDepth--;
+        if (piDepth == 0) {
+            piBlocks = null;
+        }
+    }
+
     public BlockState get(int x, int y, int z) {
+        PiCheap.BlockCache c = piBlocks;
+        if (c != null && c.owner == Thread.currentThread()) {
+            return c.read(x, y, z, bsi); // Ostinato: piCheapPathing block cache
+        }
         return bsi.get0(x, y, z); // laughs maniacally
     }
 
@@ -491,5 +566,12 @@ public class CalculationContext {
     public boolean isPossiblyProtected(int x, int y, int z) {
         // TODO more protection logic here; see #220
         return false;
+    }
+
+    /** Ostinato: TickSim results are constants, computed once per JVM. Walk figures: the executors do not sprint these. */
+    private static final class TickCosts {
+        static final double ASCEND = TickSim.ascendTicks(false);
+        static final double WALK_OFF = TickSim.walkOffTicks(false);
+        static final double DESCEND_LAND = TickSim.descendLandTicks(false);
     }
 }

@@ -1,5 +1,5 @@
 param(
-    [string]$Repo = "C:\Users\redfa\Documents\MinecraftDev\altoclef",
+    [string]$Repo = "C:\Users\<user>\Documents\MinecraftDev\altoclef",
     [int]$TailLines = 40
 )
 

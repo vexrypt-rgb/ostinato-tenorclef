@@ -25,6 +25,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import adris.altoclef.util.Pair;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Direction;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.*;
@@ -94,6 +95,15 @@ public class MineAndCollectTask extends ResourceTask {
             return new SatisfyMiningRequirementTask(_requirement);
         }
 
+        // Ostinato: StorageHelper.shouldSaveStack force-saves a worn iron pick for non-iron
+        // blocks, so Baritone autoTool refuses it while miningRequirementMet still counts it.
+        // Result (maze run13): forceEquip/autoTool ping-pong, diorite hand-mined, no drops.
+        // When every pick we hold is saved for these blocks, obtain a fresh cheap pick.
+        Task freshPick = getFreshPickIfSaved(mod);
+        if (freshPick != null) {
+            return freshPick;
+        }
+
         if (_subtask.isMining()) {
             makeSureToolIsEquipped(mod);
         }
@@ -124,6 +134,37 @@ public class MineAndCollectTask extends ResourceTask {
         return "Mine And Collect";
     }
 
+    // Ostinato: returns a pickaxe-obtain task when no held pickaxe may be used on _blocksToMine.
+    private Task getFreshPickIfSaved(AltoClef mod) {
+        if (_requirement == MiningRequirement.HAND || _requirement == MiningRequirement.IRON
+                || _requirement == MiningRequirement.DIAMOND || _blocksToMine.length == 0) {
+            return null;
+        }
+        Item[] picks = {Items.WOODEN_PICKAXE, Items.STONE_PICKAXE, Items.IRON_PICKAXE, Items.DIAMOND_PICKAXE, Items.NETHERITE_PICKAXE};
+        boolean anyPick = false;
+        for (Item pick : picks) {
+            for (adris.altoclef.util.slots.Slot slot : mod.getItemStorage().getSlotsWithItemPlayerInventory(true, pick)) {
+                ItemStack stack = StorageHelper.getItemStackInSlot(slot);
+                if (stack.isEmpty()) continue;
+                anyPick = true;
+                if (!StorageHelper.shouldSaveStack(mod, _blocksToMine[0], stack)) {
+                    return null;
+                }
+            }
+        }
+        if (!anyPick) return null; // SatisfyMiningRequirementTask covers the truly-missing case.
+        boolean hasWood = mod.getItemStorage().hasItem(Items.WOODEN_PICKAXE);
+        Item want = Items.STONE_PICKAXE;
+        // Ostinato: COBBLED_DEEPSLATE does not exist before 1.17; the versioned field is a stub there (isSupported false).
+        if (!hasWood && !mod.getItemStorage().hasItem(Items.COBBLESTONE, adris.altoclef.multiversion.versionedfields.Items.COBBLED_DEEPSLATE, Items.BLACKSTONE)) {
+            want = Items.WOODEN_PICKAXE;
+        }
+        // Ostinato: run60 pick-refresh spam. Log once per 30s; stdout only, not chat.
+        long nowPr = System.currentTimeMillis();
+        if (nowPr - lastPickRefreshLogMs > 30000) { lastPickRefreshLogMs = nowPr; System.out.println("MAZETEST pick-refresh: held picks saved for " + _blocksToMine[0].getTranslationKey() + ", obtaining " + want.getTranslationKey()); }
+        return adris.altoclef.TaskCatalogue.getItemTask(want, 1);
+    }
+    private static String lastEquipLog = ""; private static long lastEquipLogMs, lastPickRefreshLogMs; // Ostinato: log throttle
     private void makeSureToolIsEquipped(AltoClef mod) {
         if (!_cursorStackTimer.elapsed() || mod.getFoodChain().needsToEat()) {
             return;
@@ -131,6 +172,9 @@ public class MineAndCollectTask extends ResourceTask {
         _cursorStackTimer.reset();
         assert MinecraftClient.getInstance().player != null;
         if (_subtask.miningPos() == null) return;
+        // Ostinato: equip for the block Baritone is actually breaking (a log in the path), not the far target, else this
+        // and PlayerInteractionFixChain swap pick<->axe every tick and the path block never breaks (run16).
+        if (mod.getControllerExtras().isBreakingBlock() && !_subtask.miningPos().equals(mod.getControllerExtras().getBreakingBlockPos())) return;
         net.minecraft.block.BlockState mining = mod.getWorld().getBlockState(_subtask.miningPos());
 
         // Prefer inventory/hotbar pick over fist. Cursor-only equip left fist mining
@@ -142,8 +186,14 @@ public class MineAndCollectTask extends ResourceTask {
         if (best.isPresent()) {
             ItemStack bestStack = StorageHelper.getItemStackInSlot(best.get());
             if (!bestStack.isEmpty() && bestStack.getItem() != equipped.getItem()) {
-                Debug.logMessage("MineAndCollect: equip " + bestStack.getItem().getTranslationKey()
-                        + " for " + mining.getBlock().getTranslationKey());
+                // Ostinato: run60 logged ~177 "equip stone_sword for cobweb" lines in 30s. Log a tool/block pair once per 30s.
+                String equipKey = bestStack.getItem().getTranslationKey() + "|" + mining.getBlock().getTranslationKey();
+                long now = System.currentTimeMillis();
+                if (!equipKey.equals(lastEquipLog) || now - lastEquipLogMs > 30000) {
+                    lastEquipLog = equipKey; lastEquipLogMs = now;
+                    System.out.println("MAZETEST MineAndCollect: equip " + bestStack.getItem().getTranslationKey()
+                            + " for " + mining.getBlock().getTranslationKey());
+                }
                 mod.getSlotHandler().forceEquipItem(bestStack.getItem());
                 return;
             }
@@ -169,6 +219,7 @@ public class MineAndCollectTask extends ResourceTask {
         private final MovementProgressChecker progressChecker = new MovementProgressChecker();
         private final Task _pickupTask;
         private BlockPos miningPos;
+        private BlockPos parkAnchor; private int parkTicks; // Ostinato: parked-far stall check
 
         public MineOrCollectTask(Block[] blocks, ItemTarget[] targets) {
             _blocks = blocks;
@@ -221,16 +272,30 @@ public class MineAndCollectTask extends ResourceTask {
         }
 
         public static Pair<Double,Optional<BlockPos> > getClosestBlock(AltoClef mod,Vec3d pos ,Block... blocks) {
+            // Ostinato: #allblocks. Dry blocks first: the closest iron ore was often on the ocean floor, where the bot
+            // stalled escaping water until its gather timed out. Wet blocks are still used when nothing dry is known.
             Optional<BlockPos> closestBlock = mod.getBlockScanner().getNearestBlock(pos, check -> {
-
                 if (mod.getBlockScanner().isUnreachable(check)) return false;
-                return WorldHelper.canBreak(check);
+                return WorldHelper.canBreak(check) && !touchesWater(mod, check);
             }, blocks);
+            if (closestBlock.isEmpty()) {
+                closestBlock = mod.getBlockScanner().getNearestBlock(pos, check -> {
+                    if (mod.getBlockScanner().isUnreachable(check)) return false;
+                    return WorldHelper.canBreak(check);
+                }, blocks);
+            }
 
             return new Pair<>(
                     closestBlock.map(blockPos -> BlockPosVer.getSquaredDistance(blockPos, pos)).orElse(Double.POSITIVE_INFINITY),
                     closestBlock
             );
+        }
+
+        private static boolean touchesWater(AltoClef mod, BlockPos p) {
+            for (Direction d : Direction.values()) {
+                if (!mod.getWorld().getBlockState(p.offset(d)).getFluidState().isEmpty()) return true;
+            }
+            return false;
         }
 
         @Override
@@ -245,10 +310,20 @@ public class MineAndCollectTask extends ResourceTask {
             if (mod.getClientBaritone().getPathingBehavior().isPathing()) {
                 progressChecker.reset();
             }
-            if (miningPos != null && !progressChecker.check(mod)) {
+            // Ostinato: mono_yellow LIGHT FAIL. A log 32 blocks out with no path (open set 0 every recalc) kept
+            // isPathing() flickering true, so the reset above never let the checker fire and the furnish chain sat
+            // 90s on "Getting to block... reach=false". Stood still away from the block for 15s = unreachable.
+            boolean parked = false;
+            if (miningPos != null) {
+                BlockPos feet = mod.getPlayer().getBlockPos();
+                if (parkAnchor == null || parkAnchor.getSquaredDistance(feet) > 4) { parkAnchor = feet; parkTicks = 0; }
+                else if (miningPos.getSquaredDistance(feet) > 36 && ++parkTicks > 300) parked = true;
+            } else { parkAnchor = null; parkTicks = 0; }
+            if (miningPos != null && (parked || !progressChecker.check(mod))) {
+                parkAnchor = null; parkTicks = 0;
                 mod.getClientBaritone().getPathingBehavior().forceCancel();
                 Debug.logMessage("Failed to mine block. Suggesting it may be unreachable.");
-                mod.getBlockScanner().requestBlockUnreachable(miningPos, 2);
+                mod.getBlockScanner().requestBlockUnreachable(miningPos, 1); // Ostinato: 2 -> 1 (fail twice, move on)
                 blacklist.add(miningPos);
                 miningPos = null;
                 progressChecker.reset();

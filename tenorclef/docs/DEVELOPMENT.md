@@ -15,7 +15,7 @@ Set `JAVA_HOME` (or your IDE Gradle JVM) to JDK 21 before running TenorClef Grad
 ```bat
 REM Windows (example — adjust path to your Adoptium/Temurin install)
 set JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot
-cd C:\Users\redfa\Documents\MinecraftDev\altoclef
+cd C:\Users\<user>\Documents\MinecraftDev\altoclef
 gradlew.bat :1.21.11:compileJava -PostinatoJar=..\Ostinato\dist\<jar>
 ```
 
@@ -69,7 +69,7 @@ Requires an Ostinato Baritone jar (`baritone-unoptimized-fabric-*1.16.1*` or `ba
 Build fresh from Ostinato (JDK **8**):
 
 ```bat
-cd C:\Users\redfa\Documents\MinecraftDev\Ostinato-1.16.1
+cd C:\Users\<user>\Documents\MinecraftDev\Ostinato-1.16.1
 set JAVA_HOME=<JDK8 home>
 gradlew.bat build -Pbaritone.fabric_build
 rem then pass -PostinatoJar=<that jar>, or re-pin libs\baritone-unoptimized-fabric-1.16.1.jar and its .sha256
@@ -80,7 +80,7 @@ rem then pass -PostinatoJar=<that jar>, or re-pin libs\baritone-unoptimized-fabr
 Uses the committed `libs/baritone-unoptimized-fabric-ostinato-1.21.11.jar` (Ostinato branch `1.21.11`, JDK 21, `./gradlew :fabric:build`), To build against a local Ostinato checkout, pass its jar with `-PostinatoJar`:
 
 ```bat
-cd C:\Users\redfa\Documents\MinecraftDev\Ostinato
+cd C:\Users\<user>\Documents\MinecraftDev\Ostinato
 set JAVA_HOME=<JDK21 home>
 gradlew.bat build
 cd ..\altoclef
@@ -128,3 +128,10 @@ No `org.gradle.java.home` pin.
 ### Related: Ostinato `1.16.1` Tests
 
 Ostinato branch `1.16.1` runs `.github/workflows/run_tests.yml` on JDK 8. That job has been flaky/red independently of TenorClef. Prefer documenting + `continue-on-error` there until a dedicated JDK8/Gradle 4.9 test fix lands; TenorClef's `:1.16.1:compileJava` remains the required legacy gate.
+
+## The 26.3 mapping file
+
+`versions/mapping-26.3-1.21.11.txt` (26.3 Mojang names to 1.21.11 Yarn names, used by the preprocessor link
+in `root.gradle.kts`) is not committed. The first configure that needs it downloads it from TenorClef commit
+`01faac19` and checks SHA-256 `f5910582...`; after that the local, untracked copy is used, so offline builds work.
+To use your own copy, put it at that path, or pass `-Ptc.mapping263.url=<url>`. Build with `-Pno26` to skip 26.3.
