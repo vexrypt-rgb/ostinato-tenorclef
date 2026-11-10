@@ -27,8 +27,8 @@ Fix the bot, not the task: make capability fixes that last, not one-off hacks. J
 
 | Repo | Path | Branch | State |
 |---|---|---|---|
-| Ostinato (Baritone fork, Mojang names) | `C:\Users\redfa\Documents\MinecraftDev\Ostinato-maze-survival` (a git worktree) | `maze-backrooms-expand` (pushed, 18 commits ahead of origin/main, **not merged**) | clean except untracked scratch files |
-| TenorClef (AltoClef fork, 1.21.1 yarn names in `src/`) | `C:\Users\redfa\Documents\MinecraftDev\TenorClef-main` | `main` (pushed, HEAD 3797d158) | clean except build logs |
+| Ostinato (Baritone fork, Mojang names) | `C:\Users\<user>\Documents\MinecraftDev\Ostinato-maze-survival` (a git worktree) | `maze-backrooms-expand` (pushed, 18 commits ahead of origin/main, **not merged**) | clean except untracked scratch files |
+| TenorClef (AltoClef fork, 1.21.1 yarn names in `src/`) | `C:\Users\<user>\Documents\MinecraftDev\TenorClef-main` | `main` (pushed, HEAD 3797d158) | clean except build logs |
 
 Key files:
 - Harness: `Ostinato-maze-survival/src/main/java/baritone/maze/MazeTest.java`. It holds the room loop, `nextRoom` (expand), `walkTick` (state 30), `provisionTick` (state 31), `furnishTick`/verify, failStreak and FOREVER.
@@ -47,7 +47,7 @@ Key files:
    Archive the log first: `copy proof\complete-mazetest.log proof\runNN-<what-happened>.log`.
 2. **Build TenorClef** (only the 26.3 module is needed):
    ```powershell
-   cd C:\Users\redfa\Documents\MinecraftDev\TenorClef-main
+   cd C:\Users\<user>\Documents\MinecraftDev\TenorClef-main
    $env:JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot'
    & .\gradlew.bat "-Dorg.gradle.jvmargs=-Xmx1536M" :26.3:build -x test --max-workers=2 *> tc-build-runNN.log
    ```
@@ -57,7 +57,7 @@ Key files:
 4. Kill the build daemons you just created (the new jdk-21 and jdk-25 java pids, never 6880/18564).
 5. **Launch** (Ostinato compiles from source inside runClient; no separate build is needed):
    ```powershell
-   cd C:\Users\redfa\Documents\MinecraftDev\Ostinato-maze-survival
+   cd C:\Users\<user>\Documents\MinecraftDev\Ostinato-maze-survival
    Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','maze-survival-launch.ps1','-extra','-Dostinato.mazetest.rooms=0' -WindowStyle Minimized -PassThru
    ```
    The log goes to `proof\complete-mazetest.log`. Each launch is a fresh world (seed 71006). The furnish cap is 108000 ticks and the dig cap is 12000.
@@ -150,7 +150,7 @@ Not done: farming room (needs water + tilling in the furnisher), interior props.
 
 ## 2026-11-02: TenorClef survival palette (Grok Build, furnisher slice)
 
-No client launched. Jar not swapped. TenorClef `main` commit `761a9dd3952fa57883bb56219c99d51f98a8aa2b` (local, not pushed). Jar built by `:26.3:build` with tests (347 tests, 0 failures): `C:\Users\redfa\Documents\MinecraftDev\TenorClef-main\versions\26.3\build\libs\altoclef-26.3-0.27.0.jar`. Do not copy it into mods. The coordinator does the proof run. No Ostinato Java was edited in this slice.
+No client launched. Jar not swapped. TenorClef `main` commit `761a9dd3952fa57883bb56219c99d51f98a8aa2b` (local, not pushed). Jar built by `:26.3:build` with tests (347 tests, 0 failures): `C:\Users\<user>\Documents\MinecraftDev\TenorClef-main\versions\26.3\build\libs\altoclef-26.3-0.27.0.jar`. Do not copy it into mods. The coordinator does the proof run. No Ostinato Java was edited in this slice.
 
 Claude's palettes should name ids from the list below. A step's `blockIds` are Minecraft path ids, best first; the furnisher gathers and places the first one it can obtain. Room size is the `airCells` box. Nothing in TenorClef assumes 7x7. Footprints from 5x5 through 13x5 and 11x11, clear height 4 to 6, are accepted. Log: `MAZETEST FURNISH room-bounds span=XxZ clear=H`.
 

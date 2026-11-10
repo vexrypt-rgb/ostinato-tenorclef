@@ -53,7 +53,7 @@ PrestoBench > bookkeeping STANDARD_OUT
 > Task :fabric:testClasses UP-TO-DATE
 > Task :fabric:test NO-SOURCE
 
-[Incubating] Problems report is available at: file:///C:/Users/redfa/Documents/MinecraftDev/Ostinato-ppe/build/reports/problems/problems-report.html
+[Incubating] Problems report is available at: file:///C:/Users/<user>/Documents/MinecraftDev/Ostinato-ppe/build/reports/problems/problems-report.html
 
 Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
 

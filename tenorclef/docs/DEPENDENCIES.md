@@ -6,9 +6,9 @@ Audit date: 2026-09-19 (America/Phoenix). Phase 1 Gradle/CI updates 2026-09-19 P
 
 | Path | Role |
 |------|------|
-| `C:\Users\redfa\Documents\MinecraftDev\altoclef` | TenorClef (this repo; remote `vexrypt-rgb/TenorClef`) |
-| `C:\Users\redfa\Documents\MinecraftDev\Ostinato` | Ostinato `main` (MC 1.21.11; 1.21.4 on branch `1.21.4`) |
-| `C:\Users\redfa\Documents\MinecraftDev\Ostinato-1.16.1` | Ostinato `1.16.1` branch checkout |
+| `C:\Users\<user>\Documents\MinecraftDev\altoclef` | TenorClef (this repo; remote `vexrypt-rgb/TenorClef`) |
+| `C:\Users\<user>\Documents\MinecraftDev\Ostinato` | Ostinato `main` (MC 1.21.11; 1.21.4 on branch `1.21.4`) |
+| `C:\Users\<user>\Documents\MinecraftDev\Ostinato-1.16.1` | Ostinato `1.16.1` branch checkout |
 
 This audit used clones of the same GitHub remotes on the agent box.
 
@@ -53,7 +53,7 @@ See also existing `docs/OSTINATO_WIRING.md`.
 | Swim | `Settings.swimInWater` + traverse/diagonal sprint-swim (`docs/SWIM_PORT.md`, port of baritone#3988 / #2377) |
 
 ```bat
-cd C:\Users\redfa\Documents\MinecraftDev\Ostinato
+cd C:\Users\<user>\Documents\MinecraftDev\Ostinato
 gradlew.bat :fabric:build
 ```
 
@@ -66,7 +66,7 @@ gradlew.bat :fabric:build
 | Gradle wrapper | **4.9** |
 
 ```bat
-cd C:\Users\redfa\Documents\MinecraftDev\Ostinato-1.16.1
+cd C:\Users\<user>\Documents\MinecraftDev\Ostinato-1.16.1
 set JAVA_HOME=<JDK8 home>
 gradlew.bat build -Pbaritone.fabric_build
 ```
@@ -76,7 +76,7 @@ Pass `dist/baritone-unoptimized-fabric-*.jar` with `-PostinatoJar=`, or re-pin `
 ## Working TenorClef build commands
 
 ```bat
-cd C:\Users\redfa\Documents\MinecraftDev\altoclef
+cd C:\Users\<user>\Documents\MinecraftDev\altoclef
 gradlew.bat :1.21.11:compileJava
 gradlew.bat :1.21.11:runClient
 gradlew.bat :1.16.1:compileJava

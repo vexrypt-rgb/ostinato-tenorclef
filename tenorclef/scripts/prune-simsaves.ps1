@@ -23,7 +23,7 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$Repo = 'C:\Users\redfa\Documents\MinecraftDev\altoclef',
+  [string]$Repo = 'C:\Users\<user>\Documents\MinecraftDev\altoclef',
   [switch]$Archive,
   [int]$OlderThanDays = 0,
   [string]$ArchiveDir = ''

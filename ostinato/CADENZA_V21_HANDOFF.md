@@ -6,7 +6,7 @@ Status: **complete** (§10), uncommitted, for review. Evidence labels: **Verifie
 
 ## 1. Branch, HEAD, worktree, preserved work
 
-- Worktree `C:\Users\redfa\Documents\MinecraftDev\Ostinato-ppe`, branch `feat/predictive-physics`, HEAD `1aed5cc2`.
+- Worktree `C:\Users\<user>\Documents\MinecraftDev\Ostinato-ppe`, branch `feat/predictive-physics`, HEAD `1aed5cc2`.
   **Verified.**
 - At the start of v2.1 there were 97 uncommitted paths (modified tracked files and untracked files: PPE, Presto,
   Legato, Maestro, Cadenza v1/v2, Grace Note, Bombard, Threat, their handoffs). None was reset, stashed, cleaned,

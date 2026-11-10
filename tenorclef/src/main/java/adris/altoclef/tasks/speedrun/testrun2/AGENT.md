@@ -33,7 +33,7 @@ Example external loop (Python):
 
 ```python
 from pathlib import Path
-p = Path(r"C:\Users\redfa\Documents\MinecraftDev\altoclef\versions\1.16.5\run\altoclef\agent")
+p = Path(r"C:\Users\<user>\Documents\MinecraftDev\altoclef\versions\1.16.5\run\altoclef\agent")
 snap = (p / "snapshot.json").read_text()
 # call your API with snap, get back "xget bread"
 (p / "inbox.txt").write_text("xget bread\n")

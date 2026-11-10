@@ -17,12 +17,12 @@ Status ladder per capability: implemented → compiling → unit-tested → inte
 | Item | Value |
 |---|---|
 | Repo | `vexrypt-rgb/Ostinato` (worktree) |
-| Worktree | `C:\Users\redfa\Documents\MinecraftDev\Ostinato-ppe` |
+| Worktree | `C:\Users\<user>\Documents\MinecraftDev\Ostinato-ppe` |
 | Branch / HEAD | `feat/predictive-physics` @ `1aed5cc2` (unchanged by this work) |
 | Target MC | **26.3**, Java 25 (`gradle.properties`); unobfuscated jar |
 | Game jar used for mechanics | `~/.gradle/caches/fabric-loom/minecraftMaven/net/minecraft/minecraft-merged-deobf/26.3/minecraft-merged-deobf-26.3.jar` sha256 `fca9019b2687fbf7a091fa1344a4ebd716a33ab6466eaec0eb8d976124dad315` |
-| Decompiled excerpts | `C:\Users\redfa\Documents\MinecraftDev\_scherzo_audit\out\` (CFR, scratch only) + older `MinecraftDev\_mc263src\` |
-| TenorClef | `C:\Users\redfa\Documents\MinecraftDev\TenorClef-main`, `main` @ `983cf317`, **~20 dirty files owned by other agents — do not touch** |
+| Decompiled excerpts | `C:\Users\<user>\Documents\MinecraftDev\_scherzo_audit\out\` (CFR, scratch only) + older `MinecraftDev\_mc263src\` |
+| TenorClef | `C:\Users\<user>\Documents\MinecraftDev\TenorClef-main`, `main` @ `983cf317`, **~20 dirty files owned by other agents — do not touch** |
 
 **Not authorised:** commit, push, stash, reset, discard. Nothing has been committed. All work is uncommitted on top of
 the already-uncommitted PPE / Threat / Grace Note work in this worktree.
@@ -143,7 +143,7 @@ Files (all new unless marked):
 - **Modified** `src/main/java/baritone/process/PvpProcess.java` (+13/−4): field `scherzo`; `scherzo.tick(me, target,
   tv(), lag.ticks())` after the lag note in `onTick`; the four `recorder.end(...)` sites → `endFight(...)`, which writes
   the Scherzo lines to the fight log first; `onLostControl` also calls `scherzo.reset()`. OBSERVE changes no decision.
-  Pre-edit copy: `C:\Users\redfa\Documents\MinecraftDev\_scherzo_audit\PvpProcess.java.orig`.
+  Pre-edit copy: `C:\Users\<user>\Documents\MinecraftDev\_scherzo_audit\PvpProcess.java.orig`.
 - Tests: `src/test/java/baritone/scherzo/OpponentModelTest.java` (19), `PredictionAuditTest.java` (6).
 
 Fight-log lines written at fight end (`pvplogs/*.gz`): `scherzo fight h=… model … | base … | in-spread … in-bound …`,

@@ -77,12 +77,12 @@ Build TenorClef-main\tc-build-run64.log OK. Jar 4506718 B SHA256 682C327B356EAF4
 RUN64 launched 13:54:15 via maze-survival-launch.ps1 (2nd monitor pos 2600,40): cmd 1896, gradle launcher java 3796, client java 8608 (forked by daemon 6880). 13:56:50 digging maze-3,0 incorrect 51->27. Leftover java 6880/18564 untouched.
 VERIFY run64: ceiling-side-stand/ceiling-ring-stand lines for wall/corner cells (no repeated ceiling-bad-stand on nook spots under cladding), repair-sweep clean, light=133/133, MAZETEST RESULT PASS.
 
-=== 2026-10-27 14:24:34 MST — Ostinato maze dig+furnish SURVIVAL PASS (run64) ===
+=== 2026-10-27 14:24:34 MST ï¿½ Ostinato maze dig+furnish SURVIVAL PASS (run64) ===
 MAZETEST RESULT PASS gamemode=survival ticks=35636
 light 133/133, container 1/1, fill 1/1, seal 7/7
 TenorClef commits: 3b059c52 (standSees + repair-sweep) on top of prior 9a7d61c8 (repair-sweep)
 Jar: altoclef-26.3-0.26.2.jar (archived as altoclef-3b059c52.jar), 4506718 bytes, SHA256 682C327B356EAF4C08FE9D61A5A994121CBB306808A8755418CF0B7B10FC138D
-Archive: C:\Users\redfa\Documents\MinecraftDev\Ostinato-maze-survival\proof\run64-PASS-verify-light133
+Archive: C:\Users\<user>\Documents\MinecraftDev\Ostinato-maze-survival\proof\run64-PASS-verify-light133
 Client exited cleanly; no relaunch.
 
 [2026-10-27 14:45 America/Phoenix] Grok Bot: RUN65 = MULTI-ROOM EXPAND proof LIVE. Grok Bot owns launch; do NOT double-launch.

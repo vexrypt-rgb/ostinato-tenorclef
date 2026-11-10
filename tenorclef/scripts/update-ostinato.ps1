@@ -13,9 +13,9 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$Repo = 'C:\Users\redfa\Documents\MinecraftDev\altoclef',
-  [string]$OstinatoClone = 'C:\Users\redfa\Documents\MinecraftDev\Ostinato-1.16.1',
-  [string]$Jdk8 = 'C:\Users\redfa\agent-tools\jdk8',
+  [string]$Repo = 'C:\Users\<user>\Documents\MinecraftDev\altoclef',
+  [string]$OstinatoClone = 'C:\Users\<user>\Documents\MinecraftDev\Ostinato-1.16.1',
+  [string]$Jdk8 = 'C:\Users\<user>\agent-tools\jdk8',
   [string]$Branch = 'origin/1.16.1',
   [switch]$Force
 )

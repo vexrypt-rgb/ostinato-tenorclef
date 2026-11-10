@@ -16,8 +16,8 @@ shown by a test), **Measured** (live run, log named), **Reported** (from an earl
 
 | Repo | Worktree | Branch | HEAD | Uncommitted at start |
 |---|---|---|---|---|
-| TenorClef | `C:\Users\redfa\Documents\MinecraftDev\TenorClef-main` | `main` | `983cf317` (Maze furnish bridge: busy() and cancel()) | 30 modified + 89 untracked paths (maze, Grace Note, threat, trackers, logs) |
-| Ostinato | `C:\Users\redfa\Documents\MinecraftDev\Ostinato-ppe` | `feat/predictive-physics` | `1aed5cc2` (Merge PR #142 maze-tunnels) | 37 modified + 61 untracked paths (PPE, Presto, Legato, Maestro, Cadenza, handoffs) |
+| TenorClef | `C:\Users\<user>\Documents\MinecraftDev\TenorClef-main` | `main` | `983cf317` (Maze furnish bridge: busy() and cancel()) | 30 modified + 89 untracked paths (maze, Grace Note, threat, trackers, logs) |
+| Ostinato | `C:\Users\<user>\Documents\MinecraftDev\Ostinato-ppe` | `feat/predictive-physics` | `1aed5cc2` (Merge PR #142 maze-tunnels) | 37 modified + 61 untracked paths (PPE, Presto, Legato, Maestro, Cadenza, handoffs) |
 
 **Verified** (`git status --short`, `git log -1`). TenorClef also has a second worktree `polish/tenorclef` on
 `workbuddy/polish-20261030` (same HEAD). Nothing was committed, pushed, merged, reset, stashed, cleaned or discarded.

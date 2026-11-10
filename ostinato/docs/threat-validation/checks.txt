@@ -46,19 +46,19 @@ Detected version 1.26.0-dirty
 
 > Task :compileJava
 Picked up JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2 -XX:HeapBaseMinAddress=32g
-C:\Users\redfa\Documents\MinecraftDev\Ostinato-ppe\src\main\java\baritone\process\elytra\NetherPathfinderContext.java:38: warning: Unsafe is internal proprietary API and may be removed in a future release
+C:\Users\<user>\Documents\MinecraftDev\Ostinato-ppe\src\main\java\baritone\process\elytra\NetherPathfinderContext.java:38: warning: Unsafe is internal proprietary API and may be removed in a future release
 import sun.misc.Unsafe;
                ^
-C:\Users\redfa\Documents\MinecraftDev\Ostinato-ppe\src\main\java\baritone\process\elytra\NetherPathfinderContext.java:55: warning: Unsafe is internal proprietary API and may be removed in a future release
+C:\Users\<user>\Documents\MinecraftDev\Ostinato-ppe\src\main\java\baritone\process\elytra\NetherPathfinderContext.java:55: warning: Unsafe is internal proprietary API and may be removed in a future release
     private static final Unsafe UNSAFE;
                          ^
-C:\Users\redfa\Documents\MinecraftDev\Ostinato-ppe\src\main\java\baritone\process\elytra\NetherPathfinderContext.java:58: warning: Unsafe is internal proprietary API and may be removed in a future release
+C:\Users\<user>\Documents\MinecraftDev\Ostinato-ppe\src\main\java\baritone\process\elytra\NetherPathfinderContext.java:58: warning: Unsafe is internal proprietary API and may be removed in a future release
             Field f = Unsafe.class.getDeclaredField("theUnsafe");
                       ^
-C:\Users\redfa\Documents\MinecraftDev\Ostinato-ppe\src\main\java\baritone\process\elytra\NetherPathfinderContext.java:60: warning: Unsafe is internal proprietary API and may be removed in a future release
+C:\Users\<user>\Documents\MinecraftDev\Ostinato-ppe\src\main\java\baritone\process\elytra\NetherPathfinderContext.java:60: warning: Unsafe is internal proprietary API and may be removed in a future release
             UNSAFE = (Unsafe) f.get(null);
                       ^
-C:\Users\redfa\Documents\MinecraftDev\Ostinato-ppe\src\main\java\baritone\process\elytra\NetherPathfinderContext.java:326: warning: [removal] setMemory(long,long,byte) in Unsafe has been deprecated and marked for removal
+C:\Users\<user>\Documents\MinecraftDev\Ostinato-ppe\src\main\java\baritone\process\elytra\NetherPathfinderContext.java:326: warning: [removal] setMemory(long,long,byte) in Unsafe has been deprecated and marked for removal
                     UNSAFE.setMemory(chunkPtr + (y0 * bytesInSection), bytesInSection, (byte) 0xFF);
                           ^
 Note: Some input files use or override a deprecated API.
@@ -84,7 +84,7 @@ ostinato-native: built windows-x86_64
 Picked up JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2 -XX:HeapBaseMinAddress=32g
 
 WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
-WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.joml.MemUtil$MemUtilUnsafe (file:/C:/Users/redfa/.gradle/caches/modules-2/files-2.1/org.joml/joml/1.10.9/438e036486bad66b189bff385dd07dea4f74a146/joml-1.10.9.jar)
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by org.joml.MemUtil$MemUtilUnsafe (file:/C:/Users/<user>/.gradle/caches/modules-2/files-2.1/org.joml/joml/1.10.9/438e036486bad66b189bff385dd07dea4f74a146/joml-1.10.9.jar)
 WARNING: Please consider reporting this to the maintainers of class org.joml.MemUtil$MemUtilUnsafe
 WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
 
@@ -113,7 +113,7 @@ ThreatBridgeTest > tenorClefConsumesActualSnapshotWithoutMinecraftOrPolicy STAND
 > Task :fabric:testClasses UP-TO-DATE
 > Task :fabric:test NO-SOURCE
 
-[Incubating] Problems report is available at: file:///C:/Users/redfa/Documents/MinecraftDev/Ostinato-ppe/build/reports/problems/problems-report.html
+[Incubating] Problems report is available at: file:///C:/Users/<user>/Documents/MinecraftDev/Ostinato-ppe/build/reports/problems/problems-report.html
 
 Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
 

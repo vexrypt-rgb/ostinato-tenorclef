@@ -1,5 +1,5 @@
-﻿$ErrorActionPreference = "Continue"
-$Repo = "C:\Users\redfa\Documents\MinecraftDev\altoclef"
+$ErrorActionPreference = "Continue"
+$Repo = "C:\Users\<user>\Documents\MinecraftDev\altoclef"
 $JavaHome = "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot"
 $env:JAVA_HOME = $JavaHome
 $env:Path = "$JavaHome\bin;$env:Path"

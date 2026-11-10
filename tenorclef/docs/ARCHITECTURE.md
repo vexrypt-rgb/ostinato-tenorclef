@@ -1,7 +1,7 @@
 # TenorClef architecture (Phase 0 — current vs target)
 
 Audit date: 2026-09-19 (America/Phoenix). Repo audited: `vexrypt-rgb/TenorClef` (AltoClef fork).
-On the Windows machine this tree is `C:\Users\redfa\Documents\MinecraftDev\altoclef`.
+On the Windows machine this tree is `C:\Users\<user>\Documents\MinecraftDev\altoclef`.
 
 Phase 0 was docs-only. Phase 2 adds MovementEngine adapter for 2 travel tasks.
 Phase 3 extracts `WorldKnowledge` + `MovementController` facades; AltoClef stays a shim.

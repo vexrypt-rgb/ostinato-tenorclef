@@ -4,7 +4,7 @@ Living handoff for Presto (predictive movement intelligence). Update after every
 
 ## Repository state
 
-- Worktree `C:\Users\redfa\Documents\MinecraftDev\Ostinato-ppe`, branch `feat/predictive-physics`, HEAD `1aed5cc2` (= origin/main at audit).
+- Worktree `C:\Users\<user>\Documents\MinecraftDev\Ostinato-ppe`, branch `feat/predictive-physics`, HEAD `1aed5cc2` (= origin/main at audit).
 - PPE, Grace Note, Threat, Scherzo and Bombard are **uncommitted** in this worktree (not on GitHub). Presto builds on them. Nothing committed or pushed (owner instruction for this task).
 - The main `Ostinato` checkout is on an unrelated 1.16.1 swarm branch with its own uncommitted edit; untouched.
 - Target: Minecraft 26.3 / Java 25 (main). Older versions live on separate branches; Presto is not ported.

@@ -15,7 +15,7 @@ Set `JAVA_HOME` (or your IDE Gradle JVM) to JDK 21 before running TenorClef Grad
 ```bat
 REM Windows (example — adjust path to your Adoptium/Temurin install)
 set JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot
-cd C:\Users\redfa\Documents\MinecraftDev\altoclef
+cd C:\Users\<user>\Documents\MinecraftDev\altoclef
 gradlew.bat :1.21.11:compileJava -PostinatoJar=..\Ostinato\dist\<jar>
 ```
 
@@ -69,7 +69,7 @@ Requires an Ostinato Baritone jar (`baritone-unoptimized-fabric-*1.16.1*` or `ba
 Build fresh from Ostinato (JDK **8**):
 
 ```bat
-cd C:\Users\redfa\Documents\MinecraftDev\Ostinato-1.16.1
+cd C:\Users\<user>\Documents\MinecraftDev\Ostinato-1.16.1
 set JAVA_HOME=<JDK8 home>
 gradlew.bat build -Pbaritone.fabric_build
 rem then pass -PostinatoJar=<that jar>, or re-pin libs\baritone-unoptimized-fabric-1.16.1.jar and its .sha256
@@ -80,7 +80,7 @@ rem then pass -PostinatoJar=<that jar>, or re-pin libs\baritone-unoptimized-fabr
 Uses the committed `libs/baritone-unoptimized-fabric-ostinato-1.21.11.jar` (Ostinato branch `1.21.11`, JDK 21, `./gradlew :fabric:build`), To build against a local Ostinato checkout, pass its jar with `-PostinatoJar`:
 
 ```bat
-cd C:\Users\redfa\Documents\MinecraftDev\Ostinato
+cd C:\Users\<user>\Documents\MinecraftDev\Ostinato
 set JAVA_HOME=<JDK21 home>
 gradlew.bat build
 cd ..\altoclef

@@ -1,4 +1,4 @@
-﻿# 1.16.1 sim (live client)
+# 1.16.1 sim (live client)
 
 The only faithful sim is the real Fabric **1.16.1** client (`:1.16.1:runClient`).
 Offline `benchmark` mock scenarios do **not** emulate 1.16.1 and must not be treated as the sim.
@@ -11,7 +11,7 @@ Offline `benchmark` mock scenarios do **not** emulate 1.16.1 and must not be tre
 - soft-reset to title between worlds when possible (no Gradle relaunch)
 
 ```powershell
-cd C:\Users\redfa\Documents\MinecraftDev\altoclef
+cd C:\Users\<user>\Documents\MinecraftDev\altoclef
 $env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot"
 powershell -ExecutionPolicy Bypass -File .\scripts\sim-loop.ps1
 ```
