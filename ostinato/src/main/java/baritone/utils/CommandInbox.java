@@ -19,7 +19,6 @@ package baritone.utils;
 
 import baritone.Baritone;
 import baritone.api.event.events.TickEvent;
-import baritone.api.event.events.type.EventState;
 import baritone.api.event.listener.AbstractGameEventListener;
 import baritone.api.utils.Helper;
 import net.minecraft.client.Minecraft;
@@ -55,8 +54,9 @@ public final class CommandInbox implements AbstractGameEventListener, Helper {
     }
 
     @Override
-    public void onTick(TickEvent event) {
-        if (event.getType() != TickEvent.Type.IN || event.getState() != EventState.POST) {
+    public void onPostTick(TickEvent event) {
+        // Ostinato: GameEventHandler delivers PRE on onTick and POST on onPostTick.
+        if (event.getType() != TickEvent.Type.IN) {
             return;
         }
         drain();
