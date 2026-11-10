@@ -41,7 +41,7 @@ or in game: `@warp 5` (`@warp 1` turns it off). Max 20.
 
 ## Pathfinding benchmark (`@pathbench`, 1.16.1)
 
-Measures pathfinding against a fixed ring of 16 goals around the bot (8 directions Ã— 32/96 blocks).
+Measures pathfinding against a fixed ring of 16 goals around the bot (8 directions × 32/96 blocks).
 
 - `@pathbench search [- | setting=v1,v2,...] [reps]` runs Baritone's A* only, with no movement.
   With a sweep, the whole ring is re-run once per value of that Baritone setting, e.g.

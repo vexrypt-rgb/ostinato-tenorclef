@@ -21,7 +21,7 @@ TenorClef repo, and use pinned jars in `tenorclef/libs/`.
 ## Install (players)
 
 Download the jars from the [Ostinato releases](https://github.com/vexrypt-rgb/Ostinato/releases) and
-[TenorClef releases](https://github.com/vexrypt-rgb/TenorClef/releases). For 26.3 you need Fabric Loader, Java 25,
+[TenorClef releases](https://github.com/vexrypt-rgb/TenorClef/releases). Current pair: Ostinato v1.27.0 + TenorClef v0.28.0. For 26.3 you need Fabric Loader, Java 25,
 `ostinato-mc26.3-unoptimized-fabric-*.jar` and the TenorClef 26.3 jar in `mods/`.
 
 ## Experimental features
@@ -65,6 +65,9 @@ The script does three things:
 3. Runs `:26.3:compileJava :26.3:test` in `tenorclef` with `-PostinatoJar.26.3=<that jar>`.
 
 To get the TenorClef mod jar, set `TC_TASKS=":26.3:build"`.
+
+The first TenorClef build downloads `versions/mapping-26.3-1.21.11.txt` (not committed; derived from Mojang's names)
+from a pinned TenorClef commit and checks its SHA-256. Offline, copy it in by hand or pass `-Ptc.mapping263.url=<url>`.
 
 Gradle runs with `--no-daemon --max-workers=2`.
 
