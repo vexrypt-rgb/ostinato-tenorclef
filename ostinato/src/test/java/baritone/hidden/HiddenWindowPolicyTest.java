@@ -58,12 +58,17 @@ public class HiddenWindowPolicyTest {
     }
 
     @Test
-    public void headlessUsesTheNormalWindowPolicy() {
-        assertFalse(HiddenWindowPolicy.createHidden(RunMode.Value.HEADLESS, false));
+    public void headlessStaysHiddenAndDoesNotShowForWindowPosOrPresent() {
+        assertTrue(HiddenWindowPolicy.createHidden(RunMode.Value.HEADLESS, false));
+        assertTrue(HiddenWindowPolicy.createHidden(RunMode.Value.HEADLESS, true));
         assertFalse(HiddenWindowPolicy.showAfterCreate(RunMode.Value.HEADLESS, false));
-        assertTrue(HiddenWindowPolicy.showAfterCreate(RunMode.Value.HEADLESS, true));
-        assertFalse(HiddenWindowPolicy.suppressMouseGrab(RunMode.Value.HEADLESS, false, false, false));
-        assertEquals(HiddenWindowPolicy.Step.NONE, HiddenWindowPolicy.step(false, RunMode.Value.HEADLESS, false));
+        assertFalse(HiddenWindowPolicy.showAfterCreate(RunMode.Value.HEADLESS, true));
+        assertTrue(HiddenWindowPolicy.suppressActivate(RunMode.Value.HEADLESS, false));
+        assertTrue(HiddenWindowPolicy.suppressMouseGrab(RunMode.Value.HEADLESS, false, false, false));
+        assertEquals(HiddenWindowPolicy.Step.HIDE, HiddenWindowPolicy.step(false, RunMode.Value.HEADLESS, false));
+        assertEquals(HiddenWindowPolicy.Step.NONE, HiddenWindowPolicy.step(true, RunMode.Value.HEADLESS, false));
+        assertEquals(HiddenWindowPolicy.Step.NONE, HiddenWindowPolicy.step(true, RunMode.Value.HEADLESS, true));
+        assertEquals(HiddenWindowPolicy.Step.HIDE, HiddenWindowPolicy.step(false, RunMode.Value.HEADLESS, true));
     }
 
     @Test

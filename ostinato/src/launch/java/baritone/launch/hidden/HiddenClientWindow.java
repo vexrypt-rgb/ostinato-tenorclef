@@ -51,7 +51,8 @@ public final class HiddenClientWindow {
         if (hasPos) {
             SDLVideo.SDL_SetWindowPosition(handle, windowPos[0], windowPos[1]);
         }
-        if (mode == RunMode.Value.HIDDEN) {
+        // Ostinato: hidden and headless both stay unshown and use the client minimum size. Headless never shows later.
+        if (mode == RunMode.Value.HIDDEN || mode == RunMode.Value.HEADLESS) {
             rememberSize(handle);
             applyTiny(handle);
             hiddenApplied = true;

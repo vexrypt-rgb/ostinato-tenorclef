@@ -14,9 +14,10 @@ import baritone.api.run.RunMode;
  * limiter is capped at {@link #LOOP_FLOOR_FPS}, not at 1. {@code FramerateLimiter.limitDisplayFPS} sleeps the same
  * thread that pumps ticks, and the client catches up at most 10 ticks per update, so a 1 Hz sleep would stall the bot.
  * <p>
- * {@link RunMode.Value#NORMAL} and {@link RunMode.Value#HEADLESS} return the caller's values. Headless behaviour is
- * a later stage. Presenting a hidden bot ({@code presenting == true}) also returns the caller's values, so a later
- * render-swap can show this window with rendering resumed. The stored mode is not changed.
+ * {@link RunMode.Value#NORMAL} and {@link RunMode.Value#HEADLESS} return the caller's values. Headless cuts are in
+ * {@link baritone.api.headless.HeadlessPolicy}, not here, so a hidden bot's 1 fps path is not reused as "no renderer".
+ * Presenting a hidden bot ({@code presenting == true}) also returns the caller's values, so a later render-swap can
+ * show this window with rendering resumed. The stored mode is not changed.
  */
 public final class HiddenRenderPolicy {
 

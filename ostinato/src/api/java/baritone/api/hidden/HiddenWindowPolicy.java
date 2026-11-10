@@ -4,6 +4,7 @@
  */
 package baritone.api.hidden;
 
+import baritone.api.headless.HeadlessPolicy;
 import baritone.api.run.RunMode;
 
 /**
@@ -13,8 +14,9 @@ import baritone.api.run.RunMode;
  * created visible and the mouse grab is unchanged. {@link RunMode.Value#NORMAL} with {@code -Dostinato.windowPos}
  * still creates the window hidden, moves it, and shows it without activating. {@link RunMode.Value#HIDDEN} creates
  * the window hidden and does not show it. The GL context is created either way, because the hidden flag is only
- * OR'd into the window flags. {@link RunMode.Value#HEADLESS} is not a window policy in this stage: it follows
- * {@code normal}.
+ * OR'd into the window flags. {@link RunMode.Value#HEADLESS} also creates the window hidden and never shows it,
+ * including when {@code windowPos} is set and including a render-swap present. Headless cannot drop the GPU device
+ * here: {@link HeadlessPolicy#keepsRealGpuDevice()} explains why. A present does not show a headless window.
  */
 public final class HiddenWindowPolicy {
 
@@ -44,12 +46,12 @@ public final class HiddenWindowPolicy {
      * True when {@code createWindow} must OR in {@code SDL_WINDOW_HIDDEN}. The GPU backend still creates the context.
      */
     public static boolean createHidden(RunMode.Value mode, boolean windowPos) {
-        return mode(mode) == RunMode.Value.HIDDEN || windowPos;
+        return stayHidden(mode) || windowPos;
     }
 
-    /** True when the window should be shown at the end of construction. Hidden does not show. */
+    /** True when the window should be shown at the end of construction. Hidden and headless do not show. */
     public static boolean showAfterCreate(RunMode.Value mode, boolean windowPos) {
-        return mode(mode) != RunMode.Value.HIDDEN && windowPos;
+        return !stayHidden(mode) && windowPos;
     }
 
     /** True when show and raise must not activate the window. */
@@ -63,7 +65,7 @@ public final class HiddenWindowPolicy {
      * rule applies, so a normal client with neither flag is unchanged.
      */
     public static boolean suppressMouseGrab(RunMode.Value mode, boolean presenting, boolean windowPos, boolean noMouseGrabFlag) {
-        if (mode(mode) == RunMode.Value.HIDDEN || presenting) {
+        if (stayHidden(mode) || presenting) {
             return true;
         }
         return windowPos || noMouseGrabFlag;
@@ -71,10 +73,11 @@ public final class HiddenWindowPolicy {
 
     /**
      * One transition. {@code currentlyHidden} is the last applied hidden state, not a fresh SDL query.
-     * Presenting a hidden bot shows the window and does not change the stored mode.
+     * Presenting a hidden bot shows the window and does not change the stored mode. Presenting a headless bot does
+     * not show it: headless has no render-swap.
      */
     public static Step step(boolean currentlyHidden, RunMode.Value mode, boolean presenting) {
-        boolean wantHidden = mode(mode) == RunMode.Value.HIDDEN && !presenting;
+        boolean wantHidden = HeadlessPolicy.active(mode(mode)) || (mode(mode) == RunMode.Value.HIDDEN && !presenting);
         if (wantHidden && !currentlyHidden) {
             return Step.HIDE;
         }
@@ -110,6 +113,12 @@ public final class HiddenWindowPolicy {
         } catch (RuntimeException e) {
             return null;
         }
+    }
+
+    /** Hidden, and headless, keep the SDL window unshown. Null is not either of those. */
+    private static boolean stayHidden(RunMode.Value mode) {
+        RunMode.Value resolved = mode(mode);
+        return resolved == RunMode.Value.HIDDEN || HeadlessPolicy.active(resolved);
     }
 
     private static RunMode.Value mode(RunMode.Value mode) {

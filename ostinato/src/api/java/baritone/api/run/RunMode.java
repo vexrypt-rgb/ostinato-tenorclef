@@ -19,8 +19,9 @@ import java.util.Locale;
  * When the property was a known token, {@link #installStartup} copies it over the loaded setting once. That is how
  * the property wins the initial mode. A later {@code #set} wins after that.
  * <p>
- * {@link Value#HEADLESS} is a stored value in this stage. {@link #isHeadless()} reports it. Hidden-mode window and
- * render behaviour do not run for it. True headless (no GL context) is a later stage.
+ * {@link Value#HEADLESS} is the true-headless path ({@link baritone.api.headless.HeadlessPolicy}). {@link #isHeadless()}
+ * reports it. Hidden-mode render reduction does not run for it. The GPU device and a hidden SDL window are still
+ * created, because cancelling those calls crashes startup. See the headless notes.
  */
 public final class RunMode {
 
