@@ -142,6 +142,21 @@ public class Phase1StopScenariosTest {
         assertFalse(pair.bob.lookup(id).execution.terminal());
     }
 
+    @Test
+    public void issuerLocalSurvivalDoesNotBlockSendToPeer() {
+        Pair pair = new Pair();
+        pair.alice.setLocalSurvival(true);
+        String line = pair.alice.submit("Bob", "goto 1 2 3");
+        assertTrue("issuer survival blocked peer send: " + line, line.startsWith("swarm: sent "));
+        assertEquals(1, pair.bobExec.count("goto"));
+        pair.bob.setLocalSurvival(true);
+        UUID blocked = java.util.UUID.randomUUID();
+        pair.bob.receive("mem", "Alice", CommandProtocol.TYPE_CMD,
+                Phase1Support.cmd(pair.clock.get(), blocked, "Alice", "Bob", "goto", "4 5 6"));
+        assertEquals(1, pair.bobExec.count("goto"));
+        assertEquals("outranked-by-local-survival", pair.bob.lookup(blocked).rejectReason);
+    }
+
     private static void assertState(CommandProtocol.Tracked tracked, ExecutionState execution, ObservationState observation) {
         assertNotNull(tracked);
         assertEquals(execution, tracked.execution);

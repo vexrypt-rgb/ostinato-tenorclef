@@ -979,7 +979,10 @@ public final class CommandProtocol {
             multi = multiBot(target);
             cap = capsFor(target, entry);
             aiDry = entry.permission == CommandPermission.AI && policy.dryRun;
-            safety = immediateSafety || (!entry.ownerEmergency && (ownerEmergency || localSurvival));
+            // Ostinato: the issuer's own survival latch must not block sending a command
+            // to a peer. The receiving bot applies the same checks in deny() before it runs.
+            boolean selfTarget = self.memberId().equals(target);
+            safety = selfTarget && (immediateSafety || (!entry.ownerEmergency && (ownerEmergency || localSurvival)));
             safetyWhy = immediateSafety ? "outranked-by-immediate-safety"
                     : ownerEmergency ? "outranked-by-owner-emergency" : "outranked-by-local-survival";
         }
