@@ -3,6 +3,7 @@
  */
 package baritone.launch.mixins;
 
+import baritone.api.headless.HeadlessPolicy;
 import baritone.api.hidden.HiddenRenderPolicy;
 import baritone.api.hidden.RenderSwap;
 import baritone.api.run.RunMode;
@@ -19,7 +20,9 @@ public class MixinHiddenSound {
     @Inject(method = "getFinalSoundSourceVolume", at = @At("HEAD"), cancellable = true)
     private void ostinato$silence(SoundSource source, CallbackInfoReturnable<Float> ci) {
         // Ostinato: volume 0, engine kept. Not reduced: the vanilla volume is unchanged.
-        if (HiddenRenderPolicy.silenceSound(RunMode.current(), RenderSwap.isPresenting())) {
+        RunMode.Value mode = RunMode.current();
+        // Ostinato: volume 0 while hidden or headless. The engine object stays.
+        if (HiddenRenderPolicy.silenceSound(mode, RenderSwap.isPresenting()) || HeadlessPolicy.silenceSound(mode)) {
             ci.setReturnValue(0f);
         }
     }

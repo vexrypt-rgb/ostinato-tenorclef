@@ -4,6 +4,7 @@
  */
 package baritone.launch.mixins;
 
+import baritone.api.headless.HeadlessPolicy;
 import baritone.api.hidden.HiddenRenderPolicy;
 import baritone.api.hidden.RenderSwap;
 import baritone.api.run.RunMode;
@@ -19,7 +20,10 @@ public class MixinHiddenAnimation {
     @Inject(method = "cycleAnimationFrames", at = @At("HEAD"), cancellable = true)
     private void ostinato$skipAnim(CallbackInfo ci) {
         // Ostinato: cycleAnimationFrames is what calls the private uploadAnimationFrames.
-        if (HiddenRenderPolicy.skipTextureUpload(RunMode.current(), RenderSwap.isPresenting())) {
+        RunMode.Value mode = RunMode.current();
+        // Ostinato: hidden skips animation uploads. Headless does too. TextureAtlas.upload is not cancelled.
+        if (HiddenRenderPolicy.skipTextureUpload(mode, RenderSwap.isPresenting())
+                || HeadlessPolicy.skipTextureAnimation(mode)) {
             ci.cancel();
         }
     }

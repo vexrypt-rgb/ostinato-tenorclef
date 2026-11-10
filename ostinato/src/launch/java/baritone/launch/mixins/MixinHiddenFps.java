@@ -4,6 +4,7 @@
  */
 package baritone.launch.mixins;
 
+import baritone.api.headless.HeadlessPolicy;
 import baritone.api.hidden.HiddenRenderPolicy;
 import baritone.api.hidden.RenderSwap;
 import baritone.api.run.RunMode;
@@ -17,7 +18,11 @@ public class MixinHiddenFps {
 
     @ModifyArg(method = "renderFrame", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/FramerateLimiter;limitDisplayFPS(I)V"), index = 0)
     private int ostinato$hiddenFps(int cap) {
-        // Ostinato: min(caller, 20) while hidden and not presenting. The caller's cap is never raised.
-        return HiddenRenderPolicy.displayFpsCap(RunMode.current(), RenderSwap.isPresenting(), cap);
+        // Ostinato: min(caller, 20) while hidden or headless. The caller's cap is never raised. Not 1.
+        RunMode.Value mode = RunMode.current();
+        if (HeadlessPolicy.active(mode)) {
+            return HeadlessPolicy.displayFpsCap(mode, cap);
+        }
+        return HiddenRenderPolicy.displayFpsCap(mode, RenderSwap.isPresenting(), cap);
     }
 }

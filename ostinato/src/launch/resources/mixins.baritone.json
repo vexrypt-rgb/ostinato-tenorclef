@@ -49,6 +49,7 @@
     "MixinHiddenAtlas",
     "MixinHiddenAnimation",
     "MixinHiddenSound",
+    "MixinHeadlessSound",
     "MixinLegitSounds",
     "MixinProfilerPie",
     "MixinSpectatePackets",

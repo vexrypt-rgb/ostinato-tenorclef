@@ -73,6 +73,8 @@ public class MixinMinecraft {
     private void ostinato$tickStart(CallbackInfo ci) {
         // Ostinato: hide or show the SDL window when runMode or a render-swap present changes. Does not skip the tick.
         HiddenClientWindow.onTick();
+        // Ostinato: headless keeps the tick and shuts the OpenAL playback device. It does not skip this method.
+        baritone.launch.headless.HeadlessClient.onTick();
         if (baritone.utils.TickClock.ON) baritone.utils.TickClock.begin(); // Ostinato 2.0: harness tick timer, off by default
         // Packets are handled once per rendered frame (runTick), so at under 20 frames a second two ticks ran on one
         // frame's news and a slow client fought a step behind a fast one. Handle what has arrived before every tick,

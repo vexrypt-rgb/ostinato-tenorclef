@@ -4,6 +4,7 @@
  */
 package baritone.launch.mixins;
 
+import baritone.api.headless.HeadlessPolicy;
 import baritone.api.hidden.HiddenRenderPolicy;
 import baritone.api.hidden.RenderSwap;
 import baritone.api.run.RunMode;
@@ -17,7 +18,9 @@ public class MixinHiddenAtlas {
 
     @ModifyVariable(method = "loadAndStitch", at = @At("HEAD"), argsOnly = true)
     private int ostinato$mip(int mip) {
-        // Ostinato: loadAndStitch has one int, the mip level.
-        return HiddenRenderPolicy.atlasMipLevel(RunMode.current(), RenderSwap.isPresenting(), mip);
+        // Ostinato: loadAndStitch has one int, the mip level. Hidden or headless forces 0. The base atlas still uploads.
+        RunMode.Value mode = RunMode.current();
+        int hidden = HiddenRenderPolicy.atlasMipLevel(mode, RenderSwap.isPresenting(), mip);
+        return HeadlessPolicy.atlasMipLevel(mode, hidden);
     }
 }

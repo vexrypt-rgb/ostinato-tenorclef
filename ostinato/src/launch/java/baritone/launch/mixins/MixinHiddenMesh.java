@@ -4,6 +4,7 @@
  */
 package baritone.launch.mixins;
 
+import baritone.api.headless.HeadlessPolicy;
 import baritone.api.hidden.HiddenRenderPolicy;
 import baritone.api.hidden.RenderSwap;
 import baritone.api.run.RunMode;
@@ -20,7 +21,7 @@ public class MixinHiddenMesh {
     @Inject(method = "compileAsync", at = @At("HEAD"), cancellable = true)
     private void ostinato$skipAsync(RenderSectionRegion region, CallbackInfo ci) {
         // Ostinato: no new async mesh while hidden. An already-running task is not cancelled.
-        if (HiddenRenderPolicy.skipChunkMeshBuild(RunMode.current(), RenderSwap.isPresenting())) {
+        if (ostinato$skipMesh()) {
             ci.cancel();
         }
     }
@@ -28,8 +29,15 @@ public class MixinHiddenMesh {
     @Inject(method = "resortTransparency", at = @At("HEAD"), cancellable = true)
     private void ostinato$skipResort(CallbackInfo ci) {
         // Ostinato: transparency resort schedules the same kind of mesh work.
-        if (HiddenRenderPolicy.skipChunkMeshBuild(RunMode.current(), RenderSwap.isPresenting())) {
+        if (ostinato$skipMesh()) {
             ci.cancel();
         }
+    }
+
+    // Ostinato: hidden while not presenting, or headless. compileSync is not cancelled.
+    private static boolean ostinato$skipMesh() {
+        RunMode.Value mode = RunMode.current();
+        return HiddenRenderPolicy.skipChunkMeshBuild(mode, RenderSwap.isPresenting())
+                || HeadlessPolicy.skipAsyncChunkMesh(mode);
     }
 }

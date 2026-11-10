@@ -4,6 +4,7 @@
  */
 package baritone.launch.mixins;
 
+import baritone.api.headless.HeadlessPolicy;
 import baritone.api.hidden.HiddenRenderPolicy;
 import baritone.api.hidden.RenderSwap;
 import baritone.api.run.RunMode;
@@ -26,6 +27,11 @@ public class MixinHiddenWorld {
         RunMode.Value mode = RunMode.current();
         boolean presenting = RenderSwap.isPresenting();
         long now = System.nanoTime();
+        // Ostinato: headless draws no world. The rest of GameRenderer.render still runs.
+        if (HeadlessPolicy.skipWorldDraw(mode)) {
+            ci.cancel();
+            return;
+        }
         if (!HiddenRenderPolicy.shouldDrawWorld(mode, presenting, ostinato$lastWorldDrawNs, now)) {
             ci.cancel();
             return;
