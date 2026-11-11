@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 
 /**
  * Ostinato: the one {@code execute} for local {@code #} chat, local {@code @} chat, the command-center window,
@@ -18,21 +19,35 @@ import java.util.function.BooleanSupplier;
  */
 public final class UnifiedRegistry {
 
-    private final Map<String, RegistryEntry> byName;
+    // Ostinato: one lookup per prefix, so an @ line is checked against the @ entry even when # has the same name.
+    private final Map<String, RegistryEntry> byHash;
+    private final Map<String, RegistryEntry> byAt;
     private final List<RegistryEntry> entries;
     private final Map<String, String> inflight = new LinkedHashMap<>();
+    /** Says a target has nothing running, so its busy slot can clear after a task finishes on its own. */
+    private volatile Predicate<String> idle = target -> false;
 
-    private UnifiedRegistry(Map<String, RegistryEntry> byName, List<RegistryEntry> entries) {
-        this.byName = byName;
+    private UnifiedRegistry(Map<String, RegistryEntry> byHash, Map<String, RegistryEntry> byAt, List<RegistryEntry> entries) {
+        this.byHash = byHash;
+        this.byAt = byAt;
         this.entries = entries;
     }
 
     public static UnifiedRegistry of(List<RegistryEntry> hash, List<RegistryEntry> at) {
-        Map<String, RegistryEntry> map = new LinkedHashMap<>();
+        Map<String, RegistryEntry> hashMap = new LinkedHashMap<>();
+        Map<String, RegistryEntry> atMap = new LinkedHashMap<>();
         List<RegistryEntry> list = new ArrayList<>();
-        add(map, list, at);
-        add(map, list, hash);
-        return new UnifiedRegistry(map, List.copyOf(list));
+        add(atMap, list, at);
+        add(hashMap, list, hash);
+        // Ostinato: buttons show one entry per name; the # command wins, the @ lookup keeps its own entry.
+        list.removeIf(e -> e.origin == RegistryEntry.Origin.AT && hashMap.get(e.name) != null
+                && hashMap.get(e.name).name.equals(e.name));
+        return new UnifiedRegistry(hashMap, atMap, List.copyOf(list));
+    }
+
+    /** Ostinato: lets a finished path or mine free its slot without a cancel through the registry. */
+    public void idleProbe(Predicate<String> probe) {
+        idle = probe == null ? target -> false : probe;
     }
 
     public static UnifiedRegistry fromCommands(Iterable<ICommand> commands, String atCatalog) {
@@ -57,16 +72,14 @@ public final class UnifiedRegistry {
                 continue;
             }
             RegistryEntry previous = map.get(entry.name);
-            if (previous != null) {
+            if (previous != null && previous.name.equals(entry.name)) {
                 list.remove(previous);
-                map.remove(previous.name);
-                for (String alias : previous.aliases) {
-                    map.remove(alias.toLowerCase(Locale.ROOT));
-                }
+                map.values().removeIf(e -> e == previous);
             }
+            // Ostinato: a name always wins over another entry's alias; an alias never takes over an existing key.
             map.put(entry.name, entry);
             for (String alias : entry.aliases) {
-                map.put(alias.toLowerCase(Locale.ROOT), entry);
+                map.putIfAbsent(alias.toLowerCase(Locale.ROOT), entry);
             }
             list.add(entry);
         }
@@ -81,10 +94,14 @@ public final class UnifiedRegistry {
             return null;
         }
         String key = name.trim().toLowerCase(Locale.ROOT);
-        if (key.startsWith("#") || key.startsWith("@")) {
-            key = key.substring(1);
+        if (key.startsWith("@")) {
+            return byAt.get(key.substring(1).trim());
         }
-        return byName.get(key);
+        if (key.startsWith("#")) {
+            return byHash.get(key.substring(1).trim());
+        }
+        RegistryEntry hash = byHash.get(key);
+        return hash != null ? hash : byAt.get(key);
     }
 
     public List<ButtonModel> buttons() {
@@ -102,9 +119,15 @@ public final class UnifiedRegistry {
                 return RegistryResult.missed();
             }
             boolean ok = dispatch.getAsBoolean();
+            RegistryEntry local = find(prefixOf(call.line) + name);
+            if (ok && local != null && releases(local, args)) {
+                synchronized (inflight) {
+                    inflight.remove("local"); // Ostinato: a cancel typed in local chat frees the slot too
+                }
+            }
             return ok ? RegistryResult.accepted() : RegistryResult.missed();
         }
-        RegistryEntry entry = find(name);
+        RegistryEntry entry = find(prefixOf(call.line) + name);
         if (entry == null) {
             return RegistryResult.denied("unknown");
         }
@@ -159,7 +182,7 @@ public final class UnifiedRegistry {
         if (bad != null) {
             return "invalid";
         }
-        if (call.dryRun || (entry.permission == CommandPermission.AI && call.kind == RegistryCall.Kind.AI && call.dryRun)) {
+        if (call.dryRun) {
             return "preview";
         }
         if (entry.leaseNeeding) {
@@ -206,9 +229,25 @@ public final class UnifiedRegistry {
         if (releases(entry, args) || !occupies(entry)) {
             return false;
         }
+        String slot = slot(call);
         synchronized (inflight) {
-            return inflight.containsKey(slot(call));
+            if (!inflight.containsKey(slot)) {
+                return false;
+            }
         }
+        boolean free;
+        try {
+            free = idle.test(slot);
+        } catch (RuntimeException ignored) {
+            free = false;
+        }
+        if (free) {
+            synchronized (inflight) {
+                inflight.remove(slot);
+            }
+            return false;
+        }
+        return true;
     }
 
     private void note(RegistryEntry entry, RegistryCall call, String args) {
@@ -256,6 +295,11 @@ public final class UnifiedRegistry {
         String text = args == null ? "" : args.trim();
         int space = text.indexOf(' ');
         return (space < 0 ? text : text.substring(0, space)).toLowerCase(Locale.ROOT);
+    }
+
+    private static String prefixOf(String line) {
+        String text = line == null ? "" : line.trim();
+        return text.startsWith("@") ? "@" : text.startsWith("#") ? "#" : "";
     }
 
     public static String nameOf(String line) {

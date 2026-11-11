@@ -66,6 +66,9 @@ public final class AccountPanelModel {
 
     private static String safe(RuntimeException error) {
         String message = error.getMessage();
+        if (error instanceof XboxSignInException) {
+            return message;
+        }
         if (AzureClientConfig.MISSING.equals(message) || "microsoft sign-in failed".equals(message)
                 || "xbox sign-in failed".equals(message) || "Windows DPAPI is not available".equals(message)) {
             return message;

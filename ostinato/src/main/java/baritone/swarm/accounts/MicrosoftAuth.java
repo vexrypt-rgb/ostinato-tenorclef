@@ -30,7 +30,7 @@ public final class MicrosoftAuth {
         private final String userCode;
         private final String verificationUri;
         private final String deviceCode;
-        private final int intervalSeconds;
+        private volatile int intervalSeconds;
 
         DeviceCode(String userCode, String verificationUri, String deviceCode, int intervalSeconds) {
             this.userCode = userCode;
@@ -53,6 +53,11 @@ public final class MicrosoftAuth {
 
         public int intervalSeconds() {
             return Math.max(intervalSeconds, 5);
+        }
+
+        /** Ostinato: RFC 8628 slow_down adds five seconds to every later poll. */
+        void slowDown() {
+            intervalSeconds = intervalSeconds() + 5;
         }
 
         public String display() {
@@ -148,7 +153,10 @@ public final class MicrosoftAuth {
         if (error != null) {
             return switch (error) {
                 case "authorization_pending" -> Poll.of(PollKind.PENDING);
-                case "slow_down" -> Poll.of(PollKind.SLOW);
+                case "slow_down" -> {
+                    code.slowDown();
+                    yield Poll.of(PollKind.SLOW);
+                }
                 case "expired_token" -> Poll.of(PollKind.EXPIRED);
                 case "authorization_declined" -> Poll.of(PollKind.DECLINED);
                 default -> Poll.of(PollKind.FAILED);
@@ -203,13 +211,13 @@ public final class MicrosoftAuth {
         String xboxToken = text(xbox, "Token");
         String uhs = uhs(xbox);
         if (xboxToken == null || uhs == null) {
-            throw new IllegalStateException("xbox sign-in failed");
+            throw XboxSignInException.of(xbox);
         }
         JsonObject xsts = object(post(http, XSTS, JSON, xstsBody(xboxToken), null));
         String xstsToken = text(xsts, "Token");
         String xstsUhs = uhs(xsts);
         if (xstsToken == null || xstsUhs == null) {
-            throw new IllegalStateException("xbox sign-in failed");
+            throw XboxSignInException.of(xsts);
         }
         JsonObject mc = object(post(http, MINECRAFT, JSON, mcBody(xstsUhs, xstsToken), null));
         String mcAccess = text(mc, "access_token");

@@ -87,6 +87,29 @@ public class AccountManagerTest {
         assertFalse(logs.contains(MC));
     }
 
+    @Test public void slowDownAddsFiveSecondsToTheInterval() {
+        MicrosoftAuth.DeviceCode code = new MicrosoftAuth.DeviceCode("ABCD-EFGH", "https://login.microsoft.com/device", DEVICE, 5);
+        ScriptHttp http = new ScriptHttp();
+        http.responses.add("{\"error\":\"slow_down\"}");
+        http.responses.add("{\"error\":\"slow_down\"}");
+        assertEquals(MicrosoftAuth.PollKind.SLOW, MicrosoftAuth.poll("app-id", code, http).kind);
+        assertEquals(10, code.intervalSeconds());
+        assertEquals(MicrosoftAuth.PollKind.SLOW, MicrosoftAuth.poll("app-id", code, http).kind);
+        assertEquals(15, code.intervalSeconds());
+    }
+
+    @Test public void xboxRefusalsGetAFixedMessageWithoutTheBody() {
+        com.google.gson.JsonObject child = new com.google.gson.JsonObject();
+        child.addProperty("XErr", 2148916238L);
+        child.addProperty("Message", ACCESS);
+        XboxSignInException refused = XboxSignInException.of(child);
+        assertTrue(refused.getMessage().contains("child account"));
+        assertFalse(refused.getMessage().contains(ACCESS));
+        assertTrue(XboxSignInException.message(2148916233L).contains("no Xbox profile"));
+        assertEquals(XboxSignInException.GENERIC, XboxSignInException.message(42));
+        assertEquals(XboxSignInException.GENERIC, XboxSignInException.of(null).getMessage());
+    }
+
     @Test public void aBadResponseDoesNotEchoItsBody() {
         try {
             MicrosoftAuth.start("app-id", (method, url, type, body, authorization) ->

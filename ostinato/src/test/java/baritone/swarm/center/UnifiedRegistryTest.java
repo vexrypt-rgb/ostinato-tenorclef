@@ -227,6 +227,58 @@ public class UnifiedRegistryTest {
         assertEquals(1, runs.get());
     }
 
+    @Test public void atAndHashLookUpSeparatelyAndListOneEntryPerName() {
+        UnifiedRegistry registry = registry();
+        assertEquals(RegistryEntry.Origin.AT, registry.find("@goto").origin);
+        assertEquals(CommandPermission.OWNER, registry.find("@goto").permission);
+        assertEquals(RegistryEntry.Origin.HASH, registry.find("#goto").origin);
+        assertEquals(RegistryEntry.Origin.HASH, registry.find("goto").origin);
+        assertEquals(null, registry.find("#dig"));
+        assertEquals(1, registry.entries().stream().filter(e -> "goto".equals(e.name)).count());
+        assertTrue(registry.entries().stream().anyMatch(e -> "dig".equals(e.name)));
+    }
+
+    @Test public void anAliasNeverTakesAnotherEntrysName() {
+        UnifiedRegistry registry = UnifiedRegistry.of(List.of(
+                Catalogs.fromDescribed(List.of("mine", "m"), "mine", CommandPermission.SWARM, null, List.of(), List.of()),
+                Catalogs.fromDescribed(List.of("goto", "mine", "m"), "goto", CommandPermission.SWARM, null, List.of(), List.of()),
+                Catalogs.fromDescribed(List.of("m"), "m", CommandPermission.OWNER, null, List.of(), List.of())
+        ), List.of());
+        assertEquals("mine", registry.find("mine").name);
+        assertEquals("m", registry.find("m").name);
+        assertEquals("goto", registry.find("goto").name);
+        UnifiedRegistry twice = UnifiedRegistry.of(List.of(
+                Catalogs.fromDescribed(List.of("mine", "dig2"), "old", CommandPermission.SWARM, null, List.of(), List.of()),
+                Catalogs.fromDescribed(List.of("mine"), "new", CommandPermission.SWARM, null, List.of(), List.of())
+        ), List.of());
+        assertEquals(1, twice.entries().size());
+        assertEquals(null, twice.find("dig2"));
+    }
+
+    @Test public void aLocalCancelFreesTheLocalSlot() {
+        UnifiedRegistry registry = registry();
+        AtomicInteger runs = new AtomicInteger();
+        assertTrue(registry.execute(RegistryCall.window("Steve", "", "mine stone"), () -> ran(runs)).executed());
+        assertTrue(registry.inFlight("local"));
+        assertEquals("busy", registry.execute(RegistryCall.ai("Steve", "Steve", true, "goto,mine", false, "goto 1 2 3"), () -> ran(runs)).reason());
+        assertTrue(registry.execute(RegistryCall.localChat("#cancel"), () -> ran(runs)).executed());
+        assertFalse(registry.inFlight("local"));
+        assertTrue(registry.execute(RegistryCall.ai("Steve", "Steve", true, "goto,mine", false, "goto 1 2 3"), () -> ran(runs)).executed());
+    }
+
+    @Test public void anIdleProbeFreesAFinishedSlotAndAFailingProbeDoesNot() {
+        UnifiedRegistry registry = registry();
+        AtomicInteger runs = new AtomicInteger();
+        assertTrue(registry.execute(RegistryCall.window("Steve", "", "mine stone"), () -> ran(runs)).executed());
+        registry.idleProbe(target -> {
+            throw new IllegalStateException("probe");
+        });
+        assertEquals("busy", registry.execute(RegistryCall.ai("Steve", "Steve", true, "goto,mine", false, "goto 1 2 3"), () -> ran(runs)).reason());
+        registry.idleProbe("local"::equals);
+        assertTrue(registry.execute(RegistryCall.ai("Steve", "Steve", true, "goto,mine", false, "goto 1 2 3"), () -> ran(runs)).executed());
+        assertEquals(2, runs.get());
+    }
+
     private static boolean ran(AtomicInteger runs) {
         runs.incrementAndGet();
         return true;

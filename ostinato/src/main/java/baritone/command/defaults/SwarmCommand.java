@@ -274,6 +274,9 @@ public class SwarmCommand extends Command {
                     MicrosoftAuth.SignedIn signed = MicrosoftAuth.refresh(
                             clientId, refresh, new JdkHttpExchange());
                     store.saveMicrosoft(signed.name(), signed.uuid(), signed.minecraftAccess(), signed.refreshToken(), signed.expiryEpochMs());
+                    if (!signed.name().equalsIgnoreCase(accountName)) {
+                        store.remove(accountName); // Ostinato: a renamed profile must not keep its old refresh token
+                    }
                     return new SpawnSession(signed.name(), signed.uuid(), signed.minecraftAccess());
                 });
         Settings settings = Baritone.settings();
