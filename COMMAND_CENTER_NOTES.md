@@ -36,6 +36,10 @@ Lease-needing commands are refused. A dry run returns `preview` and does not run
 
 `#center` and `#center layout wall|map` are registry commands. The file is `command-center-layout-<user>.txt` in the Ostinato config directory (`<game>/baritone`, or the path passed to the store). The default is `wall`. The war-room map is a placeholder in v1.
 
+The window is Swing, not an `OstinatoScreen` and not JavaFX. `CenterWindow.install` only registers the host. `CenterRuntime.open` (`#center`) shows it. `close` hides it and does not despawn. `setAutoRequestFocus(false)` and a non-focusable show keep it from activating; alerts are labels, not dialogs. Placement uses `-Dostinato.windowPos` or `2600,40`, and a point on no screen moves to the second monitor.
+
+Per-bot memory is not on the spawn record. Tiles say `n/a` until a snapshot carries it. Health and hunger are filled for the local player when the client has one. Spawned children show a local link and `n/a` vitals. A goto or mine on another bot is `#swarm send` only after the button command and the send are both admitted, so an AI tool cannot turn a SWARM command into an owner send.
+
 ## Accounts
 
 Launcher `launcher_accounts.json` is an import source. Passwords are not copied. Tokens are stored only through the injected protector (Windows DPAPI in the client). They are not written in the clear, not logged, and not placed on a child process command line.

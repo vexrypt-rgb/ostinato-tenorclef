@@ -186,6 +186,7 @@ public class Baritone implements IBaritone {
         this.selectionManager = new SelectionManager(this);
         this.commandManager = new CommandManager(this);
         baritone.swarm.center.UnifiedChat.install(this.commandManager, this.directory); // Ostinato: one registry for #, the window, and AI
+        baritone.swarm.center.desktop.CenterWindow.install(this.commandManager); // Ostinato: window stays hidden until #center
         baritone.utils.CommandInbox.install(this); // Ostinato: -Dostinato.commandInbox file drain
         baritone.swarm.spawn.SwarmSpawnParentWatcher.install(); // Ostinato: spawned bots exit with their parent.
         this.gameEventHandler.registerEventListener(new baritone.gui.OstinatoGui(this));
