@@ -52,14 +52,54 @@ public class CommandExecutor {
                 getException.accept(new RuntimeCommandException("Invalid command:" + part));
                 executeRecursive(commands, parts, index + 1, onFinish, getException);
             } else {
-                command.run(mod, part.strip(), () -> executeRecursive(commands, parts, index + 1, onFinish, getException));
+                // Ostinato: local @ chat admits through the unified registry when that class is installed.
+                // The registry does not read permission for local chat. A missing class keeps the old path.
+                String stripped = part.strip();
+                Runnable next = () -> executeRecursive(commands, parts, index + 1, onFinish, getException);
+                Runnable body = () -> {
+                    try {
+                        command.run(mod, stripped, next);
+                    } catch (CommandException ae) {
+                        report(command, part, ae, getException);
+                    }
+                };
+                if (!dispatchLocalAt(stripped, body)) {
+                    body.run();
+                }
             }
         } catch (CommandException ae) {
-            try {
-                getException.accept(new RuntimeCommandException(ae.getMessage() + "\nUsage: " + command.getHelpRepresentation(new StringReader(part).nextOrEmpty()), ae));
-            } catch (RuntimeCommandException e) {
-                throw new IllegalStateException("Should not happen!");
+            report(command, part, ae, getException);
+        }
+    }
+
+    // Ostinato: same usage line the old catch printed.
+    private static void report(Command command, String part, CommandException error, Consumer<CommandException> getException) {
+        try {
+            getException.accept(new RuntimeCommandException(error.getMessage() + "\nUsage: " + command.getHelpRepresentation(new StringReader(part).nextOrEmpty()), error));
+        } catch (RuntimeCommandException e) {
+            throw new IllegalStateException("Should not happen!");
+        }
+    }
+
+    /** True when the unified registry ran {@code body}. False means this class should run it. */
+    private static boolean dispatchLocalAt(String line, Runnable body) {
+        try {
+            Class<?> type = Class.forName("baritone.swarm.center.UnifiedChat");
+            Object ran = type.getMethod("localAt", String.class, Runnable.class).invoke(null, line, body);
+            return Boolean.TRUE.equals(ran);
+        } catch (ClassNotFoundException absent) {
+            return false;
+        } catch (java.lang.reflect.InvocationTargetException invoked) {
+            Throwable cause = invoked.getCause();
+            if (cause instanceof RuntimeException runtime) {
+                throw runtime;
             }
+            if (cause instanceof Error error) {
+                throw error;
+            }
+            return true;
+        } catch (Throwable ignored) {
+            return false;
         }
     }
 

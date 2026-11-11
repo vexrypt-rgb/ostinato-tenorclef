@@ -18,8 +18,11 @@
 package baritone.command.defaults;
 
 import baritone.api.IBaritone;
+import baritone.api.command.ArgDecl;
 import baritone.api.command.Command;
 import baritone.api.command.CommandPermission;
+import baritone.api.command.FormDecl;
+import baritone.api.command.FormPlacement;
 import baritone.api.command.argument.IArgConsumer;
 import baritone.api.command.datatypes.ForBlockOptionalMeta;
 import baritone.api.command.datatypes.RelativeCoordinate;
@@ -43,6 +46,25 @@ public class GotoCommand extends Command {
     @Override
     public CommandPermission getPermission() {
         return CommandPermission.SWARM;
+    }
+
+    // Ostinato: the command-center Goto field is this schema, not a separate command.
+    public static java.util.List<ArgDecl> declaredSchema() {
+        return java.util.List.of(ArgDecl.rest("target", true));
+    }
+
+    public static java.util.List<FormDecl> windowForms() {
+        return java.util.List.of(FormDecl.of("goto", "Goto", "goto", FormPlacement.TILE, ArgDecl.rest("target", true)));
+    }
+
+    @Override
+    public java.util.List<ArgDecl> argumentSchema() {
+        return declaredSchema();
+    }
+
+    @Override
+    public java.util.List<FormDecl> forms() {
+        return windowForms();
     }
 
     @Override

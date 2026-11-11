@@ -21,7 +21,10 @@ package baritone.command.defaults;
 import baritone.Baritone;
 import baritone.api.IBaritone;
 import baritone.api.Settings;
+import baritone.api.command.ArgDecl;
 import baritone.api.command.Command;
+import baritone.api.command.FormDecl;
+import baritone.api.command.FormPlacement;
 import baritone.api.command.argument.IArgConsumer;
 import baritone.api.command.exception.CommandException;
 import baritone.api.command.exception.CommandInvalidStateException;
@@ -48,8 +51,41 @@ import java.util.stream.Stream;
 /** {@code #swarm ping [group]}, {@code #swarm status}, {@code #swarm reload}, {@code #swarm build}, {@code #swarm stop}. */
 public class SwarmCommand extends Command {
 
+    // Ostinato: tab-complete, the registry schema, and the command-center buttons share this list.
+    public static final List<String> ACTIONS = List.of(
+            "ping", "status", "reload", "build", "stop", "spawn", "despawn", "bots");
+    public static final List<String> PROTOCOL_ACTIONS = List.of("send", "outcome", "cancel");
+
     public SwarmCommand(IBaritone baritone) {
         super(baritone, "swarm");
+    }
+
+    // Ostinato: spawn and despawn stay on this OWNER command. The window does not grow a second spawn path.
+    public static List<ArgDecl> declaredSchema() {
+        List<String> actions = new ArrayList<>(ACTIONS);
+        actions.addAll(PROTOCOL_ACTIONS);
+        return List.of(ArgDecl.enu("action", true, actions), ArgDecl.rest("rest", false));
+    }
+
+    public static List<FormDecl> windowForms() {
+        return List.of(
+                FormDecl.of("spawn", "Spawn", "swarm spawn", FormPlacement.WINDOW,
+                        ArgDecl.token("name", true), ArgDecl.integer("count", false),
+                        ArgDecl.token("server", false), ArgDecl.token("account", false)),
+                FormDecl.of("despawn", "Despawn", "swarm despawn", FormPlacement.TILE, ArgDecl.token("name", true)),
+                FormDecl.of("cancel", "Cancel", "swarm cancel", FormPlacement.TILE, ArgDecl.token("id", false)),
+                FormDecl.of("stop-all", "Stop all", "swarm despawn all", FormPlacement.HEADER)
+        );
+    }
+
+    @Override
+    public List<ArgDecl> argumentSchema() {
+        return declaredSchema();
+    }
+
+    @Override
+    public List<FormDecl> forms() {
+        return windowForms();
     }
 
     private SwarmBehavior swarm() throws CommandInvalidStateException {
@@ -263,9 +299,9 @@ public class SwarmCommand extends Command {
     @Override
     public Stream<String> tabComplete(String label, IArgConsumer args) throws CommandException {
         if (args.hasExactlyOne()) {
-            TabCompleteHelper help = new TabCompleteHelper().append("ping", "status", "reload", "build", "stop", "spawn", "despawn", "bots"); // Ostinato:
+            TabCompleteHelper help = new TabCompleteHelper().append(ACTIONS.toArray(String[]::new)); // Ostinato:
             if (Baritone.settings().swarmCommandProtocol.value) {
-                help.append("send", "outcome", "cancel");
+                help.append(PROTOCOL_ACTIONS.toArray(String[]::new));
             }
             return help.filterPrefix(args.getString()).stream();
         }

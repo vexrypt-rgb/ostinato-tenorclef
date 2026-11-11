@@ -80,4 +80,20 @@ public interface ICommand extends Helper {
     default String getTargetBot() {
         return null;
     }
+
+    /**
+     * Ostinato: declared arguments for forms and the unified registry.
+     * Empty means the command still parses inside {@link #execute} and the registry does not add constraints.
+     * Local {@code #} chat does not reject a line because this schema is missing a field.
+     */
+    default List<ArgDecl> argumentSchema() {
+        return List.of();
+    }
+
+    /**
+     * Ostinato: buttons and forms generated for this command. Empty means the command center draws no control for it.
+     */
+    default List<FormDecl> forms() {
+        return List.of();
+    }
 }
