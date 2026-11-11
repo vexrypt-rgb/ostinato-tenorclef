@@ -77,3 +77,34 @@ Full suite, 2026-11-10 09:55 MST: `gradlew test -x nativeHost --no-daemon --max-
 ## Left for Phase 2
 
 Leases, fencing, reservations, durable coordinator state, and a required command-center window. Hidden or headless rendering is not part of this phase.
+
+## Phase 1 regression fixes
+
+Coordinate `goto` completion requires its captured goal to be reached, its custom-goal process to be inactive,
+and no active path or path calculation. An empty control slot is not success, including before the first process
+tick. After pathing has been observed, idle away from the captured goal is failure (not a hang). A non-goto
+process such as `#mine` succeeds once it has run and gone idle. A command that never shows activity stays in
+progress rather than acquiring an invented success outcome. The goal is also captured on a later poll if
+`execute()` had not activated the custom-goal process yet.
+
+Signed command envelopes (especially `cancel <UUID>`) can exceed eight frames after S2S overhead.
+The default `swarmMaxChunks` is now 32 on both send and receive. Installations explicitly configured to 8
+must raise that setting on both peers. Command ids, bodies, retry intervals, and ack/deadline rules are unchanged.
+
+While Phase 1 is enabled, short authenticated heartbeats run every 10 seconds. After 30 seconds without
+an authenticated peer message, that peer's in-flight outbound commands become observation `unknown`.
+Execution is preserved, including on local disconnect. Heartbeat receipt does not claim a command outcome.
+
+S2S signing uses Ed25519 (32-byte raw seed and public key), as specified by `SigilEd25519` and the signed
+wire format. P-256 ECDH keys belong to encryption and cannot be converted into those signing keys.
+This worktree does not contain the external `sigil.py`; use the local writer:
+
+```
+python ostinato/tools/sigil_signets.py BotName --out-dir /path/to/private-keyring
+```
+
+It requires Python's `cryptography` package, refuses to overwrite files, and writes `signet-BotName.json`
+(private seed) and `signet-BotName-public.json` (shareable pin). Keep the seed only on that bot; distribute
+only the public pin to peers. On Windows, place the output in a directory whose ACL restricts access to the
+bot owner. Existing P-256 identities need newly generated Ed25519 signets and updated peer pins.
+The shared RFC 8032 test-only fixture checks Python writer / Java reader agreement.

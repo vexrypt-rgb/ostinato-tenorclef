@@ -61,6 +61,10 @@ public final class SigilSignets {
         if (name == null || name.trim().isEmpty()) {
             throw new SigilException("Signet record missing name.");
         }
+        String algorithm = str(o, "algorithm"); // Ostinato: S2S signs with Ed25519, never P-256 ECDH keys.
+        if (algorithm != null && !"Ed25519".equalsIgnoreCase(algorithm)) { // Ostinato:
+            throw new SigilException("S2S signets require Ed25519; generate a signing key with tools/sigil_signets.py."); // Ostinato:
+        } // Ostinato:
         String seedB64 = str(o, "seed");
         String pubB64 = str(o, "public");
         SigilEd25519 key;

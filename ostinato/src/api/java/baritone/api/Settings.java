@@ -2098,7 +2098,7 @@ public final class Settings {
      * Swarm messaging: max frames one message may be split into; larger messages are refused
      * on send and on receive.
      */
-    public final Setting<Integer> swarmMaxChunks = new Setting<>(8);
+    public final Setting<Integer> swarmMaxChunks = new Setting<>(32); // Ostinato: room for signed cancel envelopes.
 
     /**
      * Swarm messaging: how long a partially received message waits for its missing frames

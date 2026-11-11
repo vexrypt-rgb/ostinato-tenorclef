@@ -150,9 +150,15 @@ public final class SwarmRuntime {
                 return;
             }
             invokeBool(swarm, "noteOwnerEmergency", mod.isPaused());
-            boolean survival = (mod.getFoodChain() != null && mod.getFoodChain().isActive())
-                    || (mod.getMobDefenseChain() != null && mod.getMobDefenseChain().isActive());
-            invokeBool(swarm, "noteLocalSurvival", survival);
+            // Ostinato: FoodChain.isActive() and MobDefenseChain.isActive() always return
+            // true ("always checking"). Using them here latched localSurvival on every
+            // TenorClef client and refused every swarm command as outranked-by-local-survival.
+            boolean eating = mod.getFoodChain() != null
+                    && (mod.getFoodChain().isTryingToEat() || mod.getFoodChain().needsToEat());
+            adris.altoclef.chains.MobDefenseChain defense = mod.getMobDefenseChain();
+            boolean defending = defense != null && (defense.isShielding() || defense.isDoingAcrobatics()
+                    || defense.isPuttingOutFire() || defense.getPriority() > 0);
+            invokeBool(swarm, "noteLocalSurvival", eating || defending);
             boolean danger = false;
             if (mod.getPlayer() != null) {
                 danger = mod.getPlayer().isOnFire()

@@ -185,6 +185,7 @@ public class Baritone implements IBaritone {
         this.worldProvider = new WorldProvider(this);
         this.selectionManager = new SelectionManager(this);
         this.commandManager = new CommandManager(this);
+        baritone.utils.CommandInbox.install(this); // Ostinato: -Dostinato.commandInbox file drain
         this.gameEventHandler.registerEventListener(new baritone.gui.OstinatoGui(this));
         this.gameEventHandler.registerEventListener(this.graceNote.lateListener()); // Ostinato: last, so its press sees the tick as the keybinds will
     }

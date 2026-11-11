@@ -95,6 +95,8 @@ public final class SwarmControl {
     private SwarmBuild build;
     /** Ostinato: Phase 1 command protocol. Null when {@code swarmCommandProtocol} is off. */
     private CommandProtocol commandProtocol;
+    public static final long PEER_TIMEOUT_MS = 30_000L; // Ostinato: bounded crash detection.
+    private long nextHeartbeatMs; // Ostinato:
     private long ignored;
     private long sendFailures;
     private final Map<String, Consumer<SwarmMessage>> extraHandlers = new HashMap<>();
@@ -218,6 +220,22 @@ public final class SwarmControl {
         CommandProtocol protocol = commandProtocol;
         if (protocol != null) {
             try {
+                long now = clockMs.getAsLong(); // Ostinato:
+                if (protocol.linkUp() && now >= nextHeartbeatMs) { // Ostinato:
+                    for (SwarmRoster.Group group : roster.groupsOf(endpoint.selfId())) { // Ostinato:
+                        try { // Ostinato:
+                            endpoint.send(group.id(), SwarmFrame.BROADCAST, PING, "hb", SwarmPriority.NORMAL); // Ostinato:
+                        } catch (Exception e) { // Ostinato:
+                            sendFailures++; // Ostinato:
+                        } // Ostinato:
+                    } // Ostinato: short heartbeats avoid status payloads and chat log spam.
+                    nextHeartbeatMs = now + 10_000L; // Ostinato:
+                } // Ostinato:
+                for (Peer peer : peers.values()) { // Ostinato:
+                    if (peer.lastSeenMs >= 0 && now - peer.lastSeenMs >= PEER_TIMEOUT_MS) { // Ostinato:
+                        protocol.onPeerDisconnect(peer.name); // Ostinato:
+                    } // Ostinato:
+                } // Ostinato:
                 protocol.pump();
                 protocol.pollExecutions();
             } catch (RuntimeException e) {
@@ -234,7 +252,7 @@ public final class SwarmControl {
         switch (m.type()) {
             case PING:
                 try {
-                    endpoint.send(m.group(), m.from(), PONG, pongBody(m.msgId()), SwarmPriority.HIGH);
+                    endpoint.send(m.group(), m.from(), PONG, "hb".equals(m.body()) ? "hb" : pongBody(m.msgId()), SwarmPriority.HIGH); // Ostinato: compact heartbeat reply.
                 } catch (Exception e) {
                     sendFailures++;
                     log.accept("swarm: pong to " + m.from() + " failed: " + e.getMessage());
@@ -256,6 +274,7 @@ public final class SwarmControl {
                 }
                 break;
             case PONG:
+                if ("hb".equals(m.body())) break; // Ostinato: lastSeen already refreshed.
                 Map<String, String> kv = parseBody(m.body());
                 p.pos = kv.getOrDefault("pos", "?");
                 p.proc = kv.getOrDefault("proc", "?");

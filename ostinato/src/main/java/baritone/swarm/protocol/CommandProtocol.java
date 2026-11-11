@@ -489,7 +489,7 @@ public final class CommandProtocol {
             linkUp = false;
             for (Tracked t : ledger.values()) {
                 if (!t.execution.terminal()) {
-                    move(t, ExecutionState.RUNNING);
+                    // Ostinato: preserve execution state on link loss.
                     t.observation = ObservationState.UNKNOWN;
                 }
             }
@@ -507,13 +507,23 @@ public final class CommandProtocol {
                 }
                 // Acked or not: a drop means we no longer know. Mine and place are not retried from here.
                 s.observation = ObservationState.UNKNOWN;
-                if (s.execution == null || !s.execution.terminal()) {
-                    s.execution = ExecutionState.RUNNING;
-                }
+                // Ostinato: no execution transition is justified by a disconnect.
             }
-            log.accept("swarm: link down; in-flight commands are running, observation unknown");
+            log.accept("swarm: link down; execution unchanged, observation unknown"); // Ostinato:
         }
     }
+
+    // Ostinato: remote loss changes observation only; a missing peer is not an execution result.
+    public void onPeerDisconnect(String member) { // Ostinato:
+        synchronized (lock) { // Ostinato:
+            for (Sent sent : outbound.values()) { // Ostinato:
+                if ((member.equals(sent.target) || multiBot(sent.target)) // Ostinato:
+                        && (sent.execution == null || !sent.execution.terminal())) { // Ostinato:
+                    sent.observation = ObservationState.UNKNOWN; // Ostinato:
+                } // Ostinato:
+            } // Ostinato:
+        } // Ostinato:
+    } // Ostinato:
 
     public void pollExecutions() {
         List<UUID> running = new ArrayList<>();
@@ -979,7 +989,10 @@ public final class CommandProtocol {
             multi = multiBot(target);
             cap = capsFor(target, entry);
             aiDry = entry.permission == CommandPermission.AI && policy.dryRun;
-            safety = immediateSafety || (!entry.ownerEmergency && (ownerEmergency || localSurvival));
+            // Ostinato: the issuer's own survival latch must not block sending a command
+            // to a peer. The receiving bot applies the same checks in deny() before it runs.
+            boolean selfTarget = self.memberId().equals(target);
+            safety = selfTarget && (immediateSafety || (!entry.ownerEmergency && (ownerEmergency || localSurvival)));
             safetyWhy = immediateSafety ? "outranked-by-immediate-safety"
                     : ownerEmergency ? "outranked-by-owner-emergency" : "outranked-by-local-survival";
         }
@@ -1166,7 +1179,8 @@ public final class CommandProtocol {
         }
         if (!s.acked) {
             if (s.observation == ObservationState.UNKNOWN) {
-                return s.id + " to " + s.target + " running observation unknown (sends " + s.sends + ")";
+                return s.id + " to " + s.target + " " + (s.execution == null ? "awaiting ack" : s.execution.label()) // Ostinato:
+                        + " observation unknown (sends " + s.sends + ")"; // Ostinato: observation never invents execution.
             }
             return s.id + " to " + s.target + " awaiting ack (sends " + s.sends + ")";
         }
