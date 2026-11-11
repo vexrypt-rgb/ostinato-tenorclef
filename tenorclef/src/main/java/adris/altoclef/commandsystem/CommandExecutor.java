@@ -47,28 +47,26 @@ public class CommandExecutor {
         }
         Command command = commands[index];
         String part = parts[index];
-        try {
-            if (command == null) {
-                getException.accept(new RuntimeCommandException("Invalid command:" + part));
-                executeRecursive(commands, parts, index + 1, onFinish, getException);
-            } else {
-                // Ostinato: local @ chat admits through the unified registry when that class is installed.
-                // The registry does not read permission for local chat. A missing class keeps the old path.
-                String stripped = part.strip();
-                Runnable next = () -> executeRecursive(commands, parts, index + 1, onFinish, getException);
-                Runnable body = () -> {
-                    try {
-                        command.run(mod, stripped, next);
-                    } catch (CommandException ae) {
-                        report(command, part, ae, getException);
-                    }
-                };
-                if (!dispatchLocalAt(stripped, body)) {
-                    body.run();
-                }
+        if (command == null) {
+            getException.accept(new RuntimeCommandException("Invalid command:" + part));
+            executeRecursive(commands, parts, index + 1, onFinish, getException);
+            return;
+        }
+        // Ostinato: local @ chat admits through the unified registry when that class is installed.
+        // The registry does not read permission for local chat. A missing class keeps the old path.
+        // command.run throws a checked CommandException, so the runnable catches it here. An outer
+        // catch cannot see that exception (Java 25 rejects a catch the try body cannot throw).
+        String stripped = part.strip();
+        Runnable next = () -> executeRecursive(commands, parts, index + 1, onFinish, getException);
+        Runnable body = () -> {
+            try {
+                command.run(mod, stripped, next);
+            } catch (CommandException ae) {
+                report(command, part, ae, getException);
             }
-        } catch (CommandException ae) {
-            report(command, part, ae, getException);
+        };
+        if (!dispatchLocalAt(stripped, body)) {
+            body.run();
         }
     }
 
