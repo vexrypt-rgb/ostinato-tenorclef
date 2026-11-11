@@ -13,6 +13,7 @@ import baritone.api.command.exception.CommandInvalidStateException;
 import baritone.api.command.exception.CommandInvalidTypeException;
 import baritone.swarm.center.CenterLayout;
 import baritone.swarm.center.CenterRuntime;
+import baritone.swarm.center.desktop.CenterWindow;
 import baritone.swarm.center.LayoutStore;
 
 import java.io.IOException;
@@ -65,7 +66,11 @@ public class CenterCommand extends Command {
             case "open" -> {
                 args.requireMax(0);
                 CenterRuntime.open();
-                logDirect("center: open (closing the window leaves bots running)");
+                if (!CenterWindow.mayShow()) {
+                    logDirect("center: the window cannot open in this runtime");
+                } else {
+                    logDirect("center: open (closing the window leaves bots running)");
+                }
             }
             case "close" -> {
                 args.requireMax(0);

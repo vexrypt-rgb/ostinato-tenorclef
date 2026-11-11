@@ -5,6 +5,7 @@
 package baritone.launch.mixins;
 
 import baritone.api.headless.HeadlessPolicy;
+import baritone.swarm.center.desktop.CommandCenterAwt;
 import baritone.api.run.RunMode;
 import baritone.swarm.spawn.SwarmSpawnParentWatcher;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -19,6 +20,12 @@ import joptsimple.ArgumentAcceptingOptionSpec; // Ostinato: offline spawned chil
 
 @Mixin(Main.class)
 public class MixinHeadlessMain {
+
+    // Ostinato: MC 26.3 forces AWT headless in Main clinit. Undo that for normal and hidden so #center can open a Swing window.
+    @Inject(method = "<clinit>", at = @At("TAIL"))
+    private static void ostinato$awtForCommandCenter(CallbackInfo ci) {
+        CommandCenterAwt.allowWindow();
+    }
 
     // Ostinato: start the parent-death watcher before the long Minecraft constructor, not only after Baritone loads.
     @Inject(method = "main([Ljava/lang/String;)V", at = @At("HEAD"), remap = false)

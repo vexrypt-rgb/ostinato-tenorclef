@@ -30,6 +30,7 @@ import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.WindowConstants;
 import java.awt.BorderLayout;
+import java.awt.Dimension;
 import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.FlowLayout;
@@ -169,6 +170,8 @@ public final class CenterWindow implements CenterRuntime.Host {
         JScrollPane scroll = new JScrollPane(wall);
         scroll.setBorder(BorderFactory.createEmptyBorder());
         scroll.getViewport().setBackground(BG);
+        // Ostinato: BorderLayout otherwise lets the wall's minimum size eat the accounts strip.
+        scroll.setMinimumSize(new Dimension(0, 80));
         cards.add(scroll, CenterLayout.WALL.wire());
         JLabel war = label("War room is a placeholder in v1. No map and no click-to-command.", TEXT);
         JPanel warPanel = new JPanel(new BorderLayout());
@@ -180,6 +183,8 @@ public final class CenterWindow implements CenterRuntime.Host {
         accounts.setBackground(BG);
         accounts.setBorder(BorderFactory.createTitledBorder(
                 BorderFactory.createLineBorder(MUTED), "Accounts", 0, 0, null, TEXT));
+        accounts.setPreferredSize(new Dimension(400, 180));
+        accounts.setMinimumSize(new Dimension(200, 160));
         root.add(accounts, BorderLayout.SOUTH);
         try {
             AccountPanel.attach(accounts, UnifiedChat.configDir());
