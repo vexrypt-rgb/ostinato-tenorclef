@@ -1,5 +1,6 @@
 package baritone.swarm.center.desktop;
 
+import baritone.swarm.center.CenterRuntime;
 import baritone.swarm.center.CenterTheme;
 
 import javax.swing.AbstractButton;
@@ -19,11 +20,14 @@ import java.awt.Font;
 import java.awt.LayoutManager;
 
 /**
- * Ostinato: Swing pieces drawn with the Default dark tokens. Flat controls, 1 px borders, no focus grab.
+ * Ostinato: Swing pieces drawn with the current theme's tokens. Flat controls, 1 px borders, no focus grab.
+ * Pieces read the theme when built, so a theme change rebuilds the window's content.
  */
 final class Style {
 
-    static final CenterTheme THEME = CenterTheme.DEFAULT_DARK;
+    static CenterTheme theme() {
+        return CenterRuntime.theme();
+    }
 
     private Style() {}
 
@@ -32,47 +36,47 @@ final class Style {
     }
 
     static Color bg() {
-        return color(THEME.background());
+        return color(theme().background());
     }
 
     static Color surface() {
-        return color(THEME.surface());
+        return color(theme().surface());
     }
 
     static Color raised() {
-        return color(THEME.raised());
+        return color(theme().raised());
     }
 
     static Color line() {
-        return color(THEME.border());
+        return color(theme().border());
     }
 
     static Color text() {
-        return color(THEME.text());
+        return color(theme().text());
     }
 
     static Color muted() {
-        return color(THEME.muted());
+        return color(theme().muted());
     }
 
     static Color faint() {
-        return color(THEME.faint());
+        return color(theme().faint());
     }
 
     static Color accent() {
-        return color(THEME.accent());
+        return color(theme().accent());
     }
 
     static Color ok() {
-        return color(THEME.ok());
+        return color(theme().ok());
     }
 
     static Color warn() {
-        return color(THEME.warn());
+        return color(theme().warn());
     }
 
     static Color danger() {
-        return color(THEME.danger());
+        return color(theme().danger());
     }
 
     static String hex(int rgb) {
@@ -145,7 +149,7 @@ final class Style {
         toggle.addChangeListener(event -> {
             boolean on = toggle.isSelected();
             toggle.setBackground(on ? accent() : raised());
-            toggle.setForeground(on ? color(THEME.onAccent()) : muted());
+            toggle.setForeground(on ? color(theme().onAccent()) : muted());
         });
         return toggle;
     }
@@ -181,7 +185,7 @@ final class Style {
         list.setBackground(bg());
         list.setForeground(text());
         list.setSelectionBackground(accent());
-        list.setSelectionForeground(color(THEME.onAccent()));
+        list.setSelectionForeground(color(theme().onAccent()));
         list.setFocusable(false);
     }
 

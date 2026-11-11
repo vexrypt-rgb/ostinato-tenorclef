@@ -8,11 +8,13 @@ import baritone.swarm.center.BotSnapshot;
 import baritone.swarm.center.ButtonModel;
 import baritone.swarm.center.CenterLayout;
 import baritone.swarm.center.CenterRuntime;
+import baritone.swarm.center.CenterTheme;
 import baritone.swarm.center.CommandCenterModel;
 import baritone.swarm.center.FocusPolicy;
 import baritone.swarm.center.LiveTiles;
 import baritone.swarm.center.RegistryCall;
 import baritone.swarm.center.TileFormatter;
+import baritone.swarm.center.ThemeStore;
 import baritone.swarm.center.TileStatus;
 import baritone.swarm.center.UnifiedChat;
 import baritone.swarm.center.WindowPlacement;
@@ -27,7 +29,9 @@ import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.JToggleButton;
@@ -177,6 +181,15 @@ public final class CenterWindow implements CenterRuntime.Host {
                 CenterRuntime.close();
             }
         });
+        window.setContentPane(content());
+        window.setSize(1040, 680);
+        timer = new Timer(2000, event -> refresh());
+        timer.setRepeats(true);
+        return window;
+    }
+
+    /** Ostinato: everything inside the frame. Built again on a theme change, since pieces read colors when built. */
+    private JPanel content() {
         JPanel root = Style.panel(new BorderLayout(), Style.bg());
         JPanel top = Style.panel(new BorderLayout(), Style.bg());
         top.add(titleBar(), BorderLayout.NORTH);
@@ -212,12 +225,31 @@ public final class CenterWindow implements CenterRuntime.Host {
         } catch (RuntimeException ignored) {
             // The wall still opens. Sign-in reports the reason on the panel when it can.
         }
-        window.setContentPane(root);
-        window.setSize(1040, 680);
-        window.getContentPane().setBackground(Style.bg());
-        timer = new Timer(2000, event -> refresh());
-        timer.setRepeats(true);
-        return window;
+        return root;
+    }
+
+    @Override
+    public void theme(CenterTheme theme) {
+        if (frame == null) {
+            return;
+        }
+        SwingUtilities.invokeLater(this::restyle);
+    }
+
+    /** Ostinato: live theme change. Rebuilds the content and keeps the frame, its place, and the selected bot. */
+    private void restyle() {
+        if (frame == null) {
+            return;
+        }
+        views.clear();
+        layoutButtons.clear();
+        shownNames = List.of();
+        focusBuiltFor = null;
+        frame.setContentPane(content());
+        frame.getContentPane().revalidate();
+        frame.getContentPane().repaint();
+        refresh();
+        showCard(model.layout());
     }
 
     /** Title, subtitle, and the right-hand chips: server, alerts, Stop all. */
@@ -235,8 +267,9 @@ public final class CenterWindow implements CenterRuntime.Host {
         chips.add(serverChip);
         alertChip = chip("", Style.muted(), Style.line());
         chips.add(alertChip);
+        chips.add(themePicker());
         for (ButtonModel button : model.buttons(FormPlacement.HEADER)) {
-            if (button.form().id().startsWith("layout-")) {
+            if (button.form().id().startsWith("layout-") || button.form().id().startsWith("theme-")) {
                 continue;
             }
             JButton go = button.form().id().startsWith("stop")
@@ -248,6 +281,43 @@ public final class CenterWindow implements CenterRuntime.Host {
         right.add(chips, BorderLayout.CENTER);
         bar.add(right, BorderLayout.EAST);
         return bar;
+    }
+
+    /** Ostinato: the header theme picker. Choosing runs the registered {@code theme <name>} command. */
+    private JComponent themePicker() {
+        String current = CenterRuntime.themeName();
+        JButton pick = Style.button("Theme: " + ThemeStore.label(current) + " ▾");
+        pick.setToolTipText("Color theme. Same as #theme <name>. Saved per user.");
+        pick.addActionListener(event -> {
+            JPopupMenu menu = new JPopupMenu();
+            menu.setBorder(BorderFactory.createLineBorder(Style.line(), 1));
+            menu.setBackground(Style.raised());
+            for (String name : ThemeStore.names(UnifiedChat.configDir())) {
+                boolean on = name.equals(CenterRuntime.themeName());
+                // Ostinato: the check mark carries the current choice, not color alone.
+                JMenuItem item = new JMenuItem((on ? "✓ " : "    ") + ThemeStore.label(name));
+                item.setFont(Style.font(on ? Font.BOLD : Font.PLAIN, 12f));
+                item.setOpaque(true);
+                item.setBackground(Style.raised());
+                item.setForeground(Style.text());
+                item.addActionListener(chosen -> chooseTheme(name));
+                menu.add(item);
+            }
+            menu.show(pick, 0, pick.getHeight());
+        });
+        return pick;
+    }
+
+    private void chooseTheme(String name) {
+        for (ButtonModel candidate : model.buttons(FormPlacement.HEADER)) {
+            if ("theme-pick".equals(candidate.form().id())) {
+                dispatch(candidate, Map.of("name", name), null);
+                return;
+            }
+        }
+        if (commands != null) {
+            commands.execute("theme " + name);
+        }
     }
 
     /** Wall | War room switch on the left, window forms (Spawn) on the right. */
@@ -453,7 +523,7 @@ public final class CenterWindow implements CenterRuntime.Host {
         model.tiles(tiles);
         String server = LiveTiles.serverLabel(readServer(), tiles);
         model.server(server);
-        serverChip.setText("<html><span style='color:" + Style.hex(Style.THEME.muted()) + "'>Server</span>&nbsp;&nbsp;"
+        serverChip.setText("<html><span style='color:" + Style.hex(Style.theme().muted()) + "'>Server</span>&nbsp;&nbsp;"
                 + escape(server) + "</html>");
         int alerts = TileStatus.alerts(tiles);
         alertChip.setText(alerts == 0 ? TileStatus.Level.IDLE.glyph + " No alerts"

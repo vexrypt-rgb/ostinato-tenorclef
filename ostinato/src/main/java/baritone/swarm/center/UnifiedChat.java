@@ -29,6 +29,8 @@ public final class UnifiedChat {
         }
         installed = true;
         CenterRuntime.layout(LayoutStore.load(LayoutStore.file(configDir)));
+        String theme = ThemeStore.load(configDir); // Ostinato: the saved per-user theme
+        CenterRuntime.theme(theme, ThemeStore.theme(configDir, theme));
     }
 
     public static UnifiedRegistry registry() {

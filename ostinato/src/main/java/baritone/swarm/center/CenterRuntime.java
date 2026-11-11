@@ -16,6 +16,9 @@ public final class CenterRuntime {
 
         void layout(CenterLayout layout);
 
+        /** Ostinato: redraw with a new theme. No restart. */
+        default void theme(CenterTheme theme) {}
+
         Host NONE = new Host() {
             @Override public void open() {}
             @Override public void close() {}
@@ -26,6 +29,8 @@ public final class CenterRuntime {
     private static volatile Host host = Host.NONE;
     private static volatile boolean open;
     private static volatile CenterLayout layout = CenterLayout.WALL;
+    private static volatile String themeName = ThemeStore.DEFAULT;
+    private static volatile CenterTheme theme = CenterTheme.DEFAULT_DARK;
 
     private CenterRuntime() {}
 
@@ -61,10 +66,27 @@ public final class CenterRuntime {
         host.layout(layout);
     }
 
+    public static String themeName() {
+        return themeName;
+    }
+
+    public static CenterTheme theme() {
+        return theme;
+    }
+
+    /** Ostinato: sets the theme the window draws with and redraws it live. */
+    public static void theme(String name, CenterTheme next) {
+        themeName = name == null ? ThemeStore.DEFAULT : name;
+        theme = next == null ? CenterTheme.DEFAULT_DARK : next;
+        host.theme(theme);
+    }
+
     /** Test isolation. Production code does not call this. */
     public static void resetForTests() {
         host = Host.NONE;
         open = false;
         layout = CenterLayout.WALL;
+        themeName = ThemeStore.DEFAULT;
+        theme = CenterTheme.DEFAULT_DARK;
     }
 }

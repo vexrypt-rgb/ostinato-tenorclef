@@ -12,7 +12,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-/** Ostinato: Default dark meets WCAG AA, and tile status never relies on color alone. */
+/** Ostinato: every built-in theme meets WCAG AA, and tile status never relies on color alone. */
 public class CenterThemeTest {
 
     private static final CenterTheme T = CenterTheme.DEFAULT_DARK;
@@ -28,6 +28,58 @@ public class CenterThemeTest {
             assertTrue(CenterTheme.contrast(status, T.surface()) >= 4.5);
         }
         assertEquals(21.0, CenterTheme.contrast(0x000000, 0xFFFFFF), 0.01);
+    }
+
+    @Test public void everyBuiltInMeetsAa() {
+        assertEquals(List.of("dark", "light", "high-contrast", "colorblind"), List.copyOf(ThemeStore.builtIns().keySet()));
+        for (java.util.Map.Entry<String, CenterTheme> entry : ThemeStore.builtIns().entrySet()) {
+            assertEquals(entry.getKey(), List.of(), entry.getValue().aaProblems());
+        }
+        CenterTheme hc = CenterTheme.HIGH_CONTRAST;
+        assertTrue(CenterTheme.contrast(hc.text(), hc.surface()) >= 7.0);
+        assertFalse(new CenterTheme(0, 0, 0, 0, 0x333333, 0, 0, 0, 0, 0, 0, 0).aaProblems().isEmpty());
+    }
+
+    // Ostinato: Machado et al. 2009 full-severity matrices on linear RGB.
+    private static final double[][] PROTAN = {{0.152286, 1.052583, -0.204868}, {0.114503, 0.786281, 0.099216},
+            {-0.003882, -0.048116, 1.051998}};
+    private static final double[][] DEUTAN = {{0.367322, 0.860646, -0.227968}, {0.280085, 0.672501, 0.047413},
+            {-0.011820, 0.042940, 0.968881}};
+
+    private static double[] simulate(int rgb, double[][] m) {
+        double[] v = {lin((rgb >> 16) & 0xFF), lin((rgb >> 8) & 0xFF), lin(rgb & 0xFF)};
+        double[] out = new double[3];
+        for (int i = 0; i < 3; i++) {
+            out[i] = Math.max(0, Math.min(1, m[i][0] * v[0] + m[i][1] * v[1] + m[i][2] * v[2]));
+        }
+        return out;
+    }
+
+    private static double lin(int value) {
+        double c = value / 255.0;
+        return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    }
+
+    private static double seenApart(int a, int b) {
+        double worst = Double.MAX_VALUE;
+        for (double[][] m : new double[][][] {PROTAN, DEUTAN}) {
+            double[] x = simulate(a, m);
+            double[] y = simulate(b, m);
+            worst = Math.min(worst, Math.sqrt(Math.pow(x[0] - y[0], 2) + Math.pow(x[1] - y[1], 2) + Math.pow(x[2] - y[2], 2)));
+        }
+        return worst;
+    }
+
+    @Test public void colorblindStatusStaysApartForDeuteranopiaAndProtanopia() {
+        CenterTheme cb = CenterTheme.COLORBLIND_SAFE;
+        int[] status = {cb.ok(), cb.warn(), cb.danger()};
+        for (int i = 0; i < status.length; i++) {
+            for (int j = i + 1; j < status.length; j++) {
+                assertTrue(seenApart(status[i], status[j]) >= 0.35);
+            }
+        }
+        // Default dark's green and red are the pair this theme exists for.
+        assertTrue(seenApart(T.ok(), T.danger()) < 0.35);
     }
 
     private static BotSnapshot bot(int health, String task, ExecutionState state, ObservationState seen) {
