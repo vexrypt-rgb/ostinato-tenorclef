@@ -1,5 +1,7 @@
 package baritone.swarm.spawn;
 
+import java.io.PrintStream; // Ostinato: testable shutdown announcement.
+
 // Ostinato: a daemon in the child covers parent crashes and forced termination, not only clean shutdown.
 public final class SwarmSpawnParentWatcher {
     private static boolean installed;
@@ -29,12 +31,20 @@ public final class SwarmSpawnParentWatcher {
             if (parent.isAlive()) {
                 parent.onExit().join();
             }
+            announceParentExit(pid, System.out); // Ostinato: persist the shutdown reason before exiting.
+            System.err.flush(); // Ostinato: also drain pending diagnostics.
             System.exit(0);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (RuntimeException e) {
             System.err.println("Ostinato: spawn parent watcher failed: " + e.getMessage());
         }
+    }
+
+    // Ostinato: separately testable without terminating the test process.
+    static void announceParentExit(long pid, PrintStream out) {
+        out.println("Ostinato: spawn parent PID " + pid + " exited; child exiting.");
+        out.flush();
     }
 
     private static ProcessHandle waitForHandle(long pid) throws InterruptedException {

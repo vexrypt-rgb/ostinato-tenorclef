@@ -268,9 +268,8 @@ public final class CommandProtocol {
                 sent.nextRetry = now;
             }
         }
-        // A queued line is not an ack.
+        // Ostinato: callers display the queued line; it is not an ack.
         String line = "swarm: sent " + id + " to " + sent.target + " (awaiting ack)";
-        log.accept(line);
         return line;
     }
 
@@ -476,6 +475,7 @@ public final class CommandProtocol {
                 }
             }
             String ack;
+            Decision targetAck = null; // Ostinato: snapshot the original outcome under the lock.
             synchronized (lock) {
                 Tracked cancel = ledger.get(d.id);
                 Tracked target = d.cancelTarget == null ? null : ledger.get(d.cancelTarget);
@@ -497,6 +497,7 @@ public final class CommandProtocol {
                         move(target, ExecutionState.CANCELED);
                         target.observation = ObservationState.CONFIRMED;
                         target.rejectReason = null;
+                        targetAck = outcomeAck(target); // Ostinato: notify the original issuer too.
                     } else if (targetTerminal) {
                         // Verified finish won. The stop is not confirmed and must not rewrite the result.
                         move(cancel, ExecutionState.RUNNING);
@@ -516,6 +517,10 @@ public final class CommandProtocol {
                     ack = null;
                 }
             }
+            // Ostinato: send the original outcome outside the protocol lock.
+            if (targetAck != null) {
+                wire.send(targetAck.replyTo, TYPE_ACK, targetAck.ack, SwarmPriority.HIGH);
+            }
             if (ack != null) {
                 wire.send(from, TYPE_ACK, ack, SwarmPriority.HIGH); // Ostinato: acks preempt retries.
             }
@@ -528,6 +533,11 @@ public final class CommandProtocol {
 
     /** Link dropped. In-flight work stays running; its observation becomes unknown. */
     public void onDisconnect() {
+        onDisconnect(true); // Ostinato: real drops keep the existing announcement.
+    }
+
+    // Ostinato: planned restarts update observation without announcing a link failure.
+    public void onDisconnect(boolean announce) {
         synchronized (lock) {
             linkUp = false;
             for (Tracked t : ledger.values()) {
@@ -552,7 +562,9 @@ public final class CommandProtocol {
                 s.observation = ObservationState.UNKNOWN;
                 // Ostinato: no execution transition is justified by a disconnect.
             }
-            log.accept("swarm: link down; execution unchanged, observation unknown"); // Ostinato:
+            if (announce) { // Ostinato:
+                log.accept("swarm: link down; execution unchanged, observation unknown");
+            }
         }
     }
 
@@ -590,6 +602,7 @@ public final class CommandProtocol {
             if (next == null || next == ExecutionState.RUNNING || next == ExecutionState.ACCEPTED) {
                 continue;
             }
+            Decision outcome = null; // Ostinato: capture send work while locked.
             synchronized (lock) {
                 if (!linkUp) {
                     return;
@@ -606,12 +619,23 @@ public final class CommandProtocol {
                     try {
                         move(t, next);
                         t.observation = ObservationState.CONFIRMED;
+                        outcome = outcomeAck(t); // Ostinato: publish verified terminal results.
                     } catch (IllegalStateException refused) {
                         log.accept("swarm: refused illegal outcome " + t.id + " " + refused.getMessage());
                     }
                 }
             }
+            // Ostinato: wire callbacks must not run under the protocol lock.
+            if (outcome != null) {
+                wire.send(outcome.replyTo, TYPE_ACK, outcome.ack, SwarmPriority.HIGH);
+            }
         }
+    }
+
+    // Ostinato: caller holds lock; capture immutable ACK data for sending outside it.
+    private Decision outcomeAck(Tracked t) {
+        return t.issuer == null || t.issuer.equals(self.memberId())
+                ? null : Decision.ack(t.issuer, ackBody(t));
     }
 
     public String outcomeLine(String idText) {
@@ -861,6 +885,7 @@ public final class CommandProtocol {
         if (exec != ExecutionState.ACCEPTED) {
             t.execution = ExecutionState.transit(t.execution, exec);
         }
+        t.issuer = p.issuer; // Ostinato: retain the authenticated issuer for later outcomes.
         t.rejectReason = reason;
         t.storedAtMs = clock.getAsLong();
         if (entry != null) {
@@ -922,9 +947,11 @@ public final class CommandProtocol {
                 log.accept("swarm: ignored ack from " + from + " for command aimed at " + s.target);
                 return;
             }
-            if (s.acked && s.accepted && s.execution != null && s.execution.terminal()
+            // Ostinato: delayed ACKs cannot replace any confirmed terminal result.
+            if (s.acked && s.execution != null && s.execution.terminal()
                     && s.observation == ObservationState.CONFIRMED
-                    && (!ack.accepted || !ack.execution.terminal())) {
+                    && (ack.execution != s.execution || ack.observation != ObservationState.CONFIRMED
+                    || ack.accepted != s.accepted)) {
                 log.accept("swarm: ignored later ack that would unwind " + ack.id);
                 return;
             }
@@ -938,6 +965,26 @@ public final class CommandProtocol {
             } else {
                 s.execution = ack.execution;
                 s.observation = ack.observation;
+            }
+            // Ostinato: a verified stop also confirms its original outbound command locally.
+            if (isCancel(nameOfBody(s.body)) && ack.accepted && ack.execution == ExecutionState.SUCCEEDED
+                    && ack.observation == ObservationState.CONFIRMED) {
+                try {
+                    UUID targetId = UUID.fromString(Parsed.parse(s.body).args.trim());
+                    Sent target = outbound.get(targetId);
+                    if (target != null && ackFromIntendedTarget(from, target.target)
+                            && !(target.execution != null && target.execution.terminal()
+                            && target.observation == ObservationState.CONFIRMED)) {
+                        target.execution = ExecutionState.CANCELED;
+                        target.observation = ObservationState.CONFIRMED;
+                        target.acked = true;
+                        target.accepted = true;
+                        target.gaveUp = false;
+                        target.ackReason = "";
+                    }
+                } catch (IllegalArgumentException ignored) {
+                    // Ostinato: malformed stop arguments cannot identify an original outcome.
+                }
             }
             log.accept("swarm: ack " + ack.id + " " + (ack.accepted ? "accepted" : "rejected")
                     + (ack.reason == null || ack.reason.isEmpty() ? "" : " " + ack.reason)
@@ -1335,6 +1382,7 @@ public final class CommandProtocol {
         public final UUID id;
         public final String name;
         public final String payloadHash;
+        public String issuer; // Ostinato: optional for legacy Tracked construction.
         public ExecutionState execution;
         public ObservationState observation;
         public String rejectReason;

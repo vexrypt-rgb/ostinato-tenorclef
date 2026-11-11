@@ -125,7 +125,7 @@ public final class SwarmBehavior extends Behavior implements Helper {
         String self = ctx.player().getName().getString();
         String settings = settingsKey(s);
         if (startedWith != null && !startedWith.equals(settings)) {
-            stop();
+            stop(true); // Ostinato: planned settings restart.
             failure = null;
             startedWith = null;
             logDirect("swarm: settings changed, restarting the link");
@@ -139,7 +139,7 @@ public final class SwarmBehavior extends Behavior implements Helper {
             try {
                 if (!Files.isRegularFile(link.rosterPath)
                         || !java.util.Arrays.equals(link.rosterBytes, Files.readAllBytes(link.rosterPath))) {
-                    stop();
+                    stop(true); // Ostinato: planned roster restart.
                     failure = null;
                     logDirect("swarm: roster changed, restarting the link");
                 }
@@ -334,6 +334,11 @@ public final class SwarmBehavior extends Behavior implements Helper {
     }
 
     private void stop() {
+        stop(false); // Ostinato: failures and disabling still announce.
+    }
+
+    // Ostinato: distinguish planned restarts from real link loss.
+    private void stop(boolean plannedRestart) {
         if (loading != null) {
             loading.cancel(false);
         }
@@ -341,7 +346,7 @@ public final class SwarmBehavior extends Behavior implements Helper {
         loadingFor = null;
         if (link != null && link.protocol != null) {
             // Ostinato: a drop is running + unknown, not a silent success.
-            link.protocol.onDisconnect();
+            link.protocol.onDisconnect(!plannedRestart); // Ostinato:
             retainedProtocol = link.protocol;
         }
         link = null;
@@ -464,7 +469,7 @@ public final class SwarmBehavior extends Behavior implements Helper {
     }
 
     public void reload() {
-        stop();
+        stop(true); // Ostinato: spawn/explicit reload is a planned restart.
         failure = null;
     }
 
