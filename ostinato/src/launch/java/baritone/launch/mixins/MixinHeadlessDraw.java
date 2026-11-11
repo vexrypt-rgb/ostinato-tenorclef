@@ -21,4 +21,12 @@ public class MixinHeadlessDraw {
             ci.cancel();
         }
     }
+
+    @Inject(method = "extract(Lnet/minecraft/client/DeltaTracker;Z)V", at = @At("HEAD"), cancellable = true)
+    private void ostinato$extract(CallbackInfo ci) {
+        // Ostinato: extract looks up atlas sprites for overlays and GUI. Upload was skipped, so this would crash.
+        if (HeadlessPolicy.skipGpuWorkNow()) {
+            ci.cancel();
+        }
+    }
 }

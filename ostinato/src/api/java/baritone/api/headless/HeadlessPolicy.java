@@ -73,6 +73,14 @@ public final class HeadlessPolicy {
     }
 
     /**
+     * Cancel {@code GameRenderer.extract}. Overlay and GUI extract look up atlas sprites. Headless skips
+     * {@code TextureAtlas.upload}, so those lookups throw {@code IllegalStateException} if extract still runs.
+     */
+    public static boolean skipExtract(RunMode.Value mode) {
+        return active(mode);
+    }
+
+    /**
      * 26.3's render thread is the main thread. {@code Main} renames it and {@code RenderSystem.initRenderThread}
      * records it, before the window exists. Headless skips that call. {@code isOnRenderThread} still reports true
      * so a tick that asserts the thread does not throw. Hidden and normal still record the thread.

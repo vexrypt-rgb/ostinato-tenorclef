@@ -110,6 +110,7 @@ public class HeadlessPolicyTest {
         assertFalse(HeadlessPolicy.active(RunMode.current()));
         assertFalse(HeadlessPolicy.skipWorldDraw(RunMode.current()));
         assertFalse(HeadlessPolicy.skipGameRenderer(RunMode.current()));
+        assertFalse(HeadlessPolicy.skipExtract(RunMode.current()));
         // The process was created headless. #set normal does not create the device that was skipped.
         assertFalse(HeadlessPolicy.keepsRealGpuDevice());
         assertTrue(HeadlessPolicy.skipSdl());
@@ -194,6 +195,7 @@ public class HeadlessPolicyTest {
         assertFalse(HeadlessPolicy.skipAtlasUpload(RunMode.Value.HIDDEN));
         assertFalse(HeadlessPolicy.skipCompileSync(RunMode.Value.HIDDEN));
         assertFalse(HeadlessPolicy.skipGameRenderer(RunMode.Value.HIDDEN));
+        assertFalse(HeadlessPolicy.skipExtract(RunMode.Value.HIDDEN));
         assertFalse(HeadlessPolicy.skipRenderThread(RunMode.Value.HIDDEN));
 
         clearProperty();
@@ -214,6 +216,7 @@ public class HeadlessPolicyTest {
         assertFalse(HeadlessPolicy.skipSoundDeviceOpen(mode));
         assertFalse(HeadlessPolicy.silenceSound(mode));
         assertFalse(HeadlessPolicy.skipGameRenderer(mode));
+        assertFalse(HeadlessPolicy.skipExtract(mode));
         assertFalse(HeadlessPolicy.skipRenderThread(mode));
         assertTrue(HeadlessPolicy.startsRenderThread(mode));
         assertFalse(HeadlessPolicy.skipAtlasUpload(mode));
@@ -233,6 +236,7 @@ public class HeadlessPolicyTest {
         assertTrue(HeadlessPolicy.skipSoundDeviceOpen(mode));
         assertTrue(HeadlessPolicy.silenceSound(mode));
         assertTrue(HeadlessPolicy.skipGameRenderer(mode));
+        assertTrue(HeadlessPolicy.skipExtract(mode));
         assertTrue(HeadlessPolicy.skipRenderThread(mode));
         assertFalse(HeadlessPolicy.startsRenderThread(mode));
         assertTrue(HeadlessPolicy.skipAtlasUpload(mode));
