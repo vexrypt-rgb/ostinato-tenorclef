@@ -108,16 +108,35 @@ final class Style {
     }
 
     static JButton button(String text) {
-        JButton button = new JButton(text);
+        JButton button = new RoomyButton(text);
         flat(button, raised(), text(), line());
         return button;
     }
 
     /** A button whose text and edge carry the danger color, for Stop all. */
     static JButton dangerButton(String text) {
-        JButton button = new JButton(text);
+        JButton button = new RoomyButton(text);
         flat(button, raised(), danger(), danger());
         return button;
+    }
+
+    /**
+     * Ostinato: on a 200% display the measured label came out about 8% narrower than the painted one, so
+     * longer labels clipped to "Microsoft sig...". A little slack per character keeps every label whole.
+     */
+    private static final class RoomyButton extends JButton {
+        RoomyButton(String text) {
+            super(text);
+        }
+
+        @Override
+        public java.awt.Dimension getPreferredSize() {
+            java.awt.Dimension size = super.getPreferredSize();
+            if (!isPreferredSizeSet() && getText() != null) {
+                size.width += Math.max(4, getFontMetrics(getFont()).stringWidth(getText()) / 8);
+            }
+            return size;
+        }
     }
 
     static JToggleButton toggle(String text) {
@@ -134,6 +153,8 @@ final class Style {
     static void flat(AbstractButton button, Color background, Color foreground, Color edge) {
         button.setFocusable(false);
         button.setFocusPainted(false);
+        // Ostinato: measure and paint with one font, or HiDPI layouts clip the label to "Add offl...".
+        button.setFont(font(Font.BOLD, 12f));
         button.setContentAreaFilled(false);
         button.setOpaque(true);
         button.setBackground(background);
