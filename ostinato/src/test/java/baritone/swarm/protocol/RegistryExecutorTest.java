@@ -2,6 +2,7 @@ package baritone.swarm.protocol; // Ostinato:
 
 import baritone.api.IBaritone; // Ostinato:
 import baritone.api.behavior.IPathingBehavior; // Ostinato:
+import baritone.api.command.CommandPermission; // Ostinato:
 import baritone.api.command.ICommand; // Ostinato:
 import baritone.api.command.manager.ICommandManager; // Ostinato:
 import baritone.api.pathing.calc.IPathingControlManager; // Ostinato:
@@ -126,5 +127,12 @@ public class RegistryExecutorTest { // Ostinato:
         assertFalse(executor.confirmStopped(id)); // Ostinato:
         pathing = false; // Ostinato:
         assertTrue(executor.confirmStopped(id)); // Ostinato:
+    } // Ostinato:
+
+    @Test public void swarmCancelIsSwarmEvenWhenChatCancelIsOwner() { // Ostinato:
+        RegistryExecutor executor = executor(); // Ostinato:
+        assertEquals(CommandPermission.SWARM, executor.describe("cancel").permission); // Ostinato:
+        assertEquals(CommandPermission.SWARM, executor.describe("forcecancel").permission); // Ostinato:
+        assertFalse(executor.describe("cancel").ownerEmergency); // Ostinato: owner pause still outranks swarm cancel
     } // Ostinato:
 } // Ostinato:

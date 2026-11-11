@@ -87,14 +87,17 @@ public final class CommandCatalog {
             case "stop":
             case "pause":
             case "disconnect":
-            case "cancel":
-            case "forcecancel":
             case "set":
             case "reset":
             case "reload":
             case "save":
             case "saveall":
                 return CommandPermission.OWNER;
+            case "cancel":
+            case "forcecancel":
+                // Ostinato: chat #cancel defaults to OWNER. A swarm member must still
+                // be able to cancel a command it sent to a peer.
+                return CommandPermission.SWARM;
             case "agent":
             case "agentdo":
                 return CommandPermission.AI;

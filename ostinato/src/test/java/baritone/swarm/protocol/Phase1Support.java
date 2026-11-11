@@ -129,21 +129,27 @@ final class Phase1Support {
         final CommandProtocol bob;
 
         Pair() {
-            alice = node("Alice", "alicekey", aliceExec);
-            bob = node("Bob", "bobkey", bobExec);
+            this("Alice");
+        }
+
+        /** Ostinato: ownerName is who OWNER commands allow. Cancel is SWARM, so a
+         * non-owner member can still cancel a command it sent. */
+        Pair(String ownerName) {
+            alice = node("Alice", "alicekey", aliceExec, ownerName);
+            bob = node("Bob", "bobkey", bobExec, ownerName);
             alice.setGroups(Set.of("crew"));
             bob.setGroups(Set.of("crew"));
             alice.learnPeer("Bob", "bobkey", CapabilityDescriptor.gameplay());
             bob.learnPeer("Alice", "alicekey", CapabilityDescriptor.gameplay());
         }
 
-        private CommandProtocol node(String name, String key, RecordingExec exec) {
+        private CommandProtocol node(String name, String key, RecordingExec exec, String ownerName) {
             return new CommandProtocol(
                     new CommandProtocol.BotIdentity(name, key),
                     Set.of("Alice", "Bob"),
                     (to, type, body) -> deliver(name, to, type, body),
                     exec,
-                    new CommandProtocol.Policy("Alice", true, false, AgentPolicy.DEFAULT_TOOLS),
+                    new CommandProtocol.Policy(ownerName, true, false, AgentPolicy.DEFAULT_TOOLS),
                     clock::get,
                     log::add,
                     1_000L);

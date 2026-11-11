@@ -801,14 +801,22 @@ public final class CommandProtocol {
         return p.issuer;
     }
 
+    private boolean issuerIsOwner(String issuer) {
+        String owner = policy.ownerName == null || policy.ownerName.isBlank() ? self.memberId() : policy.ownerName;
+        return AgentPolicy.ownerAllowed(true, owner, issuer);
+    }
+
     private String deny(Parsed p, CommandCatalog.Entry entry) {
         if (immediateSafety) {
             return "outranked-by-immediate-safety";
         }
-        if (!entry.ownerEmergency && ownerEmergency) {
+        // Ostinato: a non-owner swarm cancel is outranked by pause/survival. The owner's
+        // cancel still gets through, same as #stop.
+        boolean emergency = entry.ownerEmergency || (isCancel(p.name) && issuerIsOwner(p.issuer));
+        if (!emergency && ownerEmergency) {
             return "outranked-by-owner-emergency";
         }
-        if (!entry.ownerEmergency && localSurvival) {
+        if (!emergency && localSurvival) {
             return "outranked-by-local-survival";
         }
         CommandPermission perm = entry.permission;

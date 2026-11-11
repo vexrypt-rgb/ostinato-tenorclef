@@ -75,7 +75,14 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
         }
         ICommand command = commands().getCommand(name);
         if (command != null) {
-            return CommandCatalog.infer(name, command.getPermission());
+            String key = name.toLowerCase(java.util.Locale.ROOT);
+            CommandPermission perm = command.getPermission();
+            // Ostinato: ICommand#cancel is OWNER (local #cancel). Swarm cancel of a
+            // command a peer sent has to be SWARM or the peer's cancel is unauthorized.
+            if ("cancel".equals(key) || "forcecancel".equals(key)) {
+                perm = CommandPermission.SWARM;
+            }
+            return CommandCatalog.infer(name, perm);
         }
         CommandCatalog.Entry at = atCommands.get(name.toLowerCase(java.util.Locale.ROOT));
         if (at != null) {

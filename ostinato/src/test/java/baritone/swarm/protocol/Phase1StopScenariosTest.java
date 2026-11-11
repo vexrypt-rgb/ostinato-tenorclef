@@ -157,6 +157,19 @@ public class Phase1StopScenariosTest {
         assertEquals("outranked-by-local-survival", pair.bob.lookup(blocked).rejectReason);
     }
 
+    @Test
+    public void swarmMemberCanCancelOwnCommandWhenNotTheOwner() {
+        // Ostinato: live bots have no ownerName, so each bot used to treat itself as owner
+        // and reject a peer's cancel as unauthorized. Cancel is SWARM.
+        Pair pair = new Pair("Carol");
+        UUID id = Phase1Support.idOf(pair.alice.submit("Bob", "goto 1 2 3"));
+        assertEquals(ExecutionState.RUNNING, pair.bob.lookup(id).execution);
+        pair.bobExec.confirm = true;
+        UUID cancel = Phase1Support.idOf(pair.alice.submit("Bob", "cancel " + id));
+        assertState(pair.bob.lookup(id), ExecutionState.CANCELED, ObservationState.CONFIRMED);
+        assertState(pair.bob.lookup(cancel), ExecutionState.SUCCEEDED, ObservationState.CONFIRMED);
+    }
+
     private static void assertState(CommandProtocol.Tracked tracked, ExecutionState execution, ObservationState observation) {
         assertNotNull(tracked);
         assertEquals(execution, tracked.execution);
