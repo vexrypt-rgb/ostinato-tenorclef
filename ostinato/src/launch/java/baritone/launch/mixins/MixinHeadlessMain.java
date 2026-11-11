@@ -6,14 +6,38 @@ package baritone.launch.mixins;
 
 import baritone.api.headless.HeadlessPolicy;
 import baritone.api.run.RunMode;
+import baritone.swarm.spawn.SwarmSpawnParentWatcher;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.main.Main;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import joptsimple.ArgumentAcceptingOptionSpec; // Ostinato: offline spawned children have no launcher token.
 
 @Mixin(Main.class)
 public class MixinHeadlessMain {
+
+    // Ostinato: start the parent-death watcher before the long Minecraft constructor, not only after Baritone loads.
+    @Inject(method = "main([Ljava/lang/String;)V", at = @At("HEAD"), remap = false)
+    private static void ostinato$watchParent(String[] args, CallbackInfo ci) {
+        SwarmSpawnParentWatcher.install();
+    }
+
+    // Ostinato: vanilla requires a token even offline. Only our explicitly offline headless children
+    // may omit it; empty session credentials cannot authenticate to an online-mode server.
+    @Redirect(method = "main", at = @At(value = "INVOKE",
+            target = "Ljoptsimple/ArgumentAcceptingOptionSpec;required()Ljoptsimple/ArgumentAcceptingOptionSpec;",
+            remap = false))
+    private static ArgumentAcceptingOptionSpec<String> ostinato$offlineToken(ArgumentAcceptingOptionSpec<String> option) {
+        if (option.options().contains("accessToken") && RunMode.windowCreateMode() == RunMode.Value.HEADLESS
+                && System.getProperty("ostinato.swarm.spawnParentPid") != null
+                && Boolean.getBoolean("ostinato.swarm.spawnOffline")) {
+            return option.defaultsTo("");
+        }
+        return option.required();
+    }
 
     // Ostinato: only the "Render thread" rename is skipped. Other names still apply.
     @Redirect(

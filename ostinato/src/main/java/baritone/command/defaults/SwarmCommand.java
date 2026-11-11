@@ -32,6 +32,11 @@ import baritone.api.utils.BetterBlockPos;
 import baritone.behavior.SwarmBehavior;
 import baritone.swarm.SwarmBuild;
 import baritone.swarm.SwarmControl;
+// Ostinato: the OWNER command retains the unified registry and delegates process mechanics to pure helpers.
+import baritone.swarm.spawn.*;
+import baritone.swarm.SwarmKeys;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -59,6 +64,34 @@ public class SwarmCommand extends Command {
         String action = args.hasAny() ? args.getString().toLowerCase(Locale.ROOT) : "status";
         SwarmBehavior swarm = swarm();
         switch (action) {
+            // Ostinato: local child lifecycle uses the same OWNER permission as the rest of this command.
+            case "spawn": {
+                List<String> words = new ArrayList<>();
+                while (args.hasAny()) words.add(args.getString());
+                try {
+                    spawn(SwarmSpawnArgs.parse(words), swarm);
+                } catch (Exception e) {
+                    throw new CommandInvalidStateException("swarm spawn: " + safeSpawnError(e));
+                }
+                return;
+            }
+            case "despawn": {
+                args.requireExactly(1);
+                try {
+                    String target = SwarmSpawnArgs.despawn(List.of(args.getString()));
+                    logDirect("swarm: stopped " + SwarmSpawnRegistry.INSTANCE.despawn(target) + " child process(es)");
+                } catch (IllegalArgumentException e) {
+                    throw new CommandInvalidStateException(e.getMessage());
+                }
+                return;
+            }
+            case "bots": {
+                args.requireMax(0);
+                List<SwarmSpawnRegistry.Child> children = SwarmSpawnRegistry.INSTANCE.list();
+                if (children.isEmpty()) logDirect("swarm: no spawned bots");
+                children.forEach(child -> logDirect(child.status()));
+                return;
+            }
             case "status": {
                 args.requireMax(0);
                 swarm.statusLines().forEach(this::logDirect);
@@ -146,10 +179,76 @@ public class SwarmCommand extends Command {
             default:
                 // Ostinato: the extra words appear only while swarmCommandProtocol is on.
                 String expected = Baritone.settings().swarmCommandProtocol.value
-                        ? "ping, status, reload, build, stop, send, outcome or cancel"
-                        : "ping, status, reload, build or stop";
+                        ? "ping, status, reload, build, stop, spawn, despawn, bots, send, outcome or cancel" // Ostinato:
+                        : "ping, status, reload, build, stop, spawn, despawn or bots"; // Ostinato:
                 throw new CommandInvalidTypeException(args.consumed(), expected);
         }
+    }
+
+    // Ostinato: only this thin adapter reads Minecraft state; helpers can be tested without a client.
+    private void spawn(SwarmSpawnArgs request, SwarmBehavior swarm) throws Exception {
+        var mc = ctx.minecraft();
+        if (ctx.player() == null || mc.getConnection() == null || mc.level == null) {
+            throw new IllegalArgumentException("Join a world with a connection before spawning bots");
+        }
+        var integrated = mc.getSingleplayerServer();
+        if (integrated != null && !integrated.isPublished()) {
+            throw new IllegalArgumentException("Singleplayer is not published; open the world to LAN first");
+        }
+        String server = request.server();
+        if (server == null) {
+            if (integrated != null) server = "127.0.0.1:" + integrated.getPort();
+            else if (mc.getCurrentServer() != null) server = mc.getCurrentServer().ip;
+        }
+        if (server == null || server.isBlank()) throw new IllegalArgumentException("Cannot determine current server; specify host:port");
+        String parent = ctx.player().getName().getString();
+        SwarmSpawnRegistry registry = SwarmSpawnRegistry.INSTANCE;
+        registry.checkNames(request.names(), parent);
+        SwarmSpawnMemory.require(SwarmSpawnMemory::freeCommit, request.names().size());
+        Path game = mc.gameDirectory.toPath().toAbsolutePath().normalize();
+        Path userHome = Path.of(System.getProperty("user.home"));
+        SwarmSpawnCommandBuilder.Snapshot snapshot = SwarmSpawnCommandBuilder.current(game);
+        boolean offline = SwarmSpawnAccounts.offline(server, parent, ctx.player().getUUID());
+        List<Path> accountFiles = new ArrayList<>(List.of(game.resolve("launcher_accounts.json"),
+                userHome.resolve(".minecraft/launcher_accounts.json")));
+        String appData = System.getenv("APPDATA");
+        if (appData != null) accountFiles.add(Path.of(appData, ".minecraft", "launcher_accounts.json"));
+        List<SwarmSpawnAccounts.Profile> accounts = new ArrayList<>();
+        for (String name : request.names()) accounts.add(offline ? null : SwarmSpawnAccounts.find(name, accountFiles));
+        Settings settings = Baritone.settings();
+        Path roster = Path.of(settings.swarmRosterFile.value);
+        if (!roster.isAbsolute()) roster = ((Baritone) baritone).getDirectory().resolve(roster);
+        SwarmSpawnProvision.Link link = SwarmSpawnProvision.link(game, roster,
+                SwarmKeys.sigilHome(settings.swarmSigilHome.value, System.getenv("SIGIL_HOME")), userHome, parent);
+        settings.swarmRosterFile.value = link.roster().toString();
+        settings.swarmSigilHome.value = link.home().toString();
+        settings.swarmEnabled.value = true;
+        SwarmSpawnProvision.persistParentLink(game, link);
+        try {
+            for (int i = 0; i < request.names().size(); i++) {
+                SwarmSpawnMemory.require(SwarmSpawnMemory::freeCommit, 1);
+                String name = request.names().get(i);
+                Path childGame = game.resolve("ostinato-bots").resolve(name);
+                Path signet = SwarmSpawnProvision.child(game, childGame, name, link, userHome);
+                Path logs = childGame.resolve("logs");
+                Files.createDirectories(logs);
+                Path log = logs.resolve("spawn-" + System.currentTimeMillis() + ".log");
+                ProcessBuilder builder = SwarmSpawnCommandBuilder.build(snapshot, name, server, childGame, log, signet, accounts.get(i));
+                logDirect("swarm: " + registry.start(name, server, childGame, log, builder).status());
+            }
+        } finally {
+            swarm.reload();
+        }
+    }
+
+    // Ostinato: parser/process exceptions must never print launch argv or account JSON into chat.
+    private static String safeSpawnError(Exception error) {
+        if (error instanceof IllegalArgumentException || error instanceof java.io.IOException
+                || error instanceof baritone.swarm.crypto.SigilException
+                || error instanceof baritone.swarm.roster.SwarmRosterException) {
+            return error.getMessage();
+        }
+        return "Could not prepare child process (" + error.getClass().getSimpleName() + ")";
     }
 
     private static SwarmBuild running(SwarmBehavior swarm) throws CommandInvalidStateException {
@@ -163,7 +262,7 @@ public class SwarmCommand extends Command {
     @Override
     public Stream<String> tabComplete(String label, IArgConsumer args) throws CommandException {
         if (args.hasExactlyOne()) {
-            TabCompleteHelper help = new TabCompleteHelper().append("ping", "status", "reload", "build", "stop");
+            TabCompleteHelper help = new TabCompleteHelper().append("ping", "status", "reload", "build", "stop", "spawn", "despawn", "bots"); // Ostinato:
             if (Baritone.settings().swarmCommandProtocol.value) {
                 help.append("send", "outcome", "cancel");
             }
@@ -174,6 +273,13 @@ public class SwarmCommand extends Command {
             args.get();
             List<String> groups = control == null ? Collections.emptyList() : control.myGroups();
             return new TabCompleteHelper().append(groups.stream()).filterPrefix(args.getString()).stream();
+        }
+        // Ostinato: complete only names owned by this process registry.
+        if (args.hasExactly(2) && args.peekString().equalsIgnoreCase("despawn")) {
+            args.get();
+            return new TabCompleteHelper().append("all")
+                    .append(SwarmSpawnRegistry.INSTANCE.list().stream().map(SwarmSpawnRegistry.Child::name))
+                    .filterPrefix(args.getString()).stream();
         }
         return Stream.empty();
     }
@@ -190,6 +296,10 @@ public class SwarmCommand extends Command {
                 "Every line sent is a sealed sigil token; there is no plaintext mode.",
                 "",
                 "Usage:",
+                "> swarm spawn <name> [count] [server] - launch up to 16 headless bots (current server by default)", // Ostinato:
+                "> swarm despawn <name|all> - stop only this client's spawned bots", // Ostinato:
+                "> swarm bots - list child names, PIDs, alive/dead state, servers and logs", // Ostinato:
+                "  Spawn needs about 1.5 GB free commit per bot; remote online servers need launcher accounts.", // Ostinato:
                 "> swarm status - roster, last-seen times and link health",
                 "> swarm ping - ping every member of each of your groups",
                 "> swarm ping <group> - ping the members of one group",

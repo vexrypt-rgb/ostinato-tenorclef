@@ -186,6 +186,7 @@ public class Baritone implements IBaritone {
         this.selectionManager = new SelectionManager(this);
         this.commandManager = new CommandManager(this);
         baritone.utils.CommandInbox.install(this); // Ostinato: -Dostinato.commandInbox file drain
+        baritone.swarm.spawn.SwarmSpawnParentWatcher.install(); // Ostinato: spawned bots exit with their parent.
         this.gameEventHandler.registerEventListener(new baritone.gui.OstinatoGui(this));
         this.gameEventHandler.registerEventListener(this.graceNote.lateListener()); // Ostinato: last, so its press sees the tick as the keybinds will
     }

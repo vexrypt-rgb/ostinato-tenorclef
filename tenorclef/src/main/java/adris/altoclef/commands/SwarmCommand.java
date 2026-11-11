@@ -28,6 +28,8 @@ import baritone.api.IBaritone;
  */
 public class SwarmCommand extends Command {
 
+    // Ostinato: @swarm spawn <name> [count] [server], despawn <name|all>, and bots forward to Ostinato.
+
     public SwarmCommand() {
         super("swarm", "Drive the Ostinato swarm link (encrypted)", new StringArg("args", "status"));
     }
@@ -66,7 +68,7 @@ public class SwarmCommand extends Command {
                     Debug.logMessage(err == null ? "SWARM " + name + " = " + SwarmAdapter.getString(name) : "SWARM " + err);
                 }
             }
-            case "status", "ping", "reload", "build", "stop" -> {
+            case "status", "ping", "reload", "build", "stop", "spawn", "despawn", "bots" -> { // Ostinato: unified OWNER command.
                 if (!SwarmAdapter.run(raw)) {
                     Debug.logWarning("SWARM '" + raw + "' was not accepted");
                 }
@@ -93,7 +95,7 @@ public class SwarmCommand extends Command {
                     Debug.logMessage("SWARM " + protocolCall("cancelCommand", p[1]));
                 }
             }
-            default -> Debug.logWarning("SWARM status|on|off|ping|reload|build|stop|set|menu|send|outcome|cancel");
+            default -> Debug.logWarning("SWARM status|on|off|ping|reload|build|stop|set|menu|send|outcome|cancel|spawn <name> [count] [server]|despawn <name|all>|bots"); // Ostinato:
         }
         finish();
     }

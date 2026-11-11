@@ -32,6 +32,36 @@ public final class SigilSignets {
 
     private SigilSignets() {}
 
+    // Ostinato: callers explicitly choose public pins versus a local-member secret record.
+    public static void write(Path file, String name, SigilEd25519 key, boolean privateRecord) throws IOException {
+        JsonObject record = new JsonObject();
+        record.addProperty("kind", "signet");
+        record.addProperty("algorithm", "Ed25519");
+        record.addProperty("name", name);
+        record.addProperty("public", SigilB64.encode(key.publicKey()));
+        if (privateRecord) {
+            byte[] seed = key.seedForRecord();
+            try {
+                record.addProperty("seed", SigilB64.encode(seed));
+            } finally {
+                java.util.Arrays.fill(seed, (byte) 0);
+            }
+        }
+        Files.createDirectories(file.toAbsolutePath().getParent());
+        // Ostinato: link reloads must never observe a half-written pin or private record.
+        Path pending = Files.createTempFile(file.toAbsolutePath().getParent(), ".signet-", ".tmp");
+        try {
+            Files.writeString(pending, record.toString(), StandardCharsets.UTF_8);
+            try {
+                Files.move(pending, file, java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(pending, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(pending);
+        }
+    }
+
     public static final class Record {
         public final String name;
         public final SigilEd25519 key;
