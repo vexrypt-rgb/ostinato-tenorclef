@@ -22,12 +22,12 @@ public class Phase1RegressionTest { // Ostinato:
         assertEquals(ExecutionState.CANCELED, pair.bobP.lookup(work).execution); // Ostinato:
         assertFalse(pair.aliceP.lookupSent(cancel).acked); // Ostinato:
         pair.bus.setInterceptor((from, to, line) -> List.of(line)); // Ostinato:
-        pair.clock.addAndGet(1000); // Ostinato:
+        pair.clock.addAndGet(4000); // Ostinato:
         pair.tick(); pair.tick(); // Ostinato:
         assertEquals(2, pair.aliceP.lookupSent(cancel).sends); // Ostinato:
         assertTrue(pair.aliceP.lookupSent(cancel).acked); // Ostinato:
         assertEquals(1, pair.bobExec.confirmCalls); // Ostinato:
-        pair.clock.addAndGet(1000); pair.tick(); // Ostinato:
+        pair.clock.addAndGet(4000); pair.tick(); // Ostinato:
         assertEquals(2, pair.aliceP.lookupSent(cancel).sends); // Ostinato:
     } // Ostinato:
 
@@ -36,7 +36,7 @@ public class Phase1RegressionTest { // Ostinato:
         pair.bus.setInterceptor((from, to, line) -> List.of()); // Ostinato:
         UUID cancel = Phase1Support.idOf(pair.aliceP.submit("Bob", "cancel " + UUID.randomUUID())); // Ostinato:
         assertEquals(1, pair.aliceP.lookupSent(cancel).sends); // Ostinato:
-        pair.clock.addAndGet(1000); pair.tick(); // Ostinato:
+        pair.clock.addAndGet(4000); pair.tick(); // Ostinato:
         assertEquals(2, pair.aliceP.lookupSent(cancel).sends); // Ostinato:
         pair.clock.set(pair.aliceP.lookupSent(cancel).deadline); pair.tick(); // Ostinato:
         assertTrue(pair.aliceP.lookupSent(cancel).gaveUp); // Ostinato:

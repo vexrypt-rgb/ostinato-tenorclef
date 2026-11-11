@@ -367,7 +367,7 @@ public class Phase1GateTest {
         assertEquals(1, first.sends);
         assertFalse(first.acked);
         String body = first.body;
-        w.clock.addAndGet(1_000L);
+        w.clock.set(first.nextRetry); // Ostinato: respect queued-send backoff.
         w.alice.pump();
         CommandProtocol.Sent retried = w.alice.lookupSent(id);
         assertEquals(body, retried.body);

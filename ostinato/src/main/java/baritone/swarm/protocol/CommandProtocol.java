@@ -18,6 +18,7 @@
 package baritone.swarm.protocol;
 
 import baritone.agent.AgentPolicy;
+import baritone.swarm.transport.SwarmPriority; // Ostinato: preserve transport priority.
 import baritone.api.command.CommandPermission;
 import baritone.api.swarm.protocol.CapabilityDescriptor;
 import baritone.api.swarm.protocol.ExecutionState;
@@ -71,6 +72,7 @@ public final class CommandProtocol {
     private final Map<UUID, Sent> outbound = new LinkedHashMap<>();
     private final List<StatusView> views = new ArrayList<>();
     private boolean linkUp = true;
+    private final Set<String> onlineMembers = new java.util.HashSet<>(); // Ostinato: join edges.
     private boolean immediateSafety;
     private boolean ownerEmergency;
     private boolean localSurvival;
@@ -173,6 +175,31 @@ public final class CommandProtocol {
         wire.send("*", TYPE_HELLO, "1|hello|" + self.memberId() + "|" + self.signetKeyId() + "|" + caps.encode());
     }
 
+    // Ostinato: reconnect the existing protocol without discarding its command ledger.
+    public void onReconnect() {
+        synchronized (lock) {
+            linkUp = true;
+        }
+        advertise();
+    }
+
+    // Ostinato: one hello per online roster change, including peers returning after leaving.
+    public boolean noteOnlineMembers(Set<String> online) {
+        boolean joined;
+        synchronized (lock) {
+            Set<String> peers = new java.util.HashSet<>(online);
+            peers.retainAll(members);
+            peers.remove(self.memberId());
+            joined = !onlineMembers.containsAll(peers);
+            onlineMembers.clear();
+            onlineMembers.addAll(peers);
+        }
+        if (joined) {
+            advertise();
+        }
+        return joined;
+    }
+
     public boolean linkUp() {
         synchronized (lock) {
             return linkUp;
@@ -232,11 +259,11 @@ public final class CommandProtocol {
         synchronized (lock) {
             outbound.put(id, sent);
         }
-        boolean queued = wire.send(sent.target, TYPE_CMD, body);
+        boolean queued = wire.send(sent.target, TYPE_CMD, body, commandPriority(name));
         synchronized (lock) {
             if (queued) {
                 sent.sends = 1;
-                sent.nextRetry = now + retryMs;
+                sent.nextRetry = now + retryDelay(sent.sends); // Ostinato: queued is not yet delivered.
             } else {
                 sent.nextRetry = now;
             }
@@ -328,7 +355,6 @@ public final class CommandProtocol {
                 }
                 // Retries only while the link is up. A transport accept is still not an ack.
                 if (linkUp && now >= s.nextRetry) {
-                    s.nextRetry = now + retryMs;
                     due.add(s);
                 }
             }
@@ -337,13 +363,30 @@ public final class CommandProtocol {
             if (!linkUp()) {
                 break;
             }
-            boolean queued = wire.send(s.target, TYPE_CMD, s.body);
-            if (queued) {
-                synchronized (lock) {
+            // Ostinato: ordinary retries yield to safety commands and acknowledgements.
+            SwarmPriority priority = commandPriority(nameOfBody(s.body)) == SwarmPriority.HIGH
+                    ? SwarmPriority.HIGH : SwarmPriority.LOW;
+            boolean queued = wire.send(s.target, TYPE_CMD, s.body, priority);
+            synchronized (lock) {
+                if (queued) {
                     s.sends++;
+                    s.nextRetry = now + retryDelay(s.sends);
+                } else {
+                    s.nextRetry = now;
                 }
             }
         }
+    }
+
+    // Ostinato: allow the slow whisper queue to drain; cap exponential backoff at 30 seconds.
+    private long retryDelay(int sends) {
+        return Math.min(30_000L, Math.min(retryMs, 30_000L) * (1L << Math.min(sends + 1, 15)));
+    }
+
+    // Ostinato: safety commands preempt ordinary traffic, including on redelivery.
+    private static SwarmPriority commandPriority(String name) {
+        return "cancel".equalsIgnoreCase(name) || "stop".equalsIgnoreCase(name)
+                || "forcecancel".equalsIgnoreCase(name) ? SwarmPriority.HIGH : SwarmPriority.NORMAL;
     }
 
     /**
@@ -420,7 +463,7 @@ public final class CommandProtocol {
             if (ok && boom == null && "disconnect".equals(d.name)) {
                 onDisconnect();
             }
-            wire.send(from, TYPE_ACK, ack);
+            wire.send(from, TYPE_ACK, ack, SwarmPriority.HIGH); // Ostinato: acks preempt retries.
             return;
         }
         if (d.kind == Kind.CANCEL) {
@@ -474,12 +517,12 @@ public final class CommandProtocol {
                 }
             }
             if (ack != null) {
-                wire.send(from, TYPE_ACK, ack);
+                wire.send(from, TYPE_ACK, ack, SwarmPriority.HIGH); // Ostinato: acks preempt retries.
             }
             return;
         }
         if (d.ack != null) {
-            wire.send(from, TYPE_ACK, d.ack);
+            wire.send(from, TYPE_ACK, d.ack, SwarmPriority.HIGH); // Ostinato: acks preempt retries.
         }
     }
 
@@ -1094,8 +1137,13 @@ public final class CommandProtocol {
                 log.accept("swarm: ignored hello with unknown capability version from " + from);
                 return;
             }
-            peerCaps.put(from, caps);
+            // Ostinato: compare understood capability sets, not descriptor identity or ordering.
+            CapabilityDescriptor previous = peerCaps.put(from, caps);
+            if (previous != null && previous.version() == caps.version() && previous.kinds().equals(caps.kinds())) {
+                return;
+            }
         }
+        advertise(); // Ostinato: teach a late joiner our caps without an identical-hello loop.
     }
 
     /** Commands that finish inside {@code ICommand.execute} and can be marked verified immediately. */
@@ -1205,6 +1253,11 @@ public final class CommandProtocol {
     /** Transport accept is not an ack. The body must be identical across retries. */
     public interface Wire {
         boolean send(String to, String type, String body);
+
+        // Ostinato: keep existing lambda wires source-compatible.
+        default boolean send(String to, String type, String body, SwarmPriority priority) {
+            return send(to, type, body);
+        }
     }
 
     /** Runs a command that has already passed auth, dedup and the safety check. */

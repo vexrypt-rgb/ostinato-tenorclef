@@ -247,13 +247,21 @@ final class Phase1Support {
             CommandProtocol protocol = new CommandProtocol(
                     new CommandProtocol.BotIdentity(name, key),
                     Set.of("Alice", "Bob"),
-                    (to, type, body) -> {
-                        try {
-                            String dest = "*".equals(to) || "all".equalsIgnoreCase(to) ? SwarmFrame.BROADCAST : to;
-                            endpoint.send("crew", dest, type, body, SwarmPriority.HIGH);
-                            return true;
-                        } catch (Exception e) {
-                            return false;
+                    new CommandProtocol.Wire() { // Ostinato: propagate protocol priorities through SIGIL.
+                        @Override
+                        public boolean send(String to, String type, String body) {
+                            return send(to, type, body, SwarmPriority.NORMAL);
+                        }
+
+                        @Override
+                        public boolean send(String to, String type, String body, SwarmPriority priority) {
+                            try {
+                                String dest = "*".equals(to) || "all".equalsIgnoreCase(to) ? SwarmFrame.BROADCAST : to;
+                                endpoint.send("crew", dest, type, body, priority); // Ostinato:
+                                return true;
+                            } catch (Exception e) {
+                                return false;
+                            }
                         }
                     },
                     exec,
