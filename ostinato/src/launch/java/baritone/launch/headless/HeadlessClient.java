@@ -1,6 +1,6 @@
 /*
  * Ostinato: runtime side of true headless. Does not skip the client tick.
- * The GPU device and the SDL window are still created. This class never shows or raises the window.
+ * A process created as headless has no GPU device and no SDL window. This class only touches the sound engine.
  */
 package baritone.launch.headless;
 

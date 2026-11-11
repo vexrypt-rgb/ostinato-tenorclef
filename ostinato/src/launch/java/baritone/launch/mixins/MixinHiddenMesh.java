@@ -1,6 +1,7 @@
 /*
- * Ostinato: skip async chunk mesh builds while hidden. compileSync is not cancelled: the render thread may
- * block on the section the camera is in, and cancelling a compile that already owns a buffer can leak it.
+ * Ostinato: skip async chunk mesh builds while hidden. compileSync stays for hidden and normal: the render
+ * thread may block on the section the camera is in, and cancelling a compile that already owns a real buffer
+ * can leak it. Headless cancels compileSync too, because there is no GPU buffer to finish.
  */
 package baritone.launch.mixins;
 
@@ -34,7 +35,15 @@ public class MixinHiddenMesh {
         }
     }
 
-    // Ostinato: hidden while not presenting, or headless. compileSync is not cancelled.
+    // Ostinato: headless has no buffer to finish. Hidden and normal still compile on the render thread.
+    @Inject(method = "compileSync", at = @At("HEAD"), cancellable = true)
+    private void ostinato$skipSync(RenderSectionRegion region, CallbackInfo ci) {
+        if (HeadlessPolicy.skipGpuWorkNow()) {
+            ci.cancel();
+        }
+    }
+
+    // Ostinato: hidden while not presenting, or headless.
     private static boolean ostinato$skipMesh() {
         RunMode.Value mode = RunMode.current();
         return HiddenRenderPolicy.skipChunkMeshBuild(mode, RenderSwap.isPresenting())

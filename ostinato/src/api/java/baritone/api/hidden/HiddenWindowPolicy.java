@@ -13,10 +13,11 @@ import baritone.api.run.RunMode;
  * {@link RunMode.Value#NORMAL} with no window position matches the client from before this mode: the window is
  * created visible and the mouse grab is unchanged. {@link RunMode.Value#NORMAL} with {@code -Dostinato.windowPos}
  * still creates the window hidden, moves it, and shows it without activating. {@link RunMode.Value#HIDDEN} creates
- * the window hidden and does not show it. The GL context is created either way, because the hidden flag is only
- * OR'd into the window flags. {@link RunMode.Value#HEADLESS} also creates the window hidden and never shows it,
- * including when {@code windowPos} is set and including a render-swap present. Headless cannot drop the GPU device
- * here: {@link HeadlessPolicy#keepsRealGpuDevice()} explains why. A present does not show a headless window.
+ * the window hidden and does not show it. The GL context is created for hidden, because the hidden flag is only
+ * OR'd into the window flags. {@link RunMode.Value#HEADLESS} uses the same stay-hidden answers so a later
+ * {@code #set runMode headless} on a real window does not show it. A process that was created headless never
+ * builds that window: {@link HeadlessPolicy#keepsRealGpuDevice()} is false and the SDL calls are not made.
+ * A present does not show a headless window.
  */
 public final class HiddenWindowPolicy {
 
@@ -43,7 +44,8 @@ public final class HiddenWindowPolicy {
     private HiddenWindowPolicy() {}
 
     /**
-     * True when {@code createWindow} must OR in {@code SDL_WINDOW_HIDDEN}. The GPU backend still creates the context.
+     * True when a real {@code createWindow} must OR in {@code SDL_WINDOW_HIDDEN}. Hidden still creates the GL context.
+     * A process created as headless never reaches that call.
      */
     public static boolean createHidden(RunMode.Value mode, boolean windowPos) {
         return stayHidden(mode) || windowPos;
@@ -115,7 +117,7 @@ public final class HiddenWindowPolicy {
         }
     }
 
-    /** Hidden, and headless, keep the SDL window unshown. Null is not either of those. */
+    /** Hidden, and headless, stay unshown. Null is not either of those. Headless may have no SDL window at all. */
     private static boolean stayHidden(RunMode.Value mode) {
         RunMode.Value resolved = mode(mode);
         return resolved == RunMode.Value.HIDDEN || HeadlessPolicy.active(resolved);

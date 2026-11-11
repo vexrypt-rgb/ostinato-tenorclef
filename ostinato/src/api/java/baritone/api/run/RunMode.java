@@ -20,8 +20,8 @@ import java.util.Locale;
  * the property wins the initial mode. A later {@code #set} wins after that.
  * <p>
  * {@link Value#HEADLESS} is the true-headless path ({@link baritone.api.headless.HeadlessPolicy}). {@link #isHeadless()}
- * reports it. Hidden-mode render reduction does not run for it. The GPU device and a hidden SDL window are still
- * created, because cancelling those calls crashes startup. See the headless notes.
+ * reports it. Hidden-mode render reduction does not run for it. A process started as headless does not create a
+ * GPU device or an SDL window. See the headless notes.
  */
 public final class RunMode {
 

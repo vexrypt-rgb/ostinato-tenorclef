@@ -4,12 +4,15 @@
 package baritone.headless;
 
 import baritone.api.BaritoneAPI;
+import baritone.api.command.helpers.TabCompleteHelper;
 import baritone.api.headless.HeadlessPolicy;
 import baritone.api.headless.ViewCapability;
 import baritone.api.hidden.HiddenRenderPolicy;
 import baritone.api.hidden.HiddenWindowPolicy;
 import baritone.api.hidden.RenderSwap;
 import baritone.api.pathing.goals.GoalBlock;
+import baritone.api.process.PathingCommand;
+import baritone.api.process.PathingCommandType;
 import baritone.api.run.RunMode;
 import baritone.api.utils.SettingsUtil;
 import baritone.pathing.calc.PathBench;
@@ -18,8 +21,10 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertTrue;
 
 public class HeadlessPolicyTest {
@@ -66,9 +71,18 @@ public class HeadlessPolicyTest {
         assertFalse(HiddenRenderPolicy.reduced(RunMode.Value.HEADLESS, false));
         assertTrue(HiddenRenderPolicy.shouldDrawWorld(RunMode.Value.HEADLESS, false, 0L, 0L));
         assertTrue(HeadlessPolicy.skipWorldDraw(RunMode.Value.HEADLESS));
-        assertFalse(HeadlessPolicy.skipAtlasUpload(RunMode.Value.HEADLESS));
-        assertFalse(HeadlessPolicy.skipCompileSync(RunMode.Value.HEADLESS));
+        assertTrue(HeadlessPolicy.skipAtlasUpload(RunMode.Value.HEADLESS));
+        assertTrue(HeadlessPolicy.skipCompileSync(RunMode.Value.HEADLESS));
+        assertFalse(HeadlessPolicy.keepsRealGpuDevice(RunMode.Value.HEADLESS));
+        assertTrue(HeadlessPolicy.keepsRealGpuDevice(RunMode.Value.NORMAL));
+        assertTrue(HeadlessPolicy.keepsRealGpuDevice(RunMode.Value.HIDDEN));
+        assertTrue(HeadlessPolicy.keepsRealGpuDevice(null));
+        // The property is clear in this test, so the process methods still describe a normal client.
         assertTrue(HeadlessPolicy.keepsRealGpuDevice());
+        assertFalse(HeadlessPolicy.skipSdl());
+        assertFalse(HeadlessPolicy.skipGpuWorkNow());
+        assertTrue(HeadlessPolicy.startsRenderThread(RunMode.windowCreateMode()));
+        assertNotEquals(0L, HeadlessPolicy.FAKE_WINDOW_HANDLE);
         assertEquals(HiddenRenderPolicy.LOOP_FLOOR_FPS, HeadlessPolicy.LOOP_FLOOR_FPS);
         assertEquals(20, HeadlessPolicy.displayFpsCap(RunMode.Value.HEADLESS, 60));
         assertEquals(10, HeadlessPolicy.displayFpsCap(RunMode.Value.HEADLESS, 10));
@@ -94,6 +108,13 @@ public class HeadlessPolicyTest {
         SettingsUtil.parseAndApply(BaritoneAPI.getSettings(), "runmode", "normal");
         assertTrue(RunMode.isNormal());
         assertFalse(HeadlessPolicy.active(RunMode.current()));
+        assertFalse(HeadlessPolicy.skipWorldDraw(RunMode.current()));
+        assertFalse(HeadlessPolicy.skipGameRenderer(RunMode.current()));
+        // The process was created headless. #set normal does not create the device that was skipped.
+        assertFalse(HeadlessPolicy.keepsRealGpuDevice());
+        assertTrue(HeadlessPolicy.skipSdl());
+        assertTrue(HeadlessPolicy.skipGpuWorkNow());
+        assertFalse(HeadlessPolicy.startsRenderThread(RunMode.windowCreateMode()));
         assertFalse(ViewCapability.canStreamView(RunMode.current()));
         assertFalse(ViewCapability.canRenderSwap(RunMode.current()));
 
@@ -153,6 +174,36 @@ public class HeadlessPolicyTest {
         assertFalse(goal.isInGoal(3, 64, 6));
         assertEquals(0.0, goal.heuristic(3, 64, 5), 0.0);
         assertTrue(goal.heuristic(4, 64, 5) > 0.0);
+
+        PathingCommand command = new PathingCommand(goal, PathingCommandType.SET_GOAL_AND_PATH);
+        assertEquals(goal, command.goal);
+        assertEquals(PathingCommandType.SET_GOAL_AND_PATH, command.commandType);
+        assertArrayEquals(new String[]{"goal", "path"}, new TabCompleteHelper().append("goal", "path").build());
+    }
+
+    @Test
+    public void hiddenAndNormalStillKeepTheDeviceAndTheRenderThread() {
+        clearProperty();
+        RunMode.resetForTests();
+        System.setProperty(RunMode.PROPERTY, "hidden");
+        assertEquals(RunMode.Value.HIDDEN, RunMode.windowCreateMode());
+        assertTrue(HeadlessPolicy.keepsRealGpuDevice());
+        assertFalse(HeadlessPolicy.skipSdl());
+        assertTrue(HeadlessPolicy.startsRenderThread(RunMode.windowCreateMode()));
+        assertFalse(HeadlessPolicy.skipGpuWorkNow());
+        assertFalse(HeadlessPolicy.skipAtlasUpload(RunMode.Value.HIDDEN));
+        assertFalse(HeadlessPolicy.skipCompileSync(RunMode.Value.HIDDEN));
+        assertFalse(HeadlessPolicy.skipGameRenderer(RunMode.Value.HIDDEN));
+        assertFalse(HeadlessPolicy.skipRenderThread(RunMode.Value.HIDDEN));
+
+        clearProperty();
+        RunMode.resetForTests();
+        System.setProperty(RunMode.PROPERTY, "normal");
+        assertTrue(HeadlessPolicy.keepsRealGpuDevice());
+        assertTrue(HeadlessPolicy.startsRenderThread(RunMode.Value.NORMAL));
+        assertTrue(HeadlessPolicy.startsRenderThread(null));
+        assertFalse(HeadlessPolicy.skipRenderThread(RunMode.Value.NORMAL));
+        assertFalse(HeadlessPolicy.skipGpuWorkNow());
     }
 
     private static void assertNotHeadless(RunMode.Value mode) {
@@ -162,6 +213,14 @@ public class HeadlessPolicyTest {
         assertFalse(HeadlessPolicy.skipTextureAnimation(mode));
         assertFalse(HeadlessPolicy.skipSoundDeviceOpen(mode));
         assertFalse(HeadlessPolicy.silenceSound(mode));
+        assertFalse(HeadlessPolicy.skipGameRenderer(mode));
+        assertFalse(HeadlessPolicy.skipRenderThread(mode));
+        assertTrue(HeadlessPolicy.startsRenderThread(mode));
+        assertFalse(HeadlessPolicy.skipAtlasUpload(mode));
+        assertFalse(HeadlessPolicy.skipCompileSync(mode));
+        assertFalse(HeadlessPolicy.skipFontLoad(mode));
+        assertFalse(HeadlessPolicy.skipShaderLoad(mode));
+        assertTrue(HeadlessPolicy.keepsRealGpuDevice(mode));
         assertEquals(4, HeadlessPolicy.atlasMipLevel(mode, 4));
         assertFalse(ViewCapability.canStreamView(mode));
     }
@@ -173,6 +232,14 @@ public class HeadlessPolicyTest {
         assertTrue(HeadlessPolicy.skipTextureAnimation(mode));
         assertTrue(HeadlessPolicy.skipSoundDeviceOpen(mode));
         assertTrue(HeadlessPolicy.silenceSound(mode));
+        assertTrue(HeadlessPolicy.skipGameRenderer(mode));
+        assertTrue(HeadlessPolicy.skipRenderThread(mode));
+        assertFalse(HeadlessPolicy.startsRenderThread(mode));
+        assertTrue(HeadlessPolicy.skipAtlasUpload(mode));
+        assertTrue(HeadlessPolicy.skipCompileSync(mode));
+        assertTrue(HeadlessPolicy.skipFontLoad(mode));
+        assertTrue(HeadlessPolicy.skipShaderLoad(mode));
+        assertFalse(HeadlessPolicy.keepsRealGpuDevice(mode));
         assertEquals(0, HeadlessPolicy.atlasMipLevel(mode, 4));
         assertTrue(ViewCapability.canStreamView(mode));
         assertFalse(ViewCapability.canRenderSwap(mode));

@@ -4,6 +4,7 @@
  */
 package baritone.launch.hidden;
 
+import baritone.api.headless.HeadlessPolicy;
 import baritone.api.hidden.HiddenWindowPolicy;
 import baritone.api.hidden.RenderSwap;
 import baritone.api.run.RunMode;
@@ -23,6 +24,9 @@ import java.nio.IntBuffer;
  * context for that window. While hidden, the window is resized to the client's minimum (320x240). The 16px edge in
  * the policy cannot be applied: the client clamps below that. The previous size is restored when the window is shown.
  * Show uses the no-activate hints and never raises the window.
+ * <p>
+ * A process created as {@code headless} has no SDL window. {@link #afterCreate} and {@link #onTick} return before
+ * any SDL call. The handle stored on the stub window is not an SDL id.
  */
 public final class HiddenClientWindow {
 
@@ -44,7 +48,8 @@ public final class HiddenClientWindow {
      * so, which is the old windowPos path and not hidden mode.
      */
     public static void afterCreate(long handle, RunMode.Value mode, int[] windowPos) {
-        if (handle == 0L) {
+        // Ostinato: headless stores a fake handle. Do not pass it to SDL. A later #set cannot create the window.
+        if (!HeadlessPolicy.keepsRealGpuDevice() || handle == 0L) {
             return;
         }
         boolean hasPos = windowPos != null;
@@ -64,6 +69,10 @@ public final class HiddenClientWindow {
 
     /** Once per client tick. Does not skip the tick. */
     public static void onTick() {
+        // Ostinato: same process rule as afterCreate. #set headless on a real window still hides that window.
+        if (!HeadlessPolicy.keepsRealGpuDevice()) {
+            return;
+        }
         Minecraft mc = Minecraft.getInstance();
         if (mc == null) {
             return;

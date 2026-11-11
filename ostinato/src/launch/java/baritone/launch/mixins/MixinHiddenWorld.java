@@ -1,6 +1,8 @@
 /*
  * Ostinato: draw the world about once a second while hidden. The rest of GameRenderer.render still runs,
  * so the frame lifecycle and the GL context stay alive. The render thread is not skipped.
+ * Headless cancels GameRenderer.render itself in MixinHeadlessDraw. This renderLevel cancel remains for
+ * hidden, and as a second belt if render() is reached while headless.
  */
 package baritone.launch.mixins;
 
@@ -23,11 +25,11 @@ public class MixinHiddenWorld {
 
     @Inject(method = "renderLevel", at = @At("HEAD"), cancellable = true)
     private void ostinato$worldDraw(CallbackInfo ci) {
-        // Ostinato: cancel only renderLevel. Blit, post, gui, and endFrame in render() still run.
+        // Ostinato: cancel only renderLevel. Hidden still runs the rest of GameRenderer.render.
         RunMode.Value mode = RunMode.current();
         boolean presenting = RenderSwap.isPresenting();
         long now = System.nanoTime();
-        // Ostinato: headless draws no world. The rest of GameRenderer.render still runs.
+        // Ostinato: headless draws no world. MixinHeadlessDraw also cancels GameRenderer.render.
         if (HeadlessPolicy.skipWorldDraw(mode)) {
             ci.cancel();
             return;

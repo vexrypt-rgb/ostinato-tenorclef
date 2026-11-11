@@ -1,5 +1,6 @@
 package baritone.launch.mixins;
 
+import baritone.api.headless.HeadlessPolicy;
 import baritone.api.hidden.HiddenWindowPolicy;
 import baritone.api.run.RunMode;
 import baritone.launch.hidden.HiddenClientWindow;
@@ -38,6 +39,8 @@ public abstract class MixinWindowPlacement {
     @Inject(method = "createWindow", at = @At("HEAD"), require = 0)
     private void ostinato$hints(GpuBackend backend, int w, int h, String title, CallbackInfoReturnable<Long> ci) {
         // Ostinato: window-create reads the JVM property only. Settings are not loaded yet.
+        // Headless cancels createWindow before this runs. This return is the belt if that order changes.
+        if (HeadlessPolicy.skipSdl()) return;
         if (!HiddenWindowPolicy.suppressActivate(RunMode.windowCreateMode(), ostinato$pos() != null)) return;
         HiddenClientWindow.armNoActivateHints();
     }
