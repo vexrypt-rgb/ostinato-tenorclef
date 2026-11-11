@@ -128,7 +128,7 @@ public final class Catalogs {
         if (!saw || name == null || name.isEmpty()) {
             return null;
         }
-        CommandPermission use = perm == null ? CommandPermission.SWARM : perm;
+        CommandPermission use = perm == null ? CommandPermission.OWNER : perm;
         if (!mutate) {
             mutate = CommandCatalog.infer(name, use).worldMutation;
         }

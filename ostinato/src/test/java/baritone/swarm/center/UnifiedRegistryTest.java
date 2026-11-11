@@ -157,15 +157,18 @@ public class UnifiedRegistryTest {
         AtomicInteger runs = new AtomicInteger();
         assertTrue(registry.execute(RegistryCall.window("Steve", "", "mine stone").withScope(RegistryCall.Scope.ONE, "Bot"),
                 () -> ran(runs)).executed());
-        RegistryResult second = registry.execute(RegistryCall.window("Steve", "", "goto 1 2 3")
+        RegistryResult peer = registry.execute(RegistryCall.swarm("bot", true, "goto 1 2 3")
                 .withScope(RegistryCall.Scope.ONE, "Bot"), () -> ran(runs));
-        assertEquals("busy", second.reason());
+        assertEquals("busy", peer.reason());
         assertEquals(1, runs.get());
+        assertTrue(registry.execute(RegistryCall.window("Steve", "", "goto 1 2 3")
+                .withScope(RegistryCall.Scope.ONE, "Bot"), () -> ran(runs)).executed());
+        assertEquals(2, runs.get());
         assertTrue(registry.execute(RegistryCall.swarm("bot", true, "cancel").withScope(RegistryCall.Scope.ONE, "Bot"),
                 () -> ran(runs)).executed());
-        assertTrue(registry.execute(RegistryCall.window("Steve", "", "goto 1 2 3").withScope(RegistryCall.Scope.ONE, "Bot"),
-                () -> ran(runs)).executed());
-        assertEquals(3, runs.get());
+        assertTrue(registry.execute(RegistryCall.swarm("bot", true, "goto 1 2 3")
+                .withScope(RegistryCall.Scope.ONE, "Bot"), () -> ran(runs)).executed());
+        assertEquals(4, runs.get());
     }
 
     @Test public void dispatcherFailureDoesNotEchoTheException() {
@@ -183,6 +186,13 @@ public class UnifiedRegistryTest {
         assertEquals(CommandPermission.SWARM, registry().find("cancel").permission);
         assertTrue(registry().find("dig").leaseNeeding);
         assertEquals(RegistryEntry.Origin.AT, registry().find("dig").origin);
+        UnifiedRegistry missingPerm = UnifiedRegistry.of(List.of(), Catalogs.parseAt("""
+                ---
+                v1
+                name=custom
+                ---
+                """));
+        assertEquals(CommandPermission.OWNER, missingPerm.find("custom").permission);
     }
 
     @Test public void buttonsComeFromRegistryForms() {

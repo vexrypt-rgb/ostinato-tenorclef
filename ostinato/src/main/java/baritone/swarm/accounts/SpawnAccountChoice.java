@@ -53,6 +53,9 @@ public final class SpawnAccountChoice {
             throw new IllegalArgumentException("Online-mode servers need a configured account for " + key
                     + "; Ostinato will not store passwords");
         }
+        if (store.expiredWithoutRefresh(key)) {
+            throw new IllegalArgumentException("account needs sign-in");
+        }
         if (store.needsRefresh(key)) {
             if (refresher == null) {
                 throw new IllegalArgumentException("account needs sign-in");

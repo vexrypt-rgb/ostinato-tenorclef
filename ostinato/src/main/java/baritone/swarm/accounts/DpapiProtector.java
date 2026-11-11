@@ -100,12 +100,14 @@ public final class DpapiProtector implements SecretProtector {
             if (size < 0 || pointer == null || pointer.equals(MemorySegment.NULL)) {
                 throw new IllegalStateException("Windows DPAPI is not available");
             }
-            byte[] copy = pointer.reinterpret(size).toArray(ValueLayout.JAVA_BYTE);
-            MemorySegment released = (MemorySegment) localFree.invokeExact(pointer);
-            if (released != null && !released.equals(MemorySegment.NULL)) {
-                throw new IllegalStateException("Windows DPAPI is not available");
+            try {
+                return pointer.reinterpret(size).toArray(ValueLayout.JAVA_BYTE);
+            } finally {
+                MemorySegment released = (MemorySegment) localFree.invokeExact(pointer);
+                if (released != null && !released.equals(MemorySegment.NULL)) {
+                    throw new IllegalStateException("Windows DPAPI is not available");
+                }
             }
-            return copy;
         } catch (IllegalStateException e) {
             throw e;
         } catch (Throwable e) {

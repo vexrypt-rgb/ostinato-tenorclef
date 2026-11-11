@@ -57,8 +57,13 @@ public final class PrivateFiles {
         if (acl == null) {
             return;
         }
-        UserPrincipal user = file.getFileSystem().getUserPrincipalLookupService()
-                .lookupPrincipalByName(System.getProperty("user.name"));
+        UserPrincipal user;
+        try {
+            user = Files.getOwner(file);
+        } catch (IOException | UnsupportedOperationException e) {
+            user = file.getFileSystem().getUserPrincipalLookupService()
+                    .lookupPrincipalByName(System.getProperty("user.name"));
+        }
         AclEntry entry = AclEntry.newBuilder()
                 .setType(AclEntryType.ALLOW)
                 .setPrincipal(user)

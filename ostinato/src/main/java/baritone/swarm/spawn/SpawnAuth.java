@@ -67,6 +67,11 @@ public final class SpawnAuth {
             out.add(fields.access());
             out.add("--userType");
             out.add("msa");
+            try {
+                Files.deleteIfExists(file);
+            } catch (Exception ignored) {
+                // Best-effort: the token is already in memory. Do not fail the launch.
+            }
             return out.toArray(String[]::new);
         } catch (Throwable ignored) {
             return args;

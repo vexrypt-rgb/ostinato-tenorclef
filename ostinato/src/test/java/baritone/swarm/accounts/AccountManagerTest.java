@@ -152,6 +152,8 @@ public class AccountManagerTest {
         }
         assertTrue(present);
         assertEquals("msa", spliced[spliced.length - 1]);
+        assertFalse(Files.exists(file));
+        Files.write(file, new XorProtector().protect(plain));
         String[] broken = SpawnAuth.splice(command, file, new SecretProtector() {
             @Override
             public byte[] protect(byte[] plain) {
@@ -165,6 +167,44 @@ public class AccountManagerTest {
         });
         assertEquals(command.length, broken.length);
         assertFalse(String.join(" ", broken).contains(ACCESS));
+        assertTrue(Files.exists(file));
+    }
+
+    @Test public void unknownExpiryUsesTheAccessTokenAndExpiredWithoutRefreshIsRefused() throws Exception {
+        AccountStore store = new AccountStore(temporary.getRoot().toPath().resolve("accounts"), new XorProtector());
+        Path launcher = temporary.getRoot().toPath().resolve("launcher_accounts.json");
+        Files.writeString(launcher, "{\"accounts\":{\"a\":{\"accessToken\":\"" + ACCESS
+                + "\",\"refreshToken\":\"" + REFRESH + "\",\"minecraftProfile\":{\"name\":\"Imported\",\"id\":\"123456781234123412341234567890ab\"}}}}");
+        assertEquals("Imported", store.importNamed("Imported", List.of(launcher)).name());
+        assertFalse(store.needsRefresh("Imported"));
+        assertFalse(store.expiredWithoutRefresh("Imported"));
+        assertEquals("", store.refreshToken("Imported"));
+        List<SpawnSession> imported = SpawnAccountChoice.choose(SwarmSpawnArgs.parse(List.of("Bot", "account:Imported")),
+                false, store, List.of(), (name, token) -> {
+                    throw new AssertionError("launcher refresh tokens must not be used");
+                });
+        assertTrue(ACCESS.equals(imported.get(0).accessToken()));
+        store.saveMicrosoft("Ours", "abcdefabcdefabcdefabcdefabcdefab", ACCESS, REFRESH, 1L);
+        assertTrue(store.needsRefresh("Ours"));
+        AtomicInteger refreshes = new AtomicInteger();
+        List<SpawnSession> chosen = SpawnAccountChoice.choose(SwarmSpawnArgs.parse(List.of("Bot", "account:Ours")),
+                false, store, List.of(), (name, token) -> {
+                    refreshes.incrementAndGet();
+                    assertEquals(REFRESH, token);
+                    store.saveMicrosoft(name, "abcdefabcdefabcdefabcdefabcdefab", MC, REFRESH,
+                            System.currentTimeMillis() + 3_600_000L);
+                    return store.session(name);
+                });
+        assertEquals(1, refreshes.get());
+        assertTrue(MC.equals(chosen.get(0).accessToken()));
+        store.saveMicrosoft("Stale", "12345678123412341234123456789012", ACCESS, "", 1L);
+        try {
+            SpawnAccountChoice.choose(SwarmSpawnArgs.parse(List.of("Bot", "account:Stale")),
+                    false, store, List.of(), null);
+            assertTrue(false);
+        } catch (IllegalArgumentException expected) {
+            assertEquals("account needs sign-in", expected.getMessage());
+        }
     }
 
     @Test public void dpapiRoundTripWhenThePlatformHasIt() {

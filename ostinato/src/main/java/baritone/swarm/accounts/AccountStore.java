@@ -106,7 +106,32 @@ public final class AccountStore {
         if (listed == null || listed.kind != Kind.MICROSOFT || listed.expiryEpochMs <= 0) {
             return false;
         }
-        return listed.expiryEpochMs < System.currentTimeMillis() + 60_000L;
+        if (listed.expiryEpochMs >= System.currentTimeMillis() + 60_000L) {
+            return false;
+        }
+        try {
+            String refresh = readBlob(listed.name).refresh();
+            return refresh != null && !refresh.isBlank();
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** True when a Microsoft account is past its expiry and has no refresh token. */
+    public boolean expiredWithoutRefresh(String name) {
+        Listed listed = find(name);
+        if (listed == null || listed.kind != Kind.MICROSOFT || listed.expiryEpochMs <= 0) {
+            return false;
+        }
+        if (listed.expiryEpochMs >= System.currentTimeMillis() + 60_000L) {
+            return false;
+        }
+        try {
+            String refresh = readBlob(listed.name).refresh();
+            return refresh == null || refresh.isBlank();
+        } catch (IOException e) {
+            return true;
+        }
     }
 
     public baritone.swarm.spawn.SpawnSession session(String name) throws IOException {
@@ -152,7 +177,7 @@ public final class AccountStore {
         }
         for (LauncherProfile profile : LauncherProfile.read(launcherFiles)) {
             if (profile.name.equalsIgnoreCase(name)) {
-                saveMicrosoft(profile.name, profile.uuid, profile.accessToken, profile.refreshToken, 0L);
+                saveMicrosoft(profile.name, profile.uuid, profile.accessToken, "", 0L);
                 return find(profile.name);
             }
         }
@@ -165,7 +190,7 @@ public final class AccountStore {
         }
         int count = 0;
         for (LauncherProfile profile : LauncherProfile.read(launcherFiles)) {
-            saveMicrosoft(profile.name, profile.uuid, profile.accessToken, profile.refreshToken, 0L);
+            saveMicrosoft(profile.name, profile.uuid, profile.accessToken, "", 0L);
             count++;
         }
         return count;

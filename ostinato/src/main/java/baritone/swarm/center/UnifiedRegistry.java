@@ -168,7 +168,8 @@ public final class UnifiedRegistry {
         if (occupies(entry) && (call.scope == RegistryCall.Scope.GROUP || call.scope == RegistryCall.Scope.ALL)) {
             return "phase1";
         }
-        if (busy(entry, call, args)) {
+        // Ostinato: the window owner may replace in-flight work. Busy still blocks AI and swarm peers.
+        if (busy(entry, call, args) && !(call.kind == RegistryCall.Kind.WINDOW && isOwner(call))) {
             return "busy";
         }
         return null;
