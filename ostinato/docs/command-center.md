@@ -30,4 +30,4 @@ Goto and mine on another bot's tile are sent as `#swarm send <bot> <line>` after
 
 ## Accounts
 
-Bot accounts are added from this window. Sign-in needs an Azure app registration that you configure. There is no built-in client id. See `bot-accounts.md` in this folder.
+Bot accounts are added from this window. Sign-in needs an Azure app registration that you configure. There is no built-in client id. See [bot-accounts.md](bot-accounts.md).

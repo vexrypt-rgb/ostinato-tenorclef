@@ -36,6 +36,20 @@ public class SwarmSpawnArgsTest {
         assertEquals("abcdefghijklmn16", names.get(15));
     }
 
+    @Test public void accountIsNotAServerAndOneAccountCannotCoverACount() {
+        SwarmSpawnArgs chosen = SwarmSpawnArgs.parse(List.of("Bot", "account:Steve"));
+        assertNull(chosen.server());
+        assertEquals("Steve", chosen.account());
+        assertEquals("example.org", SwarmSpawnArgs.parse(List.of("Bot", "example.org", "account:Steve")).server());
+        assertNull(SwarmSpawnArgs.parse(List.of("Bot", "example.org")).account());
+        try {
+            SwarmSpawnArgs.parse(List.of("Bot", "2", "account:Steve"));
+            fail();
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("One account"));
+        }
+    }
+
     @Test public void despawnNameOrAll() {
         assertEquals("Bot", SwarmSpawnArgs.despawn(List.of("Bot")));
         assertEquals("all", SwarmSpawnArgs.despawn(List.of("ALL")));

@@ -12,6 +12,7 @@ import net.minecraft.client.main.Main;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import joptsimple.ArgumentAcceptingOptionSpec; // Ostinato: offline spawned children have no launcher token.
@@ -23,6 +24,12 @@ public class MixinHeadlessMain {
     @Inject(method = "main([Ljava/lang/String;)V", at = @At("HEAD"), remap = false)
     private static void ostinato$watchParent(String[] args, CallbackInfo ci) {
         SwarmSpawnParentWatcher.install();
+    }
+
+    // Ostinato: splice a protected auth file into the in-memory args. The OS command line is unchanged.
+    @ModifyVariable(method = "main([Ljava/lang/String;)V", at = @At("HEAD"), argsOnly = true, ordinal = 0, remap = false)
+    private static String[] ostinato$authFile(String[] args) {
+        return baritone.swarm.spawn.SpawnAuth.splice(args);
     }
 
     // Ostinato: vanilla requires a token even offline. Only our explicitly offline headless children

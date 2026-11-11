@@ -31,7 +31,7 @@ public class SwarmSpawnCommandBuilderTest {
         Path game = parent.gameDirectory().resolve("ostinato-bots/Bot");
         Path log = game.resolve("logs/spawn-test.log");
         ProcessBuilder builder = SwarmSpawnCommandBuilder.build(parent, "Bot", "localhost:25565", game, log,
-                temporary.getRoot().toPath().resolve("private.json"), null);
+                temporary.getRoot().toPath().resolve("private.json"), null, null);
         List<String> args = builder.command();
         assertEquals(parent.command().get(0), args.get(0));
         for (String arg : List.of("-Xmx768M", "-Xms256M", "-XX:+UseG1GC", "-Dostinato.runMode=headless",
@@ -50,14 +50,22 @@ public class SwarmSpawnCommandBuilderTest {
         var parent = snapshot(List.of());
         Path game = parent.gameDirectory().resolve("ostinato-bots/Bot");
         String uuid = "123456781234123412341234567890ab";
-        var profile = new SwarmSpawnAccounts.Profile(uuid, "CHILD-TOKEN");
+        var session = new SpawnSession("AccountName", uuid, "CHILD-TOKEN");
+        var protector = new baritone.swarm.accounts.XorProtector();
         List<String> args = SwarmSpawnCommandBuilder.build(parent, "Bot", "server.example", game,
-                game.resolve("out.log"), game.resolve("unused-private.json"), profile).command();
-        assertEquals(uuid, args.get(args.indexOf("--uuid") + 1));
-        assertEquals("CHILD-TOKEN", args.get(args.indexOf("--accessToken") + 1));
+                game.resolve("out.log"), game.resolve("unused-private.json"), session, protector).command();
+        assertTrue(args.contains("--username"));
+        assertEquals("AccountName", args.get(args.indexOf("--username") + 1));
         assertTrue(args.contains("-Dostinato.swarm.spawnOffline=false"));
+        assertTrue(args.stream().anyMatch(arg -> arg.startsWith("-Dostinato.swarm.authFile=")));
+        assertFalse(args.contains("--accessToken"));
+        assertFalse(args.contains("--uuid"));
+        assertFalse(args.contains("CHILD-TOKEN"));
+        assertFalse(args.contains(uuid));
         assertFalse(args.contains("PARENT-SECRET"));
-        assertFalse(profile.toString().contains("CHILD-TOKEN"));
+        assertFalse(session.toString().contains("CHILD"));
+        String stored = Files.readString(game.resolve("auth.bin"), java.nio.charset.StandardCharsets.ISO_8859_1);
+        assertFalse(stored.contains("CHILD-TOKEN"));
     }
 
     @Test public void fabricConfigIsPrivateAndSanitized() throws Exception {
@@ -69,7 +77,7 @@ public class SwarmSpawnCommandBuilderTest {
         Path game = parent.gameDirectory().resolve("ostinato-bots/Bot");
         Files.createDirectories(game);
         var builder = SwarmSpawnCommandBuilder.build(parent, "Bot", "localhost", game, game.resolve("out.log"),
-                temporary.getRoot().toPath().resolve("private.json"), null);
+                temporary.getRoot().toPath().resolve("private.json"), null, null);
         assertTrue(builder.command().contains("-Dfabric.dli.config=" + game.resolve("launch.cfg")));
         assertTrue(builder.command().contains("-Dfabric.dli.workDir=" + game));
         String child = Files.readString(game.resolve("launch.cfg"));
@@ -81,22 +89,26 @@ public class SwarmSpawnCommandBuilderTest {
         assertEquals(original, Files.readString(config));
     }
 
-    @Test public void fabricOnlineIdentityLivesInChildConfigOnly() throws Exception {
+    @Test public void fabricOnlineIdentityStaysOutOfTheChildConfig() throws Exception {
         Path config = temporary.getRoot().toPath().resolve("parent-online.cfg");
         String original = "clientArgs\n\t--username\n\tParent\n\t--accessToken\n\tPARENT-SECRET\n";
         Files.writeString(config, original);
         var parent = snapshot(List.of("-Dfabric.dli.config=" + config));
         Path game = parent.gameDirectory().resolve("ostinato-bots/Bot");
         Files.createDirectories(game);
-        var profile = new SwarmSpawnAccounts.Profile("123456781234123412341234567890ab", "CHILD-TOKEN");
+        var session = new SpawnSession("AccountName", "123456781234123412341234567890ab", "CHILD-TOKEN");
         var builder = SwarmSpawnCommandBuilder.build(parent, "Bot", "server.example", game, game.resolve("out.log"),
-                temporary.getRoot().toPath().resolve("private.json"), profile);
+                temporary.getRoot().toPath().resolve("private.json"), session, new baritone.swarm.accounts.XorProtector());
         String child = Files.readString(game.resolve("launch.cfg"));
-        assertTrue(child.contains("CHILD-TOKEN"));
-        assertTrue(child.contains("123456781234123412341234567890ab"));
+        assertFalse(child.contains("CHILD-TOKEN"));
+        assertFalse(child.contains("123456781234123412341234567890ab"));
+        assertTrue(child.contains("AccountName"));
         assertFalse(child.contains("PARENT-SECRET"));
         assertEquals(original, Files.readString(config));
         assertFalse(builder.command().contains("CHILD-TOKEN"));
+        assertFalse(builder.command().contains("--accessToken"));
+        String stored = Files.readString(game.resolve("auth.bin"), java.nio.charset.StandardCharsets.ISO_8859_1);
+        assertFalse(stored.contains("CHILD-TOKEN"));
     }
 
     @Test public void windowsQuotesAndMxBeanFallback() {

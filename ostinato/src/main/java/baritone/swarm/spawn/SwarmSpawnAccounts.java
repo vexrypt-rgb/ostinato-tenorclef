@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -34,6 +35,20 @@ public final class SwarmSpawnAccounts {
         }
         return host.equals("localhost") || host.equals("::1") || host.matches("127\\.[0-9]+\\.[0-9]+\\.[0-9]+")
                 || UUID.nameUUIDFromBytes(("OfflinePlayer:" + parentName).getBytes(StandardCharsets.UTF_8)).equals(parentUuid);
+    }
+
+    /** Launcher files are read for import. This method does not create them. */
+    public static List<Path> launcherFiles(Path gameDirectory) {
+        List<Path> files = new ArrayList<>();
+        if (gameDirectory != null) {
+            files.add(gameDirectory.resolve("launcher_accounts.json"));
+        }
+        files.add(Path.of(System.getProperty("user.home"), ".minecraft", "launcher_accounts.json"));
+        String appData = System.getenv("APPDATA");
+        if (appData != null) {
+            files.add(Path.of(appData, ".minecraft", "launcher_accounts.json"));
+        }
+        return files;
     }
 
     public static Profile find(String name, List<Path> files) throws IOException {

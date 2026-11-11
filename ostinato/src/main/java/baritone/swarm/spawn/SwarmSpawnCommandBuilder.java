@@ -1,5 +1,9 @@
 package baritone.swarm.spawn;
 
+import baritone.swarm.accounts.AuthBlob;
+import baritone.swarm.accounts.PrivateFiles;
+import baritone.swarm.accounts.SecretProtector;
+
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.nio.file.Files;
@@ -67,7 +71,7 @@ public final class SwarmSpawnCommandBuilder {
     }
 
     public static ProcessBuilder build(Snapshot parent, String name, String server, Path gameDir, Path log,
-                                       Path signet, SwarmSpawnAccounts.Profile account) throws IOException {
+                                       Path signet, SpawnSession session, SecretProtector protector) throws IOException {
         List<String> source = parent.command();
         int main = mainIndex(source);
         List<String> result = new ArrayList<>();
@@ -92,21 +96,34 @@ public final class SwarmSpawnCommandBuilder {
                 result.add(arg);
             }
         }
+        boolean online = session != null && session.online();
+        String username = session != null && session.username() != null && !session.username().isBlank()
+                ? session.username() : name;
+        if (online) {
+            if (protector == null) {
+                throw new IOException("Windows DPAPI is not available");
+            }
+            byte[] plain = AuthBlob.encode(username, session.uuid(), session.accessToken(), "", 0L);
+            try {
+                PrivateFiles.writeRestricted(gameDir.resolve("auth.bin"), protector.protect(plain));
+            } finally {
+                Arrays.fill(plain, (byte) 0);
+            }
+        }
         result.addAll(List.of("-Xmx768M", "-Xms256M", "-XX:+UseG1GC", "-XX:MaxMetaspaceSize=384M",
                 "-XX:ReservedCodeCacheSize=128M", "-XX:CompressedClassSpaceSize=128M", "-XX:G1HeapRegionSize=8M",
                 "-Dostinato.runMode=headless", "-Dostinato.commandInbox=true",
                 "-Dostinato.swarm.spawnParentPid=" + parent.pid(), "-Dostinato.swarm.spawnSignet=" + signet,
-                "-Dostinato.swarm.spawnOffline=" + (account == null),
+                "-Dostinato.swarm.spawnOffline=" + (!online),
                 "-Dfabric.modsFolder=" + mods));
+        if (online) {
+            // Ostinato: path only. The token is spliced into Main's argument array, not this command line.
+            result.add("-Dostinato.swarm.authFile=" + gameDir.resolve("auth.bin").toAbsolutePath());
+        }
         result.add(source.get(main));
         result.addAll(cleanArgs(source.subList(main + 1, source.size())));
-        List<String> childArgs = new ArrayList<>(List.of("--gameDir", gameDir.toString(), "--username", name,
+        List<String> childArgs = new ArrayList<>(List.of("--gameDir", gameDir.toString(), "--username", username,
                 "--quickPlayMultiplayer", server));
-        // Ostinato: Fabric's devlaunchinjector only reads clientArgs from launch.cfg, so online
-        // uuid/token must be there too. The parent config is never written; this file is the child's.
-        if (account != null) {
-            childArgs.addAll(List.of("--uuid", account.uuid(), "--accessToken", account.accessToken(), "--userType", "msa"));
-        }
         if (dli != null) {
             List<String> config = cleanDli(Files.readAllLines(dli));
             int section = -1;
@@ -137,6 +154,7 @@ public final class SwarmSpawnCommandBuilder {
                 || arg.startsWith("-XX:MaxMetaspaceSize=") || arg.startsWith("-XX:ReservedCodeCacheSize=")
                 || arg.startsWith("-XX:CompressedClassSpaceSize=") || arg.startsWith("-XX:G1HeapRegionSize=")
                 || arg.startsWith("-Dostinato.runMode=") || arg.startsWith("-Dostinato.swarm.spawn")
+                || arg.startsWith("-Dostinato.swarm.authFile=")
                 || arg.startsWith("-Dostinato.commandInbox=") || arg.startsWith("-Dostinato.window")
                 || arg.startsWith("-Dtenorclef.autorun.") || arg.startsWith("-Dtenorclef.autoload.")
                 || arg.startsWith("-Dfabric.modsFolder=") || arg.startsWith("-agentlib:")
@@ -180,7 +198,8 @@ public final class SwarmSpawnCommandBuilder {
             if (REPLACED.contains(key)) {
                 if (!value.contains("=")) i++;
             } else if (!value.startsWith("ostinato.runMode=") && !value.startsWith("ostinato.window")
-                    && !value.startsWith("ostinato.swarm.spawn") && !value.startsWith("tenorclef.autorun.")
+                    && !value.startsWith("ostinato.swarm.spawn") && !value.startsWith("ostinato.swarm.authFile=")
+                    && !value.startsWith("tenorclef.autorun.")
                     && !value.startsWith("tenorclef.autoload.")) {
                 out.add(line);
             }

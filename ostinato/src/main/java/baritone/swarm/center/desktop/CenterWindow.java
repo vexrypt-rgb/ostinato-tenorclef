@@ -181,6 +181,11 @@ public final class CenterWindow implements CenterRuntime.Host {
         accounts.setBorder(BorderFactory.createTitledBorder(
                 BorderFactory.createLineBorder(MUTED), "Accounts", 0, 0, null, TEXT));
         root.add(accounts, BorderLayout.SOUTH);
+        try {
+            AccountPanel.attach(accounts, UnifiedChat.configDir());
+        } catch (RuntimeException ignored) {
+            // The wall still opens. Sign-in reports the reason on the panel when it can.
+        }
         window.setContentPane(root);
         window.setSize(980, 640);
         window.getContentPane().setBackground(BG);

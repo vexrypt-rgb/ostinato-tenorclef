@@ -35,6 +35,13 @@ import baritone.api.utils.BetterBlockPos;
 import baritone.behavior.SwarmBehavior;
 import baritone.swarm.SwarmBuild;
 import baritone.swarm.SwarmControl;
+import baritone.swarm.accounts.AccountStore;
+import baritone.swarm.accounts.AzureClientConfig;
+import baritone.swarm.accounts.DpapiProtector;
+import baritone.swarm.accounts.JdkHttpExchange;
+import baritone.swarm.accounts.MicrosoftAuth;
+import baritone.swarm.accounts.SecretProtector;
+import baritone.swarm.accounts.SpawnAccountChoice;
 // Ostinato: the OWNER command retains the unified registry and delegates process mechanics to pure helpers.
 import baritone.swarm.spawn.*;
 import baritone.swarm.SwarmKeys;
@@ -245,12 +252,30 @@ public class SwarmCommand extends Command {
         Path userHome = Path.of(System.getProperty("user.home"));
         SwarmSpawnCommandBuilder.Snapshot snapshot = SwarmSpawnCommandBuilder.current(game);
         boolean offline = SwarmSpawnAccounts.offline(server, parent, ctx.player().getUUID());
-        List<Path> accountFiles = new ArrayList<>(List.of(game.resolve("launcher_accounts.json"),
-                userHome.resolve(".minecraft/launcher_accounts.json")));
-        String appData = System.getenv("APPDATA");
-        if (appData != null) accountFiles.add(Path.of(appData, ".minecraft", "launcher_accounts.json"));
-        List<SwarmSpawnAccounts.Profile> accounts = new ArrayList<>();
-        for (String name : request.names()) accounts.add(offline ? null : SwarmSpawnAccounts.find(name, accountFiles));
+        List<Path> accountFiles = SwarmSpawnAccounts.launcherFiles(game);
+        SecretProtector protector = null;
+        try {
+            protector = DpapiProtector.platform();
+        } catch (RuntimeException ignored) {
+            protector = null;
+        }
+        Path config = baritone instanceof Baritone ? ((Baritone) baritone).getDirectory() : game.resolve("baritone");
+        AccountStore store = new AccountStore(config.resolve("accounts"), protector);
+        if (!offline && protector == null) {
+            throw new IllegalArgumentException("Windows DPAPI is not available");
+        }
+        String clientId = AzureClientConfig.clientId(config);
+        SecretProtector refreshProtector = protector;
+        List<SpawnSession> accounts = SpawnAccountChoice.choose(
+                request, offline, store, accountFiles, (accountName, refresh) -> {
+                    if (clientId.isBlank()) {
+                        throw new IllegalArgumentException(AzureClientConfig.MISSING);
+                    }
+                    MicrosoftAuth.SignedIn signed = MicrosoftAuth.refresh(
+                            clientId, refresh, new JdkHttpExchange());
+                    store.saveMicrosoft(signed.name(), signed.uuid(), signed.minecraftAccess(), signed.refreshToken(), signed.expiryEpochMs());
+                    return new SpawnSession(signed.name(), signed.uuid(), signed.minecraftAccess());
+                });
         Settings settings = Baritone.settings();
         Path roster = Path.of(settings.swarmRosterFile.value);
         if (!roster.isAbsolute()) roster = ((Baritone) baritone).getDirectory().resolve(roster);
@@ -270,7 +295,7 @@ public class SwarmCommand extends Command {
                 Path logs = childGame.resolve("logs");
                 Files.createDirectories(logs);
                 Path log = logs.resolve("spawn-" + System.currentTimeMillis() + ".log");
-                ProcessBuilder builder = SwarmSpawnCommandBuilder.build(snapshot, name, server, childGame, log, signet, accounts.get(i));
+                ProcessBuilder builder = SwarmSpawnCommandBuilder.build(snapshot, name, server, childGame, log, signet, accounts.get(i), refreshProtector);
                 logDirect("swarm: " + registry.start(name, server, childGame, log, builder).status());
             }
         } finally {
@@ -333,7 +358,7 @@ public class SwarmCommand extends Command {
                 "Every line sent is a sealed sigil token; there is no plaintext mode.",
                 "",
                 "Usage:",
-                "> swarm spawn <name> [count] [server] - launch up to 16 headless bots (current server by default)", // Ostinato:
+                "> swarm spawn <name> [count] [server] [account:name] - launch up to 16 headless bots", // Ostinato:
                 "> swarm despawn <name|all> - stop only this client's spawned bots", // Ostinato:
                 "> swarm bots - list child names, PIDs, alive/dead state, servers and logs", // Ostinato:
                 "  Spawn needs about 1.5 GB free commit per bot; remote online servers need launcher accounts.", // Ostinato:

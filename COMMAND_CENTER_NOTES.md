@@ -42,7 +42,13 @@ Per-bot memory is not on the spawn record. Tiles say `n/a` until a snapshot carr
 
 ## Accounts
 
-Launcher `launcher_accounts.json` is an import source. Passwords are not copied. Tokens are stored only through the injected protector (Windows DPAPI in the client). They are not written in the clear, not logged, and not placed on a child process command line.
+Launcher `launcher_accounts.json` is an import source. Passwords are not copied. Tokens are stored only through the injected protector (Windows DPAPI in the client). They are not written in the clear, not logged, and not placed on a child process command line or in the child's `launch.cfg`.
+
+The child reads `auth.bin` from `-Dostinato.swarm.authFile` at the start of `Main.main` and splices the token into that method's argument array. If a dev-launch injector builds the session before `Main`, the child will not see the token; v1 still refuses to put it in `launch.cfg`.
+
+There is no built-in Azure client id. Sign-in does not start until `azure-client-id.txt` or `-Dostinato.azureClientId` is set. A missing client id is explained on the button. Device-code polling is one HTTP call per tick, not a blocking wait.
+
+`#swarm spawn <name> [count] [server] [account:name]` peels a trailing `account:` before the old grammar. `account:` is not a server. A count greater than one with an account is refused. Offline mode does not read launcher tokens. Online mode uses the chosen account, then an account stored under the bot's name, then a one-name launcher import.
 
 ## Not in v1
 
