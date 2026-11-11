@@ -8,17 +8,20 @@ import baritone.swarm.accounts.JdkHttpExchange;
 import baritone.swarm.accounts.MicrosoftAuth;
 import baritone.swarm.accounts.SecretProtector;
 import baritone.swarm.center.UnifiedChat;
-import baritone.swarm.spawn.SwarmSpawnAccounts;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.User;
 
+import javax.swing.BorderFactory;
 import javax.swing.DefaultListModel;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
-import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.Timer;
+import java.awt.BorderLayout;
 import java.awt.FlowLayout;
+import java.awt.Font;
 import java.io.IOException;
 import java.nio.file.Path;
 
@@ -44,11 +47,13 @@ public final class AccountPanel {
         MicrosoftAuth.HttpExchange http = new JdkHttpExchange();
         DefaultListModel<String> names = new DefaultListModel<>();
         JList<String> list = new JList<>(names);
+        Style.list(list);
+        list.setVisibleRowCount(4);
         reload(store, names);
-        JLabel status = new JLabel(protector == null ? "Windows DPAPI is not available" : " ");
-        status.setForeground(new java.awt.Color(0xE6E6E6));
-        JTextField offline = new JTextField(10);
-        JButton add = new JButton("Add offline");
+        JLabel status = Style.label(protector == null ? "Windows DPAPI is not available" : " ",
+                Style.muted(), Font.PLAIN, 12f);
+        JTextField offline = Style.field(10, "Offline account name");
+        JButton add = Style.button("Add offline");
         add.addActionListener(event -> {
             try {
                 store.addOffline(offline.getText().trim());
@@ -59,7 +64,7 @@ public final class AccountPanel {
                 status.setText(plain(e));
             }
         });
-        JButton remove = new JButton("Remove");
+        JButton remove = Style.button("Remove");
         remove.addActionListener(event -> {
             String selected = list.getSelectedValue();
             if (selected == null) {
@@ -75,13 +80,29 @@ public final class AccountPanel {
                 status.setText("could not remove account");
             }
         });
-        JButton importLauncher = new JButton("Import launcher");
+        JButton importLauncher = Style.button("Import launcher");
+        importLauncher.setToolTipText("Copy Minecraft tokens from launcher files. They expire in about a day");
         importLauncher.addActionListener(event -> {
             try {
-                int count = store.importAll(SwarmSpawnAccounts.launcherFiles(null));
+                AccountStore.ImportReport report = store.importReport(AccountStore.launcherFiles(null));
                 reload(store, names);
-                status.setText("Imported " + count + " account(s)");
+                status.setText(report.line());
             } catch (IOException e) {
+                status.setText(plain(e));
+            }
+        });
+        JButton saveSession = Style.button("Save this session");
+        saveSession.setToolTipText("Store this game's own Microsoft session as a bot account until it expires");
+        saveSession.addActionListener(event -> {
+            try {
+                // Ostinato: the token goes straight into the encrypted store and is never shown or logged.
+                User user = Minecraft.getInstance().getUser();
+                AccountStore.Listed saved = store.importSession(user.getName(),
+                        user.getProfileId() == null ? null : user.getProfileId().toString(), user.getAccessToken());
+                reload(store, names);
+                String name = saved == null ? user.getName() : saved.name();
+                status.setText("Saved " + name + ". Relaunch as your main account before spawning " + name);
+            } catch (RuntimeException | IOException e) {
                 status.setText(plain(e));
             }
         });
@@ -94,7 +115,7 @@ public final class AccountPanel {
             }
         });
         timer.setRepeats(true);
-        JButton signIn = new JButton("Microsoft sign-in");
+        JButton signIn = Style.button("Microsoft sign-in");
         signIn.addActionListener(event -> {
             String line = model.beginSignIn(http);
             status.setText(line);
@@ -103,24 +124,40 @@ public final class AccountPanel {
                 timer.start();
             }
         });
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        buttons.setOpaque(false);
+        // Ostinato: expiry labels count down, so redraw them once a minute.
+        Timer expiry = new Timer(60_000, event -> {
+            if (host.isDisplayable()) {
+                reload(store, names);
+            } else {
+                ((Timer) event.getSource()).stop();
+            }
+        });
+        expiry.start();
+        JPanel buttons = Style.panel(new FlowLayout(FlowLayout.LEFT, 6, 0), null);
         buttons.add(offline);
         buttons.add(add);
         buttons.add(remove);
         buttons.add(importLauncher);
+        buttons.add(saveSession);
         buttons.add(signIn);
-        host.setLayout(new java.awt.BorderLayout());
-        host.add(new JScrollPane(list), java.awt.BorderLayout.CENTER);
-        host.add(buttons, java.awt.BorderLayout.NORTH);
-        host.add(status, java.awt.BorderLayout.SOUTH);
+        JPanel top = Style.panel(new BorderLayout(0, 6), null);
+        top.add(Style.caption("Accounts"), BorderLayout.NORTH);
+        top.add(buttons, BorderLayout.CENTER);
+        host.setLayout(new BorderLayout(0, 6));
+        host.setBackground(Style.surface());
+        host.setOpaque(true);
+        host.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, Style.line()),
+                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
+        host.add(top, BorderLayout.NORTH);
+        host.add(Style.scroll(list, Style.bg()), BorderLayout.CENTER);
+        host.add(status, BorderLayout.SOUTH);
     }
 
     private static void reload(AccountStore store, DefaultListModel<String> names) {
         names.clear();
+        long now = System.currentTimeMillis();
         for (AccountStore.Listed listed : store.list()) {
-            String kind = listed.kind() == AccountStore.Kind.OFFLINE ? "offline" : "microsoft";
-            names.addElement(listed.name() + " (" + kind + ")");
+            names.addElement(AccountStore.describe(listed, now));
         }
     }
 
@@ -132,7 +169,8 @@ public final class AccountPanel {
         if (message.startsWith("Account name") || message.startsWith("Windows DPAPI")
                 || message.startsWith("could not") || message.startsWith("Online-mode")
                 || message.startsWith("No offline") || message.startsWith("Sign-in needs")
-                || message.startsWith("One account")) {
+                || message.startsWith("One account") || message.startsWith("token expired")
+                || message.startsWith("No online session")) {
             return message;
         }
         return "could not update accounts";

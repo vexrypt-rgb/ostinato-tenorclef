@@ -54,7 +54,9 @@ public final class SpawnAccountChoice {
                     + "; Ostinato will not store passwords");
         }
         if (store.expiredWithoutRefresh(key)) {
-            throw new IllegalArgumentException("account needs sign-in");
+            // Ostinato: an imported token cannot be refreshed here; say what fixes it.
+            throw new IllegalArgumentException(listed.imported()
+                    ? "token expired, re-import from launcher" : "account needs sign-in");
         }
         if (store.needsRefresh(key)) {
             if (refresher == null) {

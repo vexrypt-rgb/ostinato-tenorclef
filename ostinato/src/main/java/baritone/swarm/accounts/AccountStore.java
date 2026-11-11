@@ -24,7 +24,12 @@ public final class AccountStore {
 
     public enum Kind { OFFLINE, MICROSOFT }
 
-    public record Listed(String name, String uuid, Kind kind, String username, long expiryEpochMs) {
+    /** Ostinato: {@code imported} accounts came from a launcher or a game session. They have no refresh token. */
+    public record Listed(String name, String uuid, Kind kind, String username, long expiryEpochMs, boolean imported) {
+        public Listed(String name, String uuid, Kind kind, String username, long expiryEpochMs) {
+            this(name, uuid, kind, username, expiryEpochMs, false);
+        }
+
         @Override
         public String toString() {
             return "account " + name;
@@ -81,7 +86,8 @@ public final class AccountStore {
                 }
                 Kind kind = "offline".equalsIgnoreCase(text(item, "kind")) ? Kind.OFFLINE : Kind.MICROSOFT;
                 long expiry = item.has("expiry") ? item.get("expiry").getAsLong() : 0L;
-                out.add(new Listed(name, text(item, "uuid"), kind, text(item, "username"), expiry));
+                boolean imported = "import".equalsIgnoreCase(text(item, "source"));
+                out.add(new Listed(name, text(item, "uuid"), kind, text(item, "username"), expiry, imported));
             }
             return List.copyOf(out);
         } catch (RuntimeException | IOException ignored) {
@@ -155,6 +161,11 @@ public final class AccountStore {
     }
 
     public void saveMicrosoft(String username, String uuid, String access, String refresh, long expiry) throws IOException {
+        saveMicrosoft(username, uuid, access, refresh, expiry, false);
+    }
+
+    private void saveMicrosoft(String username, String uuid, String access, String refresh, long expiry,
+                               boolean imported) throws IOException {
         if (protector == null) {
             throw new IOException("Windows DPAPI is not available");
         }
@@ -164,7 +175,7 @@ public final class AccountStore {
         }
         byte[] plain = AuthBlob.encode(name, uuid, access, refresh, expiry);
         try {
-            write(new Listed(name, uuid, Kind.MICROSOFT, name, expiry), protector.protect(plain));
+            write(new Listed(name, uuid, Kind.MICROSOFT, name, expiry, imported), protector.protect(plain));
         } finally {
             Arrays.fill(plain, (byte) 0);
         }
@@ -177,7 +188,8 @@ public final class AccountStore {
         }
         for (LauncherProfile profile : LauncherProfile.read(launcherFiles)) {
             if (profile.name.equalsIgnoreCase(name)) {
-                saveMicrosoft(profile.name, profile.uuid, profile.accessToken, "", 0L);
+                // Ostinato: launcher refresh tokens belong to the launcher's client id. Keep only the access token.
+                saveMicrosoft(profile.name, profile.uuid, profile.accessToken, "", profile.expiryEpochMs, true);
                 return find(profile.name);
             }
         }
@@ -185,15 +197,73 @@ public final class AccountStore {
     }
 
     public int importAll(List<Path> launcherFiles) throws IOException {
+        return importReport(launcherFiles).saved();
+    }
+
+    /** Ostinato: how an import went. Expired launcher tokens are not saved. */
+    public record ImportReport(int saved, int expired) {
+        public String line() {
+            if (saved == 0 && expired == 0) {
+                return "No launcher token found. Newer launchers keep it encrypted: "
+                        + "launch the game as that account, then use Save this session";
+            }
+            String text = "Imported " + saved + " account(s)";
+            return expired == 0 ? text : text + "; " + expired + " already expired, re-sign in to the launcher";
+        }
+    }
+
+    public ImportReport importReport(List<Path> launcherFiles) throws IOException {
         if (protector == null) {
             throw new IOException("Windows DPAPI is not available");
         }
-        int count = 0;
+        int saved = 0;
+        int expired = 0;
+        long now = System.currentTimeMillis();
         for (LauncherProfile profile : LauncherProfile.read(launcherFiles)) {
-            saveMicrosoft(profile.name, profile.uuid, profile.accessToken, "", 0L);
-            count++;
+            if (profile.expiryEpochMs > 0 && profile.expiryEpochMs <= now) {
+                expired++;
+                continue;
+            }
+            saveMicrosoft(profile.name, profile.uuid, profile.accessToken, "", profile.expiryEpochMs, true);
+            saved++;
         }
-        return count;
+        return new ImportReport(saved, expired);
+    }
+
+    /** Ostinato: launcher files read by "Import launcher" (official, Microsoft Store, Prism, MultiMC). */
+    public static List<Path> launcherFiles(Path gameDirectory) {
+        return LauncherProfile.defaultFiles(gameDirectory);
+    }
+
+    /**
+     * Ostinato: save the running game's own Microsoft session as a bot account.
+     * Only a token that says when it expires, and has not, is saved. No refresh token exists.
+     */
+    public Listed importSession(String name, String uuid, String access) throws IOException {
+        long expiry = TokenExpiry.fromJwt(access);
+        if (expiry <= System.currentTimeMillis() + 60_000L) {
+            throw new IllegalArgumentException("No online session to save. Launch the game from the Minecraft launcher as that account first");
+        }
+        String id = uuid == null ? "" : uuid.replace("-", "");
+        saveMicrosoft(name, id, access, "", expiry, true);
+        return find(name);
+    }
+
+    /** Ostinato: the accounts-strip text for one account. Never includes a token. */
+    public static String describe(Listed listed, long nowMs) {
+        if (listed.kind == Kind.OFFLINE) {
+            return listed.name + " (offline)";
+        }
+        if (!listed.imported) {
+            return listed.name + " (microsoft)";
+        }
+        if (listed.expiryEpochMs <= 0) {
+            return listed.name + " (imported, expiry unknown)";
+        }
+        if (listed.expiryEpochMs <= nowMs + 60_000L) {
+            return listed.name + " (token expired, re-import from launcher)";
+        }
+        return listed.name + " (imported, " + TokenExpiry.left(listed.expiryEpochMs, nowMs) + ")";
     }
 
     private AuthBlob.Decoded readBlob(String name) throws IOException {
@@ -238,6 +308,9 @@ public final class AccountStore {
             item.addProperty("kind", listed.kind == Kind.OFFLINE ? "offline" : "microsoft");
             item.addProperty("username", listed.username == null ? listed.name : listed.username);
             item.addProperty("expiry", listed.expiryEpochMs);
+            if (listed.imported) {
+                item.addProperty("source", "import");
+            }
             array.add(item);
         }
         JsonObject root = new JsonObject();

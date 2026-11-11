@@ -8,7 +8,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -39,16 +38,8 @@ public final class SwarmSpawnAccounts {
 
     /** Launcher files are read for import. This method does not create them. */
     public static List<Path> launcherFiles(Path gameDirectory) {
-        List<Path> files = new ArrayList<>();
-        if (gameDirectory != null) {
-            files.add(gameDirectory.resolve("launcher_accounts.json"));
-        }
-        files.add(Path.of(System.getProperty("user.home"), ".minecraft", "launcher_accounts.json"));
-        String appData = System.getenv("APPDATA");
-        if (appData != null) {
-            files.add(Path.of(appData, ".minecraft", "launcher_accounts.json"));
-        }
-        return files;
+        // Ostinato: same list as the accounts strip's Import launcher.
+        return baritone.swarm.accounts.AccountStore.launcherFiles(gameDirectory);
     }
 
     public static Profile find(String name, List<Path> files) throws IOException {
