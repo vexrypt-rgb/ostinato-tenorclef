@@ -2132,10 +2132,20 @@ public final class Settings {
     public final Setting<Integer> swarmMaxPeers = new Setting<>(64);
 
     /**
-     * Swarm messaging: spool directory for the same-machine test/sim transport. Empty means
-     * {@code baritone/swarm-spool} in the game directory. Only sealed lines are written there.
+     * Swarm messaging: shared spool directory for same-machine routing. Empty means
+     * {@code baritone/swarm-spool} in the game directory, which is not shared across
+     * bot instances. {@code #swarm spawn} writes a shared absolute path into parent
+     * and child settings. Only sealed lines are written there.
      */
     public final Setting<String> swarmLocalSpoolDir = new Setting<>("");
+
+    /**
+     * Swarm messaging: prefer the local spool for signed commands, acks and outcomes
+     * to bots on this PC that have advertised a fresh liveness marker. Whispers are
+     * used for members that are not local, and if the local channel is down or this
+     * flag is off.
+     */
+    public final Setting<Boolean> swarmLocalRouting = new Setting<>(true);
 
     /**
      * Swarm: turn on the in-game chat transport and the {@code #swarm} control commands. Needs a

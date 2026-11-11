@@ -59,6 +59,7 @@ public class SwarmSpawnProvisionTest {
         assertTrue(childSettings.contains("swarmEnabled true"));
         assertTrue(childSettings.contains("swarmRosterFile " + roster));
         assertTrue(childSettings.contains("swarmSigilHome " + home));
+        assertTrue(childSettings.contains("swarmLocalSpoolDir " + home.toAbsolutePath().normalize().resolve("spool")));
         assertTrue(childSettings.contains("allowBreak false"));
         assertFalse(childSettings.contains("runMode normal"));
         assertEquals(parentSettings, Files.readString(game.resolve("baritone/settings.txt")));
@@ -82,6 +83,7 @@ public class SwarmSpawnProvisionTest {
         assertTrue(text.contains("swarmEnabled true"));
         assertTrue(text.contains("swarmRosterFile " + roster));
         assertTrue(text.contains("swarmSigilHome " + home));
+        assertTrue(text.contains("swarmLocalSpoolDir " + home.toAbsolutePath().normalize().resolve("spool")));
         assertFalse(text.contains("swarmEnabled false"));
         assertFalse(text.contains("old.txt"));
     }

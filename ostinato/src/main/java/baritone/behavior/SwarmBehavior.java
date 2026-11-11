@@ -27,6 +27,7 @@ import baritone.swarm.protocol.CommandProtocol;
 import baritone.swarm.protocol.RegistryExecutor;
 import baritone.swarm.roster.SwarmRoster;
 import baritone.swarm.transport.ChatSwarmTransport;
+import baritone.swarm.transport.LocalRoutingTransport;
 import baritone.swarm.transport.SwarmChannel;
 import baritone.swarm.transport.SwarmPriority;
 import baritone.swarm.transport.SwarmRateLimiter;
@@ -56,7 +57,7 @@ public final class SwarmBehavior extends Behavior implements Helper {
 
     private static final class Link {
         final String self;
-        final ChatSwarmTransport transport;
+        final LocalRoutingTransport transport;
         final SwarmControl control;
         /** Ostinato: null when swarmCommandProtocol is off. */
         final CommandProtocol protocol;
@@ -66,7 +67,7 @@ public final class SwarmBehavior extends Behavior implements Helper {
         final byte[] rosterBytes;
         long nextRosterCheck;
 
-        Link(String self, ChatSwarmTransport transport, SwarmControl control, CommandProtocol protocol,
+        Link(String self, LocalRoutingTransport transport, SwarmControl control, CommandProtocol protocol,
              Path rosterPath, byte[] rosterBytes) {
             this.self = self;
             this.transport = transport;
@@ -244,12 +245,15 @@ public final class SwarmBehavior extends Behavior implements Helper {
                 Path sigilHome = SwarmKeys.sigilHome(home, env);
                 Map<String, SigilCircle> circles = SwarmKeys.circlesFor(roster, self, sigilHome);
                 SwarmRateLimiter limiter = new SwarmRateLimiter(rate, burst, unsafe, queueMax, nowMs());
-                ChatSwarmTransport transport = new ChatSwarmTransport(self, channel, template, roster, limiter,
+                ChatSwarmTransport chat = new ChatSwarmTransport(self, channel, template, roster, limiter,
                         cfg.maxLineChars);
                 for (SwarmRoster.Group g : roster.groupsOf(self)) {
-                    int overhead = ChatSwarmTransport.templateOverhead(transport.templateFor(transport.channelFor(g.id())));
+                    int overhead = ChatSwarmTransport.templateOverhead(chat.templateFor(chat.channelFor(g.id())));
                     cfg.lineReserveChars = Math.max(cfg.lineReserveChars, overhead);
                 }
+                // Ostinato: same-PC members prefer the local spool; whispers stay the fallback.
+                LocalRoutingTransport transport = LocalRoutingTransport.open(self, chat, s.swarmLocalRouting.value,
+                        s.swarmLocalSpoolDir.value, dir, this::logDirect);
                 SwarmEndpoint endpoint = new SwarmEndpoint(self, cfg.build(), circles, transport,
                         System::currentTimeMillis);
                 endpoint.setMemberCheck(roster::isMember);

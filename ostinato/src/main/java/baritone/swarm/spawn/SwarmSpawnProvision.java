@@ -16,7 +16,12 @@ import java.util.Map;
 
 // Ostinato: only settings enter game directories; circle passphrases and private seeds stay outside them.
 public final class SwarmSpawnProvision {
-    public record Link(Path roster, Path home, String group) {}
+    public record Link(Path roster, Path home, String group) {
+        // Ostinato: parent and children share this spool so same-PC commands skip whispers.
+        public Path spool() {
+            return home.toAbsolutePath().normalize().resolve("spool");
+        }
+    }
 
     public static Link link(Path game, Path roster, Path configuredHome, Path userHome, String parent) throws Exception {
         SwarmSpawnArgs.name(parent);
@@ -106,19 +111,21 @@ public final class SwarmSpawnProvision {
         Path settings = game.resolve("baritone/settings.txt");
         Files.createDirectories(settings.getParent());
         List<String> lines = Files.isRegularFile(settings) ? new ArrayList<>(Files.readAllLines(settings)) : new ArrayList<>();
-        lines.removeIf(line -> line.trim().matches("(?i)(runMode|swarmEnabled|swarmRosterFile|swarmSigilHome)\\s+.*"));
-        lines.addAll(List.of("runMode headless", "swarmEnabled true", "swarmRosterFile " + link.roster(), "swarmSigilHome " + link.home()));
+        lines.removeIf(line -> line.trim().matches("(?i)(runMode|swarmEnabled|swarmRosterFile|swarmSigilHome|swarmLocalSpoolDir)\\s+.*"));
+        lines.addAll(List.of("runMode headless", "swarmEnabled true", "swarmRosterFile " + link.roster(), "swarmSigilHome " + link.home(),
+                "swarmLocalSpoolDir " + link.spool()));
         Files.write(settings, lines);
         return privateFile;
     }
 
-    // Ostinato: keep only these three parent keys so a restart still finds the provisioned keyring.
+    // Ostinato: keep these parent keys so a restart still finds the provisioned keyring and shared spool.
     public static void persistParentLink(Path game, Link link) throws IOException {
         Path settings = game.resolve("baritone/settings.txt");
         Files.createDirectories(settings.getParent());
         List<String> lines = Files.isRegularFile(settings) ? new ArrayList<>(Files.readAllLines(settings)) : new ArrayList<>();
-        lines.removeIf(line -> line.trim().matches("(?i)(swarmEnabled|swarmRosterFile|swarmSigilHome)\\s+.*"));
-        lines.addAll(List.of("swarmEnabled true", "swarmRosterFile " + link.roster(), "swarmSigilHome " + link.home()));
+        lines.removeIf(line -> line.trim().matches("(?i)(swarmEnabled|swarmRosterFile|swarmSigilHome|swarmLocalSpoolDir)\\s+.*"));
+        lines.addAll(List.of("swarmEnabled true", "swarmRosterFile " + link.roster(), "swarmSigilHome " + link.home(),
+                "swarmLocalSpoolDir " + link.spool()));
         Files.write(settings, lines);
     }
 

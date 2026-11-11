@@ -222,6 +222,7 @@ public class SwarmCommand extends Command {
                 SwarmKeys.sigilHome(settings.swarmSigilHome.value, System.getenv("SIGIL_HOME")), userHome, parent);
         settings.swarmRosterFile.value = link.roster().toString();
         settings.swarmSigilHome.value = link.home().toString();
+        settings.swarmLocalSpoolDir.value = link.spool().toString();
         settings.swarmEnabled.value = true;
         SwarmSpawnProvision.persistParentLink(game, link);
         try {
