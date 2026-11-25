@@ -43,7 +43,7 @@ public class AccountManagerTest {
         });
         assertEquals(AzureClientConfig.MISSING, message);
         assertEquals(0, calls.get());
-        assertTrue(message.contains("does not include a client id"));
+        assertTrue(message.contains("-Dostinato.azureClientId"));
     }
 
     @Test public void signInStoresCiphertextAndDoesNotLogSecrets() throws Exception {
@@ -108,6 +108,88 @@ public class AccountManagerTest {
         assertTrue(XboxSignInException.message(2148916233L).contains("no Xbox profile"));
         assertEquals(XboxSignInException.GENERIC, XboxSignInException.message(42));
         assertEquals(XboxSignInException.GENERIC, XboxSignInException.of(null).getMessage());
+    }
+
+    @Test public void clientIdDefaultsAndOverrides() throws Exception {
+        String previous = System.getProperty("ostinato.azureClientId");
+        Path dir = temporary.getRoot().toPath();
+        try {
+            System.clearProperty("ostinato.azureClientId");
+            assertEquals(AzureClientConfig.DEFAULT_CLIENT_ID, AzureClientConfig.clientId(dir));
+            assertEquals(AzureClientConfig.DEFAULT_CLIENT_ID, AzureClientConfig.clientId(null));
+            Files.writeString(dir.resolve("azure-client-id.txt"), "# comment\nfile-id\n");
+            assertEquals("file-id", AzureClientConfig.clientId(dir));
+            System.setProperty("ostinato.azureClientId", "property-id");
+            assertEquals("property-id", AzureClientConfig.clientId(dir));
+        } finally {
+            if (previous == null) {
+                System.clearProperty("ostinato.azureClientId");
+            } else {
+                System.setProperty("ostinato.azureClientId", previous);
+            }
+        }
+    }
+
+    @Test public void unapprovedMinecraftAppGetsAFixedMessageWithoutTheBody() {
+        try {
+            MicrosoftAuth.finish(ACCESS, REFRESH, 3600, (method, url, type, body, authorization) -> {
+                if (url.contains("user.auth.xboxlive.com")) {
+                    return new MicrosoftAuth.HttpExchange.Response(200,
+                            "{\"Token\":\"" + XBOX + "\",\"DisplayClaims\":{\"xui\":[{\"uhs\":\"123\"}]}}");
+                }
+                if (url.contains("xsts.auth.xboxlive.com")) {
+                    return new MicrosoftAuth.HttpExchange.Response(200,
+                            "{\"Token\":\"" + XSTS + "\",\"DisplayClaims\":{\"xui\":[{\"uhs\":\"123\"}]}}");
+                }
+                return new MicrosoftAuth.HttpExchange.Response(403,
+                        "{\"path\":\"/authentication/login_with_xbox\",\"errorMessage\":\"Invalid app registration, see https://aka.ms/AppRegInfo for more information\",\"secret\":\"" + MC + "\"}");
+            });
+            assertTrue(false);
+        } catch (IllegalStateException expected) {
+            assertEquals(AzureClientConfig.AWAITING_MOJANG_APPROVAL, expected.getMessage());
+            assertTrue(expected.getMessage().contains("app ID awaiting Mojang approval"));
+            assertFalse(expected.getMessage().contains(MC));
+            assertFalse(expected.getMessage().contains(ACCESS));
+            assertTrue(expected.getCause() == null);
+        }
+    }
+
+    @Test public void otherMinecraftLoginFailuresStayGenericAndDoNotEchoTheBody() {
+        try {
+            MicrosoftAuth.finish(ACCESS, REFRESH, 3600, (method, url, type, body, authorization) -> {
+                if (url.contains("user.auth.xboxlive.com")) {
+                    return new MicrosoftAuth.HttpExchange.Response(200,
+                            "{\"Token\":\"" + XBOX + "\",\"DisplayClaims\":{\"xui\":[{\"uhs\":\"123\"}]}}");
+                }
+                if (url.contains("xsts.auth.xboxlive.com")) {
+                    return new MicrosoftAuth.HttpExchange.Response(200,
+                            "{\"Token\":\"" + XSTS + "\",\"DisplayClaims\":{\"xui\":[{\"uhs\":\"123\"}]}}");
+                }
+                return new MicrosoftAuth.HttpExchange.Response(500, "{\"errorMessage\":\"" + MC + " went wrong\"}");
+            });
+            assertTrue(false);
+        } catch (IllegalStateException expected) {
+            assertEquals("microsoft sign-in failed", expected.getMessage());
+            assertFalse(expected.getMessage().contains(MC));
+        }
+    }
+
+    @Test public void pollOnceSurfacesMojangApprovalWithoutSecrets() {
+        AccountStore store = new AccountStore(temporary.getRoot().toPath().resolve("accounts"), new XorProtector());
+        AccountPanelModel model = new AccountPanelModel(store, AzureClientConfig.DEFAULT_CLIENT_ID, true);
+        ScriptHttp http = new ScriptHttp();
+        http.responses.add("{\"user_code\":\"ABCD-EFGH\",\"device_code\":\"" + DEVICE
+                + "\",\"verification_uri\":\"https://login.microsoft.com/device\",\"interval\":5}");
+        http.responses.add("{\"access_token\":\"" + ACCESS + "\",\"refresh_token\":\"" + REFRESH + "\",\"expires_in\":3600}");
+        http.responses.add("{\"Token\":\"" + XBOX + "\",\"DisplayClaims\":{\"xui\":[{\"uhs\":\"123\"}]}}");
+        http.responses.add("{\"Token\":\"" + XSTS + "\",\"DisplayClaims\":{\"xui\":[{\"uhs\":\"123\"}]}}");
+        http.responses.add("{\"errorMessage\":\"Invalid app registration, see https://aka.ms/AppRegInfo\",\"token\":\"" + MC + "\"}");
+        assertTrue(model.beginSignIn(http).contains("ABCD-EFGH"));
+        String message = model.pollOnce(http);
+        assertEquals(AzureClientConfig.AWAITING_MOJANG_APPROVAL, message);
+        assertFalse(message.contains(DEVICE));
+        assertFalse(message.contains(MC));
+        assertFalse(message.contains(ACCESS));
     }
 
     @Test public void aBadResponseDoesNotEchoItsBody() {

@@ -69,7 +69,8 @@ public final class AccountPanelModel {
         if (error instanceof XboxSignInException) {
             return message;
         }
-        if (AzureClientConfig.MISSING.equals(message) || "microsoft sign-in failed".equals(message)
+        if (AzureClientConfig.MISSING.equals(message) || AzureClientConfig.AWAITING_MOJANG_APPROVAL.equals(message)
+                || "microsoft sign-in failed".equals(message)
                 || "xbox sign-in failed".equals(message) || "Windows DPAPI is not available".equals(message)) {
             return message;
         }

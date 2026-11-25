@@ -222,7 +222,7 @@ public final class MicrosoftAuth {
         JsonObject mc = object(post(http, MINECRAFT, JSON, mcBody(xstsUhs, xstsToken), null));
         String mcAccess = text(mc, "access_token");
         if (mcAccess == null || mcAccess.isBlank()) {
-            throw new IllegalStateException("microsoft sign-in failed");
+            throw minecraftLoginFailure(mc);
         }
         JsonObject profile = object(get(http, PROFILE, "Bearer " + mcAccess));
         String name = text(profile, "name");
@@ -239,6 +239,29 @@ public final class MicrosoftAuth {
             // Keep the Microsoft lifetime computed above.
         }
         return new SignedIn(name, id, mcAccess, refresh == null ? "" : refresh, expiry);
+    }
+
+
+    // Ostinato: Minecraft services refusal for an unapproved Azure app. The body never becomes the message.
+    private static IllegalStateException minecraftLoginFailure(JsonObject json) {
+        if (unapprovedApp(json)) {
+            return new IllegalStateException(AzureClientConfig.AWAITING_MOJANG_APPROVAL);
+        }
+        return new IllegalStateException("microsoft sign-in failed");
+    }
+
+    private static boolean unapprovedApp(JsonObject json) {
+        String message = text(json, "errorMessage");
+        String error = text(json, "error");
+        String errorType = text(json, "errorType");
+        String haystack = ((message == null ? "" : message) + " "
+                + (error == null ? "" : error) + " "
+                + (errorType == null ? "" : errorType)).toLowerCase();
+        return haystack.contains("invalid app registration")
+                || haystack.contains("appreginfo")
+                || haystack.contains("not approved")
+                || haystack.contains("not been approved")
+                || (haystack.contains("awaiting") && haystack.contains("approval"));
     }
 
     private static HttpExchange.Response post(HttpExchange http, String url, String type, String body, String authorization) {

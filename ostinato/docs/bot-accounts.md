@@ -4,15 +4,11 @@ The command center adds and removes the accounts `#swarm spawn` uses. `launcher_
 
 ## Azure application id
 
-Microsoft sign-in uses the device-code flow. You register your own Azure app:
+Microsoft sign-in uses the device-code flow against the personal (consumers) authority, with scope `XboxLive.signin` plus `offline_access`. The default application id is a public client Ostinato ships (`AzureClientConfig.DEFAULT_CLIENT_ID`). Override it with one line in `azure-client-id.txt` under the Ostinato config directory (`<game>/baritone`), or with `-Dostinato.azureClientId`.
 
-- A public client.
-- Device-code flow enabled.
-- The delegated scope used here is `XboxLive.signin` plus `offline_access`.
+Mojang has to approve that application id before Minecraft services will accept it. Until then, sign-in reaches Microsoft and Xbox, then stops with "app ID awaiting Mojang approval" instead of a generic failure. Submit the id at https://aka.ms/mce-reviewappid.
 
-Ostinato does not ship an application id. The public client ids used by the official launcher and by other launchers are not this mod's.
-
-Put the application id on one line in `azure-client-id.txt` under the Ostinato config directory (`<game>/baritone`), or pass `-Dostinato.azureClientId`. If that id is missing, the sign-in button explains the registration and does not start the flow.
+If a caller passes a blank application id, the sign-in button explains the registration and does not start the flow.
 
 On Java 25 the Windows DPAPI calls use the foreign-function interface. If the client refuses native access, sign-in stops with "Windows DPAPI is not available" and does not write a token. A flag that allows it, when you need one, is `--enable-native-access=ALL-UNNAMED`.
 
