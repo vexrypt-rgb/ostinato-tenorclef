@@ -215,6 +215,9 @@ public final class CenterApp {
                 if (field instanceof javax.swing.text.JTextComponent t) {
                     t.setText(f.length > 3 ? f[3] : "");
                     logger.line("auto: set " + form + "=" + t.getText());
+                } else if (field instanceof javax.swing.JComboBox<?> box) {
+                    box.setSelectedItem(f.length > 3 ? f[3] : ""); // Ostinato: RTS role picker
+                    logger.line("auto: set " + form + "=" + box.getSelectedItem());
                 } else {
                     logger.line("auto: no field " + form);
                 }
@@ -289,6 +292,10 @@ public final class CenterApp {
         }
         if (map == null || !(find(shell.component(), "map:canvas") instanceof javax.swing.JComponent canvas)) {
             return "no map";
+        }
+        if (spec.startsWith("select:") && find(shell.component(), "rts:bp:paint") instanceof AbstractButton paint
+                && paint.isSelected()) {
+            paint.doClick(); // Ostinato: with Paint on, a click paints; selecting turns Paint off first
         }
         if (spec.startsWith("select:")) {
             String[] names = spec.substring("select:".length()).split("\\+");

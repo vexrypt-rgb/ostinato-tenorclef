@@ -114,6 +114,7 @@ public final class RoleBehavior extends Behavior implements Helper {
             stopWork();
             deposit.cancel();
             loop = next.role == Role.IDLE ? null : new RoleLoop(next);
+            deposited = 0; // Ostinato: "stored so far" counts this assignment only
             logDirect("role: " + next.line());
         }
         RoleLoop l = loop;
