@@ -2,7 +2,9 @@
 $ErrorActionPreference = "Stop"
 $S = "C:\Users\redfa\Documents\MinecraftDev\swarm-gate-logs\p3w"
 $P = "C:\Users\redfa\Documents\MinecraftDev\swarm-gate-logs\rtsl"
-$Jar = "C:\Users\redfa\Documents\MinecraftDev\rts-wt\ostinato\fabric\build\libs"
+# Ostinato: se-r2. Copy the fabric jar from this worktree (the script lives in ostinato/scripts/rtsl),
+# not a hardcoded rts-wt path — Live editor runs need the builder fix in this branch.
+$Jar = Join-Path (Split-Path $PSScriptRoot | Split-Path) "fabric\build\libs"
 New-Item -ItemType Directory -Force $P | Out-Null
 foreach ($d in "inst-template", "sigil-home") { if (Test-Path "$P\$d") { Remove-Item "$P\$d" -Recurse -Force }; Copy-Item "$S\$d" "$P\$d" -Recurse }
 foreach ($d in "center", "spool", "run", "inst") { if (Test-Path "$P\$d") { Remove-Item "$P\$d" -Recurse -Force }; New-Item -ItemType Directory -Force "$P\$d" | Out-Null }
