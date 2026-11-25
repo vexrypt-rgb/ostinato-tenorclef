@@ -4,7 +4,7 @@ Updated 25 Nov 2026, 5:48 AM America/Phoenix. Assume you can be cut off at any m
 
 ## Branch and HEAD
 
-- Worktree: `C:\Users\redfa\Documents\MinecraftDev\schematic-editor-wt`
+- Worktree: `C:\Users\<user>\Documents\MinecraftDev\schematic-editor-wt`
 - Branch: `swarm/schematic-editor` (off `swarm/rts-mode` at `029359b3d`)
 - HEAD: `93079aaa1` (builder deadlock fix) plus this handoff / design-doc status update (about to commit, local only)
 - Do not edit `rts-wt` (still clean at `029359b3d`)
@@ -19,7 +19,7 @@ Updated 25 Nov 2026, 5:48 AM America/Phoenix. Assume you can be cut off at any m
 ## se-r2 (25 Nov 2026, 5:46:23-5:48:18 AM America/Phoenix) — PASS
 
 - Command: `python ostinato\scripts\rtsl\rtsl.py se-r2 editor Copper,Azalea` from the worktree root (python pid 15584).
-- Logs: `C:\Users\redfa\Documents\MinecraftDev\swarm-gate-logs\rtsl\se-r2.out` (err empty); `run\se-r2\window.log`; clients `run\client-Copper-054639.log`, `run\client-Azalea-054647.log`.
+- Logs: `C:\Users\<user>\Documents\MinecraftDev\swarm-gate-logs\rtsl\se-r2.out` (err empty); `run\se-r2\window.log`; clients `run\client-Copper-054639.log`, `run\client-Azalea-054647.log`.
 - Fabric jar: this worktree `baritone-fabric-1.28.0.jar` 9971301 bytes, 5:44:15 AM (`93079aaa1` remap). Center-app jar already from this worktree. `setup.ps1` now copies from this worktree; mute verified (`soundCategory_*` all 0.0). `respawn_radius 0` already set. Logins at `-64.5, -60.0, 0.5`.
 - Paint: 12-cell 2-layer wall. Selected Copper+Azalea. Live at 5:47:44. Mid-erase of `(-38,-59,43)` at 5:47:52 (after first placements; 8/11 then). Azalea then `place cell -38,-59,42 clear` at 5:47:53 — the cell that hung in se-r1.
 - RESULT (5:48:00): **11/11 cobblestone**, erased cell `(-38,-59,43)` is air, mid-erase yes. Window closed 5:48:01. **GRIM FLAGS 0, DEATHS 0**. STOPALL + `rcon stop`, server relay exit 0 at 5:48:18. Port 25582 free. No leftover clients/window.
@@ -52,7 +52,7 @@ Live editor gate is proven. Remaining optional: nothing required for this reques
 ## How to rerun the gate
 
 ```
-cd C:\Users\redfa\Documents\MinecraftDev\schematic-editor-wt\ostinato
+cd C:\Users\<user>\Documents\MinecraftDev\schematic-editor-wt\ostinato
 .\gradlew.bat :fabric:remapJar
 powershell -ExecutionPolicy Bypass -File scripts\rtsl\setup.ps1
 python scripts\rtsl\rtsl.py se-r3 editor Copper,Azalea

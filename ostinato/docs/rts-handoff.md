@@ -1,6 +1,6 @@
 # RTS mode handoff (swarm/rts-mode)
 
-Updated: 2026-11-25 04:59 MST. Worktree `C:/Users/redfa/Documents/MinecraftDev/rts-wt`, branch `swarm/rts-mode`
+Updated: 2026-11-25 04:59 MST. Worktree `C:/Users/<user>/Documents/MinecraftDev/rts-wt`, branch `swarm/rts-mode`
 (off main 3c0755cde). Local commits only, never pushed. HEAD 49a3fc64d plus this handoff update.
 
 ## Done and proven

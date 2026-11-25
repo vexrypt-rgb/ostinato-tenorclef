@@ -7,10 +7,12 @@ One set of jars per Minecraft version (`ostinato-mc<version>-*`). For a normal i
 `ostinato-mc<version>-unoptimized-fabric-*.jar` with Fabric Loader; `standalone` is obfuscated and
 `api` keeps the public API for other mods.
 
-v1.28.0 is a 26.3 release (Java 25). It finishes the v1.28.0 betas and adds controls-only input, the true headless
-bot and Microsoft sign-in. Everything in "New in v1.28.0" and the two beta sections is 26.3 only. Source and releases
-for 26.3 now live in the monorepo [vexrypt-rgb/ostinato-tenorclef](https://github.com/vexrypt-rgb/ostinato-tenorclef)
-(tag `ostinato-v1.28.0`). The older Minecraft lines have no changes since v1.27.0.
+v1.29.0 is a 26.3 release (Java 25). It adds RTS roles in the command center, split live blueprints, and a 3D
+schematic editor (Design and Live), all proven controls-only under Grim with 0 flags, and it fixes an open-sky
+second-layer place deadlock in the builder. Everything in "New in v1.29.0" and "New in v1.28.0" (and the two beta
+sections) is 26.3 only. Source and releases for 26.3 live in the monorepo
+[vexrypt-rgb/ostinato-tenorclef](https://github.com/vexrypt-rgb/ostinato-tenorclef) (tag `ostinato-v1.29.0`). The
+older Minecraft lines have no changes since v1.27.0.
 
 | Minecraft | Branch | Java | This tag |
 | --- | --- | --- | --- |
@@ -18,6 +20,52 @@ for 26.3 now live in the monorepo [vexrypt-rgb/ostinato-tenorclef](https://githu
 | 1.21.11 | `1.21.11` | 21 | Unchanged since v1.27.0 |
 | 1.21.4 | `1.21.4` | 21 | Unchanged since v1.27.0 |
 | 1.16.1 | `1.16.1` | 8 | Unchanged since v1.27.0 |
+## New in v1.29.0
+
+26.3 only.
+
+### RTS mode (command-center map)
+
+- **Roles**: farmer, miner, storage organizer and armor maker, assigned from the map panel. The farmer and miner
+  loops deposit into a leased chest. The storage organizer sorts a chest bank from a `StoragePlan`. The armor maker
+  crafts, equips and gathers through open-screen clicks (`ArmorPlan`).
+- **Leases**: region and chest leases in the role loops, so two bots do not fight over the same chest or plot. Walking
+  stays allowed outside a region lease; place and break stay fenced to the reservation.
+- **Split live blueprints**: *Build live* with several selected bots uses `RtsOrders.splitBlueprint` — one column
+  strip and one region lease each, one shared `.ost` file.
+- **Multi-layer painting**: the map (and the editor) can paint more than one Y layer (`h` / Y-step).
+- **Mid-build erase**: deleting a cell while a live build is running bumps the blueprint version; bots finish the
+  rest and leave the erased cell air.
+
+Proven on Paper 26.3 with Grim 2.3.75, controls-only: storage, armor, split build and mid-erase, and a 2-layer
+window-painted wall (15/15, erased cell air) all ran at **0 Grim flags and 0 deaths**. Notes: `docs/rts-mode.md`.
+
+### 3D schematic editor
+
+A third command-center layout (`--layout editor`, `#center layout editor`). Design mode is an offline 3D edit:
+orbit, place or erase per layer, pick a block type, save and load portable `ost1` schematics, and import
+`.litematic` and Sponge `.schem` (block ids only; classic `.schematic` is refused). Live mode is the same view of
+in-world progress; edits are written to the shared blueprint and picked up by the bots through the existing
+`blueprint live` / lease path.
+
+Proven on Paper 26.3 with Grim 2.3.75, controls-only: a 2-bot Live build of a 2-layer 12-cell wall, with one cell
+erased mid-build, finished **11/11**, the erased cell left air, **0 Grim flags and 0 deaths**. Notes:
+`docs/schematic-editor.md`.
+
+### Behaviour changes (on by default)
+
+- **Open-sky second-layer place.** If the support below a schematic cell is a legal against-block, the builder's
+  place goal stands at y-1 and will click that support. Stock Baritone forbade that stand whenever the cell had air
+  above, skipped the head-height click, and could hang after a mid-build erase removed the only same-Y stand in a
+  one-column lease. The Cadenza cell filter (off unless you enable Cadenza) follows the same rule.
+
+### Known limits
+
+- The Windows Grim live harness still uses a machine-local `client-gate.py` (spawn wipe, `respawn_radius`,
+  `setworldspawn`) that is not in this repository.
+- Microsoft sign-in still needs Mojang's approval of the app id (see v1.28.0).
+- The headless bot still can't join online-mode servers.
+
 ## New in v1.28.0
 
 26.3 only.

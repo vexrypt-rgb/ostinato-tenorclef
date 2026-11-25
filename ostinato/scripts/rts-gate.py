@@ -9,7 +9,7 @@ import os, re
 
 repo = Path(__file__).resolve().parents[1]
 os.environ["GATE_REPO"] = str(repo)
-gate = Path(r"C:\Users\redfa\Documents\MinecraftDev\headless-bot-logs\phase3\gate\client-gate.py")
+gate = Path(r"C:\Users\<user>\Documents\MinecraftDev\headless-bot-logs\phase3\gate\client-gate.py")
 source = gate.read_text(encoding="utf-8")
 source = source.replace('OUT = os.path.join(P3, "gate", "client-audit", tag)', 'OUT = os.path.join(P3, "gate", "rts", tag)')
 start = source.index('step("seg_ladder"')

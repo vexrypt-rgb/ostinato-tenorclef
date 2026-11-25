@@ -1,7 +1,7 @@
 # Ostinato: rtsl harness = copy of p3w (3 headless bots, same roster/SIGIL home) pointed at server-ac-client (Grim, 25582).
 $ErrorActionPreference = "Stop"
-$S = "C:\Users\redfa\Documents\MinecraftDev\swarm-gate-logs\p3w"
-$P = "C:\Users\redfa\Documents\MinecraftDev\swarm-gate-logs\rtsl"
+$S = "C:\Users\<user>\Documents\MinecraftDev\swarm-gate-logs\p3w"
+$P = "C:\Users\<user>\Documents\MinecraftDev\swarm-gate-logs\rtsl"
 # Ostinato: se-r2. Copy the fabric jar from this worktree (the script lives in ostinato/scripts/rtsl),
 # not a hardcoded rts-wt path — Live editor runs need the builder fix in this branch.
 $Jar = Join-Path (Split-Path $PSScriptRoot | Split-Path) "fabric\build\libs"

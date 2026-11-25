@@ -15,7 +15,8 @@ import fails it, and runs their tests headless. No client, no server, no game as
 Window arguments: `--dir <feed dir>` or `--fake N`, `--theme dark|light|high-contrast|colorblind`,
 `--layout wall|map|editor`, `--pos x,y` (default 2600,40, the second monitor), `--log <file>` (replies and tile lines),
 `--auto "secs|bot|formId|arg=value,..."` (press a tile button through Swing after `secs`; for live checks, never the
-real mouse).
+real mouse). The map layout has the RTS role, move and blueprint panel (`docs/rts-mode.md`). The editor layout is the
+3D Design/Live schematic editor (`docs/schematic-editor.md`).
 
 Tests: `feed/` (codec, schema golden, reader, alerts, inventory, terrain), `channel/` (HMAC, replay, loopback end to
 end), `app/` (`UiHarness`-driven UI tests, command dispatch, placement, source lint). Bot-side tests (host, gather,

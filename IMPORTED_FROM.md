@@ -30,3 +30,7 @@ Changes made on import:
 
 From this import on, new 26.3 work lands here first. The source repositories keep the 1.21.11, 1.21.4 and 1.16.1
 lines and the release workflow that builds them.
+
+v1.29.0 (2026-11-25) was developed on this monorepo: `swarm/rts-mode` (`029359b3d`) and `swarm/schematic-editor`
+(`186e3a335`, which contains rts-mode), then merged to `main` with a version and notes commit. TenorClef was not
+changed and stays at v0.29.0.

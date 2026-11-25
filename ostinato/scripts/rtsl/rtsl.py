@@ -1,13 +1,13 @@
 # Ostinato: RTS live check under Grim (server-ac-client). Usage: rtsl.py <tag> [mine,build,storage,armor,layers,editor] [W1,W2]
 import os, re, sys, time, subprocess, hashlib, uuid as _uuid, glob, json
-P = r"C:\Users\redfa\Documents\MinecraftDev\swarm-gate-logs\rtsl"
-CG = r"C:\Users\redfa\Documents\MinecraftDev\headless-bot-logs\phase3\gate\client-gate.py"
+P = r"C:\Users\<user>\Documents\MinecraftDev\swarm-gate-logs\rtsl"
+CG = r"C:\Users\<user>\Documents\MinecraftDev\headless-bot-logs\phase3\gate\client-gate.py"
 TAG = sys.argv[1]
 PARTS = sys.argv[2].split(",") if len(sys.argv) > 2 else ["mine", "build"]
 W = (sys.argv[3] if len(sys.argv) > 3 else "Azalea,Spelunker").split(",")  # Ostinato: the two workers
 W1, W2 = W[0], W[1]
 BOTS = ["Copper"] + [w for w in W if w != "Copper"]
-PROG = r"C:\Users\redfa\Documents\MinecraftDev\headless-bot-logs\phase3\rts-progress.txt"
+PROG = r"C:\Users\<user>\Documents\MinecraftDev\headless-bot-logs\phase3\rts-progress.txt"
 def prog(m):
     with open(PROG, "a", encoding="utf-8") as f: f.write(time.strftime("%Y-%m-%d %H:%M MST ") + m + "\n")
 # server half of client-gate (plugins = grim only, course, rcon helpers); stop before its own bot launch
@@ -15,7 +15,7 @@ src = open(CG, encoding="utf-8").read(); src = src[:src.index("BOUT = os.path.jo
 src = src.replace('OUT = os.path.join(P3, "gate", "client-audit", tag)', 'OUT = os.path.join(r"%s", "run", tag)' % P)
 sys.argv = ["rtsl", "grim", TAG]
 for n in BOTS:
-    assert n not in open(r"C:\Users\redfa\Documents\MinecraftDev\headless-bot-logs\phase3\server-ac-client\ops.json").read(), n + " is op"
+    assert n not in open(r"C:\Users\<user>\Documents\MinecraftDev\headless-bot-logs\phase3\server-ac-client\ops.json").read(), n + " is op"
 exec(compile(src, CG, "exec"))
 def offline(n):
     h = bytearray(hashlib.md5(("OfflinePlayer:" + n).encode()).digest()); h[6] = (h[6] & 0x0f) | 0x30; h[8] = (h[8] & 0x3f) | 0x80
@@ -207,7 +207,7 @@ try:
         R("tp %s -40 -60 40" % W1); R("tp %s -32 -60 40" % W2)
         time.sleep(2)
         for n in W: R("give %s cobblestone 32" % n)
-        jar = r"C:\Users\redfa\Documents\MinecraftDev\rts-wt\ostinato\center-app\build\libs\ostinato-center-app.jar"
+        jar = r"C:\Users\<user>\Documents\MinecraftDev\rts-wt\ostinato\center-app\build\libs\ostinato-center-app.jar"
         java = r"C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot\bin\java.exe"
         wdir = os.path.join(P, "run", TAG); os.makedirs(wdir, exist_ok=True)
         wlog, auto_f = os.path.join(wdir, "window.log"), os.path.join(wdir, "window-auto.txt")
@@ -267,7 +267,7 @@ try:
         time.sleep(2)
         for n in W:
             R("give %s cobblestone 32" % n)
-        jar = r"C:\Users\redfa\Documents\MinecraftDev\schematic-editor-wt\ostinato\center-app\build\libs\ostinato-center-app.jar"
+        jar = r"C:\Users\<user>\Documents\MinecraftDev\schematic-editor-wt\ostinato\center-app\build\libs\ostinato-center-app.jar"
         java = r"C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot\bin\java.exe"
         wdir = os.path.join(P, "run", TAG); os.makedirs(wdir, exist_ok=True)
         wlog, auto_f = os.path.join(wdir, "window.log"), os.path.join(wdir, "window-auto.txt")
