@@ -1,4 +1,4 @@
-# 1.16.1 sim (live client)
+﻿# 1.16.1 sim (live client)
 
 The only faithful sim is the real Fabric **1.16.1** client (`:1.16.1:runClient`).
 Offline `benchmark` mock scenarios do **not** emulate 1.16.1 and must not be treated as the sim.
@@ -41,7 +41,7 @@ or in game: `@warp 5` (`@warp 1` turns it off). Max 20.
 
 ## Pathfinding benchmark (`@pathbench`, 1.16.1)
 
-Measures pathfinding against a fixed ring of 16 goals around the bot (8 directions � 32/96 blocks).
+Measures pathfinding against a fixed ring of 16 goals around the bot (8 directions × 32/96 blocks).
 
 - `@pathbench search [- | setting=v1,v2,...] [reps]` runs Baritone's A* only, with no movement.
   With a sweep, the whole ring is re-run once per value of that Baritone setting, e.g.

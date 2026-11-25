@@ -1,4 +1,4 @@
-# Minecraft 1.16.1 (classic RSG) - AltoClef
+﻿# Minecraft 1.16.1 (classic RSG) - AltoClef
 
 First-class Fabric Loom / preprocessor version for classic RSG.
 No piglin brutes. Better pearl trades than 1.16.5.
