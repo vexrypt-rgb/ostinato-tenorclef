@@ -30,6 +30,8 @@ public final class FakeBot {
     BotFeed.Perf perf = new BotFeed.Perf(12, 200, 3, 900, 2048, 2, 30, 0, 0);
     BotFeed.Link link = new BotFeed.Link(true, 2, "");
     long gatherUs = 40;
+    String role = "idle";
+    String roleState = "";
 
     FakeBot(String name) {
         this.name = name;
@@ -46,6 +48,7 @@ public final class FakeBot {
     public FakeBot yaw(float yaw) { this.yaw = yaw; return this; }
     public FakeBot perf(BotFeed.Perf p) { this.perf = p == null ? BotFeed.Perf.UNKNOWN : p; return this; }
     public FakeBot gather(long us) { this.gatherUs = us; return this; }
+    public FakeBot role(String id, String state) { this.role = id; this.roleState = state; return this; } // Ostinato: RTS
     public FakeBot dim(char d) { this.dim = d; return this; }
     public FakeBot notInWorld() { this.inWorld = false; return this; }
     public FakeBot health(int h) { this.health = h; return this; }
@@ -84,6 +87,6 @@ public final class FakeBot {
     public BotFeed build(long nowMs, long seq) {
         return new BotFeed(name, nowMs - ageMs, seq, server, runMode, commandHost, coordinator,
                 inWorld ? new BotFeed.Pos(dim, x, y, z, yaw) : null, health, 20, hunger, dead, process, path, inventory,
-                executions, leases, perf, link, gatherUs);
+                executions, leases, perf, link, gatherUs, role, roleState);
     }
 }

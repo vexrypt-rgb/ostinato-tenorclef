@@ -20,7 +20,7 @@ import java.util.Map;
 public record BotFeed(String name, long writtenAtMs, long seq, String server, String runMode, boolean commandHost,
                       boolean coordinator, Pos pos, int health, int maxHealth, int hunger, boolean dead, String process,
                       Route path, Inventory inventory, List<Execution> executions, List<HeldLease> leases, Perf perf,
-                      Link link, long gatherUs) {
+                      Link link, long gatherUs, String role, String roleState) {
 
     public static final int MAX_NODES = 32;
     public static final int MAX_EXECUTIONS = 8;
@@ -37,6 +37,17 @@ public record BotFeed(String name, long writtenAtMs, long seq, String server, St
         leases = leases == null ? List.of() : List.copyOf(leases);
         perf = perf == null ? Perf.UNKNOWN : perf;
         link = link == null ? Link.DOWN : link;
+        role = role == null || role.isBlank() ? "idle" : role;
+        roleState = roleState == null ? "" : roleState;
+    }
+
+    /** Ostinato: the pre-RTS shape; a feed without a role is idle. */
+    public BotFeed(String name, long writtenAtMs, long seq, String server, String runMode, boolean commandHost,
+                   boolean coordinator, Pos pos, int health, int maxHealth, int hunger, boolean dead, String process,
+                   Route path, Inventory inventory, List<Execution> executions, List<HeldLease> leases, Perf perf,
+                   Link link, long gatherUs) {
+        this(name, writtenAtMs, seq, server, runMode, commandHost, coordinator, pos, health, maxHealth, hunger, dead,
+                process, path, inventory, executions, leases, perf, link, gatherUs, "idle", "");
     }
 
     /** Where the bot stands. {@code dim} is o, n or e (the reservation-key letters), or ? for another dimension. */
@@ -276,6 +287,8 @@ public record BotFeed(String name, long writtenAtMs, long seq, String server, St
         m.put("perf", perf.toJson());
         m.put("link", link.toJson());
         m.put("gatherUs", gatherUs);
+        m.put("role", role);
+        m.put("roleState", roleState);
         return Json.write(m);
     }
 
@@ -300,7 +313,8 @@ public record BotFeed(String name, long writtenAtMs, long seq, String server, St
                 Json.i32(m, "maxHealth", -1), Json.i32(m, "hunger", -1), Json.bool(m, "dead", false),
                 Json.str(m, "process", "idle"), Route.fromJson(Json.obj(m, "path")),
                 Inventory.fromJson(Json.obj(m, "inventory")), ex, ls, Perf.fromJson(Json.obj(m, "perf")),
-                Link.fromJson(Json.obj(m, "link")), Json.num(m, "gatherUs", -1));
+                Link.fromJson(Json.obj(m, "link")), Json.num(m, "gatherUs", -1), Json.str(m, "role", "idle"),
+                Json.str(m, "roleState", ""));
     }
 
     static double round(double v) {

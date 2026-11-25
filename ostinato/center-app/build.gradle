@@ -22,6 +22,8 @@ def shared = [
         'baritone/swarm/center/channel/**',
         // the window
         'baritone/swarm/center/app/**',
+        // Ostinato: RTS mode role model, loop and blueprint (pure)
+        'baritone/swarm/rts/**',
         // pure pieces shared with the in-game window and the registry
         'baritone/swarm/center/ButtonModel.java',
         'baritone/swarm/center/RegistryEntry.java',
