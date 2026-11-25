@@ -4,7 +4,9 @@ P = r"C:\Users\redfa\Documents\MinecraftDev\swarm-gate-logs\rtsl"
 CG = r"C:\Users\redfa\Documents\MinecraftDev\headless-bot-logs\phase3\gate\client-gate.py"
 TAG = sys.argv[1]
 PARTS = sys.argv[2].split(",") if len(sys.argv) > 2 else ["mine", "build"]
-BOTS = ["Copper", "Azalea", "Spelunker"]
+W = (sys.argv[3] if len(sys.argv) > 3 else "Azalea,Spelunker").split(",")  # Ostinato: the two workers
+W1, W2 = W[0], W[1]
+BOTS = ["Copper"] + [w for w in W if w != "Copper"]
 PROG = r"C:\Users\redfa\Documents\MinecraftDev\headless-bot-logs\phase3\rts-progress.txt"
 def prog(m):
     with open(PROG, "a", encoding="utf-8") as f: f.write(time.strftime("%Y-%m-%d %H:%M MST ") + m + "\n")
@@ -32,21 +34,21 @@ try:
     for n in BOTS:
         print(ps("-Client", "-Name", n).strip()); time.sleep(4)
     t0 = time.time(); joined = set()
-    while len(joined) < 3 and time.time() - t0 < 300:
+    while len(joined) < len(BOTS) and time.time() - t0 < 300:
         txt, _ = read_from(SLOG, slog_off)
         joined = {n for n in BOTS if re.search(n + r" (joined the game|\[.*\] logged in)", txt)}
         time.sleep(3)
     log("joined " + ",".join(sorted(joined)))
-    if len(joined) < 3: raise SystemExit("not all joined")
+    if len(joined) < len(BOTS): raise SystemExit("not all joined")
     time.sleep(10)
     for n in BOTS: R("gamemode survival " + n); R("clear " + n); R("effect clear " + n)
-    R("tp Copper -65 -60 0"); R("tp Azalea -38 -60 18"); R("tp Spelunker -33 -60 18")
-    for n in ("Azalea", "Spelunker"): R("give %s copper_pickaxe" % n); R("give %s bread 8" % n)
+    R("tp Copper -65 -60 0"); R("tp %s -38 -60 18" % W1); R("tp %s -33 -60 18" % W2)
+    for n in W: R("give %s copper_pickaxe" % n); R("give %s bread 8" % n)
     feeds = os.path.join(P, "center", "bots")
     t0 = time.time()
     while time.time() - t0 < 120:
         fresh = [n for n in BOTS if os.path.exists(os.path.join(feeds, n + ".json")) and time.time() - os.path.getmtime(os.path.join(feeds, n + ".json")) < 5]
-        if len(fresh) == 3: break
+        if len(fresh) == len(BOTS): break
         time.sleep(2)
     log("fresh feeds " + ",".join(fresh))
     def send(bot, cmd, wait=8):
@@ -67,11 +69,11 @@ try:
     if "mine" in PARTS:
         A = "-40,-61,20:-37,-59,23"; B = "-35,-61,20:-32,-59,23"; OV = "-38,-61,20:-35,-59,23"
         ch = "chest=-36,-60,26"
-        send("Copper", "swarm lease Azalea r:o:%s role miner ore=coal_ore %s batch=4 region=%s" % (A, ch, A))
+        send("Copper", "swarm lease %s r:o:%s role miner ore=coal_ore %s batch=4 region=%s" % (W1, A, ch, A))
         time.sleep(3)
-        send("Copper", "swarm lease Spelunker r:o:%s role miner ore=coal_ore %s batch=4 region=%s" % (OV, ch, OV))
+        send("Copper", "swarm lease %s r:o:%s role miner ore=coal_ore %s batch=4 region=%s" % (W2, OV, ch, OV))
         time.sleep(3)
-        send("Copper", "swarm lease Spelunker r:o:%s role miner ore=coal_ore %s batch=4 region=%s" % (B, ch, B))
+        send("Copper", "swarm lease %s r:o:%s role miner ore=coal_ore %s batch=4 region=%s" % (W2, B, ch, B))
         t0 = time.time(); last = ""
         while time.time() - t0 < 300:
             coal = sum(1 for x in list(range(-40, -36)) + list(range(-35, -31)) for z in range(20, 24) if block(x, -61, z, "coal_ore"))
@@ -80,12 +82,13 @@ try:
             if s != last: log(s); last = s
             if coal == 0 and time.time() - t0 > 30:
                 time.sleep(25); break
-            time.sleep(5)
+            time.sleep(15)  # Ostinato: 33 rcon connections per poll; poll gently so the harness is not the load
         decoy = sum(1 for z in range(20, 24) if block(-31, -61, z, "coal_ore")); dia = sum(1 for z in range(20, 24) if block(-36, -61, z, "coal_ore"))
         log("RESULT mine: decoy band intact %d/4, gap band (x -36, between the regions) intact %d/4" % (decoy, dia))
         log("chest " + rcon("data get block -36 -60 26 Items")[:600])
         send("Copper", "swarm lease status", 4)
-        send("Azalea", "role idle"); send("Spelunker", "role idle"); time.sleep(4)
+        for n in W: send(n, "role idle")
+        time.sleep(4)
     if "build" in PARTS:
         bp = os.path.join(P, "center", "blueprints"); os.makedirs(bp, exist_ok=True)
         cells = [(x, y, z) for y in (-60, -59) for x in range(-30, -24) for z in (30, 31)]
@@ -94,13 +97,13 @@ try:
             t = "ost1\n6 2 2\n# blueprint rtsl origin %d %d %d version %d\n" % (o + (ver,)) + "".join("%d %d %d cobblestone\n" % (x - o[0], y - o[1], z - o[2]) for x, y, z in cs)
             tmp = os.path.join(bp, "rtsl.ost.tmp"); open(tmp, "w", newline="\n").write(t); os.replace(tmp, os.path.join(bp, "rtsl.ost"))
         write_bp(cells, 1)
-        R("tp Azalea -29 -60 28"); R("tp Spelunker -26 -60 28")
-        for n in ("Azalea", "Spelunker"): R("give %s cobblestone 32" % n)
+        R("tp %s -29 -60 28" % W1); R("tp %s -26 -60 28" % W2)
+        for n in W: R("give %s cobblestone 32" % n)
         time.sleep(3)
         # the window's split for [Azalea, Spelunker] over bounds -30..-25 (x is the longer edge): -30..-28 and -27..-25
         SA = "-30,-60,30:-28,-59,31"; SB = "-27,-60,30:-25,-59,31"
-        send("Copper", "swarm lease Azalea r:o:%s blueprint live rtsl part=%s" % (SA, SA))
-        send("Copper", "swarm lease Spelunker r:o:%s blueprint live rtsl part=%s" % (SB, SB))
+        send("Copper", "swarm lease %s r:o:%s blueprint live rtsl part=%s" % (W1, SA, SA))
+        send("Copper", "swarm lease %s r:o:%s blueprint live rtsl part=%s" % (W2, SB, SB))
         erased = None; t0 = time.time(); last = ""
         while time.time() - t0 < 300:
             sts = {}
@@ -120,11 +123,37 @@ try:
         got = [c for c in cells if block(*c, "cobblestone")]
         dup = []
         log("RESULT build: %d/%d cells cobblestone, erased cell %s is %s" % (len(got), len(cells), erased, "air" if erased and block(*erased, "air") else "NOT air"))
-        for n in ("Azalea", "Spelunker"):
+        for n in W:
             lines = [l for l in clog(n).splitlines() if "blueprint" in l.lower() or "lease" in l.lower()]
             log("%s blueprint/lease lines:\n  " % n + "\n  ".join(lines[-25:]))
-        send("Azalea", "blueprint stop"); send("Spelunker", "blueprint stop")
-    for n in ("Azalea", "Spelunker", "Copper"):
+        for n in W: send(n, "blueprint stop")
+    if "storage" in PARTS:
+        # three single chests 2 apart (never merged into a double), mixed: homes by category, biggest first
+        CH = [(-20, -60, 26), (-17, -60, 26), (-14, -60, 26)]
+        fill = [[("coal", 14), ("oak_log", 8), ("wheat", 5)], [("cobblestone", 32), ("coal", 4)], [("oak_log", 12), ("bone", 3)]]
+        want = [{"coal": 18, "wheat": 5}, {"cobblestone": 32}, {"oak_log": 20, "bone": 3}]
+        for (x, y, z), items in zip(CH, fill):
+            R("setblock %d %d %d air" % (x, y, z))
+            R("setblock %d %d %d chest{Items:[%s]}" % (x, y, z, ",".join('{Slot:%db,id:"minecraft:%s",count:%d}' % (i, n, c) for i, (n, c) in enumerate(items))))
+        R("tp %s -17 -60 23" % W1); R("clear %s" % W1)
+        def contents(c):
+            t = rcon("data get block %d %d %d Items" % c); m = {}
+            for n, k in re.findall(r'id: "minecraft:(\w+)", count: (\d+)', t): m[n] = m.get(n, 0) + int(k)
+            return m
+        send(W1, "role storage chests=" + ";".join("%d,%d,%d" % c for c in CH))
+        t0 = time.time(); last = ""; ok = False
+        while time.time() - t0 < 360:
+            got = [contents(c) for c in CH]
+            s = "storage " + " | ".join(",".join("%s.%d" % kv for kv in sorted(g.items())) for g in got)
+            if s != last: log(s); last = s
+            if got == want: ok = True; time.sleep(8); break
+            time.sleep(10)
+        got = [contents(c) for c in CH]
+        log("RESULT storage: %s (want %s) %s" % (got, want, "SORTED" if got == want else "NOT SORTED"))
+        lines = [l for l in clog(W1).splitlines() if "role storage" in l]
+        log("%s storage lines:\n  " % W1 + "\n  ".join(lines[-30:]))
+        send(W1, "role idle")
+    for n in BOTS:
         lines = [l for l in clog(n).splitlines() if re.search(r"role|lease|scheduler|chest", l, re.I)]
         log("%s role/lease lines (%d):\n  " % (n, len(lines)) + "\n  ".join(lines[-60:]))
 finally:
@@ -139,4 +168,4 @@ finally:
     try: srv.wait(60)
     except Exception: srv.kill()
     log("server relay exit %s" % srv.poll())
-    prog("rtsl %s parts=%s grim flags=%d deaths=%d" % (TAG, ",".join(PARTS), len(flags), len(deaths)))
+    prog("rtsl %s bots=%s parts=%s grim flags=%d deaths=%d" % (TAG, ",".join(BOTS), ",".join(PARTS), len(flags), len(deaths)))

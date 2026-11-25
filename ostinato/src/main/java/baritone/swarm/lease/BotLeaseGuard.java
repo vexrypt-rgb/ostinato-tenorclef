@@ -507,6 +507,12 @@ public final class BotLeaseGuard implements CommandProtocol.LeaseHooks {
             return; // nothing ran for it: nothing in flight
         }
         ReservationKey k = ReservationKey.parse(l.resource);
+        if (k != null && k.type == ReservationKey.Type.CHEST) {
+            // Ostinato: RTS r5 - a chest lease only gates container clicks (the fence denies those once it is gone),
+            // and it ends while the role that asked for it (a miner's deposit) carries on: stopping the processes and
+            // cancelling the path here stopped the miner for good after its deposit.
+            return;
+        }
         if (k != null && !endedBoxes.contains(k)) {
             endedBoxes.add(k);
         }

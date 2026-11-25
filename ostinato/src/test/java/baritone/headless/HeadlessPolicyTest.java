@@ -252,4 +252,14 @@ public class HeadlessPolicyTest {
     private static void clearProperty() {
         System.clearProperty(RunMode.PROPERTY);
     }
+
+    @Test
+    public void headlessFramesNeverBurstTicksAfterAStall() {
+        // Ostinato: RTS r5 - 20 owed ticks after a 1.26 s stall flagged Grim Timer; headless runs at most 2 and drops the rest
+        assertEquals(0, HeadlessPolicy.ticksThisFrame(RunMode.Value.HEADLESS, 0));
+        assertEquals(1, HeadlessPolicy.ticksThisFrame(RunMode.Value.HEADLESS, 1));
+        assertEquals(HeadlessPolicy.MAX_TICKS_PER_FRAME, HeadlessPolicy.ticksThisFrame(RunMode.Value.HEADLESS, 10));
+        assertEquals("windowed keeps vanilla catch-up", 10, HeadlessPolicy.ticksThisFrame(RunMode.Value.NORMAL, 10));
+        assertEquals("hidden keeps vanilla catch-up", 10, HeadlessPolicy.ticksThisFrame(RunMode.Value.HIDDEN, 10));
+    }
 }

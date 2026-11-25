@@ -23,6 +23,7 @@ import baritone.swarm.lease.BotLeaseGuard;
 import baritone.swarm.lease.LeaseCoordinator;
 import baritone.swarm.lease.LeaseFence;
 import baritone.swarm.rts.ChestScheduler;
+import baritone.swarm.rts.StoragePlan;
 import baritone.Baritone;
 import baritone.api.event.events.TickEvent;
 import baritone.api.pathing.goals.GoalGetToBlock;
@@ -106,6 +107,10 @@ public final class RoleBehavior extends Behavior implements Helper {
         if (l == null || l.order().role == Role.IDLE) {
             return "idle";
         }
+        if (l.order().role == Role.STORAGE) {
+            return "storage " + (deposit.isActive() ? "work" : "wait") + " (" + storageNote + ")"
+                    + (leased ? " leased" : "") + " chests=" + l.order().chests.size();
+        }
         String chestWait = awaitChest == null ? "" : " wait-chest=" + awaitChest;
         return l.order().role.id + " " + l.phase().name().toLowerCase() + (l.note().isEmpty() ? "" : " (" + l.note() + ")")
                 + chestWait + (leased ? " leased" : "")
@@ -173,6 +178,7 @@ public final class RoleBehavior extends Behavior implements Helper {
             leased = false;
             regionMissingSince = -1;
             awaitChest = null;
+            storageReset();
             generation++;
             logDirect("role: " + next.line());
         }
@@ -216,6 +222,10 @@ public final class RoleBehavior extends Behavior implements Helper {
                 awaitChest = null;
                 deposit.failLater("no chest lease");
             }
+        }
+        if (o.role == Role.STORAGE) {
+            storageTick(o); // Ostinato: the organizer runs its own visit loop
+            return;
         }
         int free = 0;
         java.util.List<ItemStack> stacks = new java.util.ArrayList<>();
@@ -385,6 +395,201 @@ public final class RoleBehavior extends Behavior implements Helper {
         return BuiltInRegistries.ITEM.getKey(st.getItem()).getPath();
     }
 
+    /** Ostinato: the menu slot a storage visit quick-moves next, or -1 when it is done. */
+    interface Picker {
+        int next(LocalPlayer p, ChestMenu menu);
+    }
+
+    // Ostinato: storage organizer state. A survey opens every chest once; then each pass takes the stacks that are
+    // not in their category's chest (homes frozen for the pass) and carries them home, one chest visit at a time.
+    private StoragePlan storagePlan;
+    private Map<StoragePlan.Category, Integer> storageHomes;
+    private final java.util.Set<String> carried = new java.util.HashSet<>();
+    private int storageChest; // chest being worked this pass
+    private boolean storageTaking; // the visit in flight takes (true) or puts (false)
+    private int storagePutTo = -1;
+    private int storageMovedThisPass;
+    private long storageIdleUntil;
+    private int storageFails;
+    private String storageNote = "";
+
+    private void storageReset() {
+        storagePlan = null;
+        storageHomes = null;
+        carried.clear();
+        storageChest = 0;
+        storagePutTo = -1;
+        storageMovedThisPass = 0;
+        storageIdleUntil = 0;
+        storageFails = 0;
+        storageNote = "";
+    }
+
+    private BlockPos storagePos(RoleOrder o, int i) {
+        int[] c = o.chests.get(i);
+        return new BlockPos(c[0], c[1], c[2]);
+    }
+
+    private void storageTick(RoleOrder o) {
+        boolean done = deposit.takeDone();
+        String fail = deposit.takeFailure();
+        if (deposit.isActive()) {
+            return;
+        }
+        if (fail != null) {
+            storageFails++;
+            storageNote = "visit failed: " + fail;
+            logDirect("role storage: " + storageNote);
+            storageIdleUntil = System.currentTimeMillis() + Math.min(30_000, 3_000L * storageFails);
+            storagePutTo = -1;
+        } else if (done) {
+            storageFails = 0;
+            storageMovedThisPass += deposit.moved;
+            if (storagePutTo >= 0) {
+                storagePutTo = -1; // that home got its stacks; carry the rest next
+            } else if (storageTaking) {
+                storageChest++; // a take visit ends this chest's turn; its stacks are carried home next
+            }
+        }
+        if (System.currentTimeMillis() < storageIdleUntil) {
+            return;
+        }
+        int n = o.chests.size();
+        if (storagePlan == null) {
+            storagePlan = new StoragePlan(n);
+            storageChest = 0;
+        }
+        LocalPlayer p = ctx.player();
+        // 1. survey: open each chest once so the homes come from what is really stored
+        if (!storagePlan.surveyed()) {
+            if (storageChest >= n) {
+                storageChest = 0; // a chest that failed its survey is opened again
+            }
+            final int idx = storageChest;
+            storageTaking = true;
+            storageNote = "survey " + (idx + 1) + "/" + n;
+            deposit.visit(storagePos(o, idx), o, (pl, menu) -> -1, menu -> storagePlan.saw(idx, chestContents(pl(), menu)));
+            return;
+        }
+        if (storageHomes == null) {
+            storageHomes = storagePlan.homes();
+            storageChest = 0;
+            storageMovedThisPass = 0;
+            logDirect("role storage: homes " + homesText(o));
+        }
+        // 2. carry: anything taken goes to its home chest before the next take
+        for (int h = 0; h < n; h++) {
+            if (carryingFor(p, h)) {
+                final int home = h;
+                storagePutTo = h;
+                storageTaking = false;
+                storageNote = "carry to chest " + (h + 1);
+                deposit.visit(storagePos(o, h), o, (pl, menu) -> putSlot(pl, menu, home),
+                        menu -> storagePlan.saw(home, chestContents(pl(), menu)));
+                return;
+            }
+        }
+        carried.clear();
+        // 3. take: the next chest's misplaced stacks
+        if (storageChest < n) {
+            final int from = storageChest;
+            storageTaking = true;
+            storageNote = "take from chest " + (from + 1);
+            deposit.visit(storagePos(o, from), o, (pl, menu) -> takeSlot(pl, menu, from),
+                    menu -> storagePlan.saw(from, chestContents(pl(), menu)));
+            return;
+        }
+        // 4. pass over: sorted when nothing moved, else another pass with fresh homes
+        logDirect("role storage: pass moved " + storageMovedThisPass + " stacks");
+        if (storageMovedThisPass == 0) {
+            storageNote = "sorted";
+            storageIdleUntil = System.currentTimeMillis() + 20_000;
+        }
+        storageHomes = null;
+        storageChest = 0;
+    }
+
+    private LocalPlayer pl() {
+        return ctx.player();
+    }
+
+    private String homesText(RoleOrder o) {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<StoragePlan.Category, Integer> e : storageHomes.entrySet()) {
+            if (sb.length() > 0) {
+                sb.append(", ");
+            }
+            sb.append(e.getKey().name().toLowerCase()).append("->").append(RoleOrder.xyz(o.chests.get(e.getValue())));
+        }
+        return sb.toString();
+    }
+
+    private int storageHome(String id) {
+        Integer h = storageHomes == null ? null : storageHomes.get(StoragePlan.category(id));
+        return h == null ? -1 : h;
+    }
+
+    private static Map<String, Integer> chestContents(LocalPlayer p, ChestMenu menu) {
+        Map<String, Integer> m = new HashMap<>();
+        for (Slot s : menu.slots) {
+            if (s.container != p.getInventory() && !s.getItem().isEmpty()) {
+                m.merge(id(s.getItem()), s.getItem().getCount(), Integer::sum);
+            }
+        }
+        return m;
+    }
+
+    private boolean carryingFor(LocalPlayer p, int home) {
+        for (ItemStack st : p.getInventory().getNonEquipmentItems()) {
+            if (!st.isEmpty() && carried.contains(id(st)) && storageHome(id(st)) == home) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** A chest slot whose stack belongs in another chest, while the inventory has a free slot. */
+    private int takeSlot(LocalPlayer p, ChestMenu menu, int chest) {
+        boolean room = false;
+        for (ItemStack st : p.getInventory().getNonEquipmentItems()) {
+            if (st.isEmpty()) {
+                room = true;
+                break;
+            }
+        }
+        if (!room) {
+            return -1;
+        }
+        for (int i = 0; i < menu.slots.size(); i++) {
+            Slot s = menu.slots.get(i);
+            if (s.container == p.getInventory() || s.getItem().isEmpty()) {
+                continue;
+            }
+            String item = id(s.getItem());
+            int h = storageHome(item);
+            if (h >= 0 && h != chest) {
+                carried.add(item);
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** A player slot holding a carried stack whose home is this chest. */
+    private int putSlot(LocalPlayer p, ChestMenu menu, int chest) {
+        for (int i = 0; i < menu.slots.size(); i++) {
+            Slot s = menu.slots.get(i);
+            if (s.container != p.getInventory() || s.getItem().isEmpty()) {
+                continue;
+            }
+            String item = id(s.getItem());
+            if (carried.contains(item) && storageHome(item) == chest) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     /**
      * Ostinato: walk to one chest, open it with the use key, quick-move the role's output into it, close it. Active
      * only while a deposit is running; above the farm and mine processes so it gets the path.
@@ -406,12 +611,26 @@ public final class RoleBehavior extends Behavior implements Helper {
         private int lastCount;
         private volatile boolean done;
         private volatile String failure;
+        // Ostinato: storage visits pick their own slots (take from the chest or put into it) and read the chest
+        private Picker picker;
+        private java.util.function.Consumer<ChestMenu> onOpen;
+        private boolean opened;
+        private int moved;
 
         Deposit(Baritone baritone) {
             super(baritone);
         }
 
         void start(BlockPos chest, RoleOrder order) {
+            visit(chest, order, null, null);
+        }
+
+        /** Ostinato: one chest visit; {@code picker} null is a deposit of the role's output. */
+        void visit(BlockPos chest, RoleOrder order, Picker picker, java.util.function.Consumer<ChestMenu> onOpen) {
+            this.picker = picker;
+            this.onOpen = onOpen;
+            opened = false;
+            moved = 0;
             this.chest = chest;
             this.order = order;
             stage = Stage.WALK;
@@ -521,25 +740,39 @@ public final class RoleBehavior extends Behavior implements Helper {
                     if (++ticks < 3) {
                         return pause; // the screen and the slot contents arrive a tick after the menu
                     }
+                    if (!opened) {
+                        opened = true;
+                        if (onOpen != null) {
+                            onOpen.accept(menu);
+                        }
+                    }
                     if (ticks % 2 == 1) {
                         return pause; // one click every other tick, like a player shift-clicking
                     }
-                    int slot = nextSlot(p, menu);
+                    int slot = picker == null ? nextSlot(p, menu) : picker.next(p, menu);
                     if (slot < 0) {
                         stage = Stage.CLOSE;
                         return pause;
                     }
                     ItemStack st = menu.slots.get(slot).getItem();
                     if (slot == lastSlot && st.getCount() == lastCount) {
-                        // the last click moved nothing: the chest is full
-                        logDirect("role deposit: chest full");
-                        deposited -= lastCount;
+                        // the last click moved nothing: the chest (or, taking, the inventory) is full
+                        logDirect("role deposit: " + (picker == null ? "chest" : "no room") + " full");
+                        if (picker == null) {
+                            deposited -= lastCount;
+                        } else {
+                            moved--;
+                        }
                         stage = Stage.CLOSE;
                         return pause;
                     }
                     lastSlot = slot;
                     lastCount = st.getCount();
-                    deposited += st.getCount();
+                    if (picker == null) {
+                        deposited += st.getCount();
+                    } else {
+                        moved++;
+                    }
                     ctx.playerController().windowClick(menu.containerId, slot, 0, ContainerInput.QUICK_MOVE, p);
                     return pause;
                 }
@@ -547,7 +780,9 @@ public final class RoleBehavior extends Behavior implements Helper {
                     p.closeContainer();
                     stage = null;
                     done = true;
-                    logDirect("role deposit: done at " + chest.toShortString() + ", " + deposited + " stored so far");
+                    if (picker == null) {
+                        logDirect("role deposit: done at " + chest.toShortString() + ", " + deposited + " stored so far");
+                    }
                     return new PathingCommand(null, PathingCommandType.CANCEL_AND_SET_GOAL);
                 }
                 default -> {

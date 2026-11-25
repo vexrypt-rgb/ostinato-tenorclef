@@ -154,6 +154,26 @@ public class LeaseEndStopTest {
     }
 
     @Test
+    public void aChestLeaseEndingLeavesTheRoleThatAskedForItRunning() throws Exception {
+        LeaseSupport s = new LeaseSupport(tmp.newFolder().toPath());
+        s.activate();
+        s.coord.lease("Bob", "c:o:3,10,3", "tunnel 2 1 8");
+        s.pump();
+        assertEquals(1, s.bobExec.count("tunnel"));
+        FakeBot bot = new FakeBot();
+        LeaseEndStop stop = new LeaseEndStop(s.guard, bot, s.log::add, s.mono::get);
+        s.bobExec.poll = ExecutionState.SUCCEEDED; // the deposit finished and released the chest
+        s.tick();
+        s.tick();
+        assertTrue(s.logged("swarm-lease: released lease="));
+        assertFalse("no stop pending for a chest", s.guard.endCancelPending());
+        stop.tick();
+        assertEquals(0, bot.stops);
+        assertEquals(0, bot.cancels);
+        assertTrue("the miner's path keeps going", bot.executing);
+    }
+
+    @Test
     public void onceIdleTheBoxIsNoLongerFenced() throws Exception {
         LeaseSupport s = started();
         FakeBot bot = new FakeBot();

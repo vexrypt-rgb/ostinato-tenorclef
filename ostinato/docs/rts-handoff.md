@@ -1,6 +1,6 @@
 # RTS mode handoff (swarm/rts-mode)
 
-Updated: 2026-11-25 03:30 MST. Worktree `C:\Users\redfa\Documents\MinecraftDev\rts-wt`, branch `swarm/rts-mode`
+Updated: 2026-11-25 04:10 MST. Worktree `C:\Users\redfa\Documents\MinecraftDev\rts-wt`, branch `swarm/rts-mode`
 (off main 3c0755cde). Local commits only, never pushed. HEAD: see `git log -1` (last code commit 7cf90227a).
 
 ## Done and proven
@@ -9,6 +9,10 @@ Updated: 2026-11-25 03:30 MST. Worktree `C:\Users\redfa\Documents\MinecraftDev\r
 - 7cf90227a (WIP): region/chest leases in role loops, ChestScheduler, `role deposit` runs beside the role loop,
   split live blueprint (`blueprint live <name> part=`), window In-area/layers/Y-step, `MixinHeadlessKeybinds`.
   - center-app tests: 177/177 green (`scripts\center-app.ps1 test`).
+  - Live r4 (`swarm-gate-logs\rtsl\r4.out`): chest lease alternated Azalea/Spelunker gens 1-6, 12 coal deposited
+    by open-screen quick-moves, 0 deaths, decoy bands intact. Grim flags 25: Timer/TimerLimit at join (Copper,
+    Spelunker) and two mid-run bursts. Packet-log wall marks show the cause: a ~650 ms client stall then 20 ticks in
+    0.6 s catch-up (Spelunker t=4780-4820, 03:34:08). Host contention suspected (4 cores, 3 clients + server).
   - Live (rtsl r1-r3, `swarm-gate-logs\rtsl\r1.out`, `rtsl-r2.out`, `rtsl\r3.out`): overlapping region lease refused
     ("busy: offered to Azalea"), decoy ore bands outside both regions 4/4 + 4/4 intact, chest lease offered to one bot
     at a time (second waits). Headless bots sent no clicks at all before MixinHeadlessKeybinds (LoadingOverlay never
@@ -23,13 +27,25 @@ Updated: 2026-11-25 03:30 MST. Worktree `C:\Users\redfa\Documents\MinecraftDev\r
   `build` part), (5) layers: code + unit tests done, live proof pending. docs/rts-mode.md not yet updated.
 
 ## In progress right now
-- Investigating the Grim Timer flags (see top of "Next steps").
+- r5 (03:43-03:50 MST, logs `swarm-gate-logstsl-r5.out`, `swarm-gate-logstsl-r5-run\`) results:
+  - (2)+(6) split live blueprint + mid-build erase: Copper 12/12 + Azalea 11/11 cells, RESULT 23/23 cobblestone,
+    erased cell (-25,-59,31) stayed air, no cell placed twice. Functionally PROVEN (2 clients).
+  - (1) mining: overlap lease refused, decoy + gap bands 4/4, chest lease scheduled Copper then Azalea x4.
+    BUG found: both miners stopped after a deposit - the chest lease's end ran LeaseEndStop (stop processes + cancel
+    path). Fixed: BotLeaseGuard.leaseEnded ignores CHEST keys (LeaseEndStopTest.aChestLeaseEnding...). Unit green.
+  - Grim 7 flags, all Azalea 03:47:45/57 (Timer x5, TimerLimit x2): packetlog shows 20 ticks in 1256 ms then 20 in
+    752 ms (main-thread stall, then vanilla catch-up burst). Fix: MixinHeadlessTickBurst caps headless frames at
+    HeadlessPolicy.MAX_TICKS_PER_FRAME=2 ticks, dropping the debt (server sees lag, never speed). Harness mine poll 5s->15s.
+- NEXT: r6 = `rtsl.py r6 mine,build,storage Copper,Azalea` with the chest-lease fix, tick cap and the new storage part
+  (3 chests at -20/-17/-14,-60,26 mixed; want coal+wheat | cobblestone | oak_log+bone).
 
 ## Uncommitted changes
-- none besides this file (check `git status`).
+- BotLeaseGuard chest-end fix + LeaseEndStopTest; HeadlessPolicy.ticksThisFrame + MixinHeadlessTickBurst (+mixins json)
+  + HeadlessPolicyTest; StoragePlan + StoragePlanTest (6 green) + RoleBehavior storage loop; PacketLog wall notes;
+  scripts/rtsl (workers arg, robust setup, storage part, gentler poll).
 
 ## Processes I started
-- none running (all rtsl clients and the server-ac-client server stopped 03:26 MST).
+- None running (r5 driver stopped its clients and server at 03:49:52 MST). Gradle daemons are left alone (never --stop).
 
 ## Next steps
 1. Timer flags: rerun `rtsl.py r4 mine` with 2 clients if possible / more free RAM; read
@@ -42,6 +58,6 @@ Updated: 2026-11-25 03:30 MST. Worktree `C:\Users\redfa\Documents\MinecraftDev\r
    .\gradlew.bat "-Dorg.gradle.jvmargs=-Xmx1g" --max-workers=2 --offline :fabric:remapJar` (never `--stop`).
 2. Harness: `powershell -File swarm-gate-logs\rtsl-setup.ps1` (copy in `scripts/rtsl/setup.ps1`; copies p3w
    templates, sound 0.0, port 25582, newest jar; WIPES `rtsl\run`).
-3. Run: `cd swarm-gate-logs\rtsl; python rtsl.py <tag> mine|build|mine,build *> <tag>.out`. Starts server-ac-client
+3. Run: `cd swarm-gate-logs\rtsl; python rtsl.py <tag> mine|build|mine,build [W1,W2] *> <tag>.out`. Starts server-ac-client
    (Grim only), 3 headless muted bots (Copper = coordinator), prints RESULT lines, GRIM FLAGS, DEATHS, then stops all.
 4. Emergency stop: `powershell -File swarm-gate-logs\rtsl\gate.ps1 -StopAll` and rcon `stop` (25589, pw ostinato-place).

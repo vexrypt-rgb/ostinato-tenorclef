@@ -83,9 +83,19 @@ public final class PacketLog {
 
     public static void tick(int t) {
         tick = t;
+        // Ostinato: a wall-clock mark once a second, so a burst of ticks after a stall shows in the stream
+        if (t % 20 == 0 || t < 80) {
+            note("wall " + System.currentTimeMillis());
+        }
     }
 
+    private static boolean preTickMarked;
+
     public static void outbound(Packet<?> packet) {
+        if (tick < 0 && !preTickMarked) {
+            preTickMarked = true;
+            note("wall " + System.currentTimeMillis() + " first out before tick 1");
+        }
         write("OUT", packet);
     }
 
