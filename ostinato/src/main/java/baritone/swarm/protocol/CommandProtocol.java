@@ -19,6 +19,7 @@ package baritone.swarm.protocol;
 
 import baritone.agent.AgentPolicy;
 import baritone.swarm.transport.SwarmPriority; // Ostinato: preserve transport priority.
+import baritone.swarm.transport.SwarmRateLimiter;
 import baritone.api.command.CommandPermission;
 import baritone.api.swarm.protocol.CapabilityDescriptor;
 import baritone.api.swarm.protocol.ExecutionState;
@@ -26,7 +27,9 @@ import baritone.api.swarm.protocol.ExternalCommandHook;
 import baritone.api.swarm.protocol.ISwarmStatusView;
 import baritone.api.swarm.protocol.ObservationState;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -44,7 +47,9 @@ import java.util.function.LongSupplier;
 
 /**
  * Ostinato: Phase 1 swarm command semantics. Authentication is the caller's job (SIGIL);
- * this class does not trust a transport receipt as an ack, and it does not write disk.
+ * this class does not trust a transport receipt as an ack. With a ledger file set, it appends what this bot
+ * sent and a START line before each place, break or transfer, so a relaunch can answer for old commands and
+ * can check the world before it repeats one.
  *
  * <p>Layering is semantics (this class), then SIGIL, then transport. {@link Wire#send}
  * must not call back into this protocol.
@@ -58,8 +63,12 @@ public final class CommandProtocol {
     public static final long DEFAULT_LEDGER_TTL_MS = 600_000L;
     /** How long {@code #swarm send} waits for an ack before it gives up, unless the caller passes one. */
     public static final long DEFAULT_DEADLINE_MS = 60_000L;
+    // Ostinato: client ticks a cancel keeps re-checking confirmStopped before it settles as unknown.
+    public static final int CANCEL_CONFIRM_WINDOW_TICKS = 40;
 
     private final Object lock = new Object();
+    private long retried; // Ostinato: command frames sent again because no ack came yet.
+
     private final BotIdentity self;
     private final Set<String> members;
     private final Wire wire;
@@ -70,6 +79,10 @@ public final class CommandProtocol {
     private final long retryMs;
     private final Map<UUID, Tracked> ledger = new LinkedHashMap<>();
     private final Map<UUID, Sent> outbound = new LinkedHashMap<>();
+    private final Map<UUID, PendingStop> pendingStops = new LinkedHashMap<>(); // Ostinato: keyed by target id.
+    // Ostinato: running commands whose process went idle without a recorded outcome. Their observation is unknown, but
+    // they are still polled so an outcome recorded later ends them.
+    private final Set<UUID> idleUnknown = new java.util.HashSet<>();
     private final List<StatusView> views = new ArrayList<>();
     private boolean linkUp = true;
     private final Set<String> onlineMembers = new java.util.HashSet<>(); // Ostinato: join edges.
@@ -82,6 +95,42 @@ public final class CommandProtocol {
     private final Map<String, CapabilityDescriptor> peerCaps = new LinkedHashMap<>();
     private CapabilityDescriptor localCaps = CapabilityDescriptor.gameplay();
     private long ledgerTtlMs = DEFAULT_LEDGER_TTL_MS;
+    // Ostinato: Phase 2c part 2. Null disk means the Phase 1 in-memory ledger only (every existing test).
+    private SwarmLedger disk;
+    private boolean ledgerBroken;
+    private EffectCheck effectCheck;
+    private final Map<UUID, Doubt> doubts = new LinkedHashMap<>();
+    private final Set<UUID> ended = new java.util.HashSet<>();
+    // Ostinato: Phase 2a lease state. Null hooks means leases are off and nothing below is used.
+    private volatile LeaseHooks leaseHooks;
+    private final Map<UUID, Held> held = new LinkedHashMap<>();
+    private final Map<UUID, LeaseStop> leaseStops = new LinkedHashMap<>();
+    private final List<Decision> deferredAcks = new ArrayList<>();
+    // Ostinato: a query hello asks every peer to answer, even one that already knows our caps. A reply is
+    // always a plain hello, so queries cannot loop. Queries repeat with backoff while an online peer is unknown.
+    static final String HELLO_QUERY = "helloq";
+    public static final long CAPS_PROBE_MIN_MS = 5_000L;
+    public static final long CAPS_PROBE_MAX_MS = 60_000L;
+    private long capsProbeGap = CAPS_PROBE_MIN_MS;
+    private long nextCapsProbe = Long.MAX_VALUE;
+    /** How long a command that arrived before its lease grant waits for the grant. */
+    public static final long HOLD_MS = 2_000L;
+    /**
+     * Ostinato: Phase 2c part 2, walk-to-verify. A lease check that returns this ("not loaded here") holds the command
+     * while the bot walks toward the observation, re-checked every {@link #APPROACH_CHECK_MS}, for at most
+     * {@link #APPROACH_MS} (and never past the command's own deadline); then it is rejected obs-unknown as before.
+     */
+    public static final String OBS_APPROACH = "obs-approach";
+    /**
+     * Ostinato: lease-scoped authority, one rule for every leased command. A non-owner may run these only as a leased
+     * command carrying a valid, current lease granted by the configured coordinator (and so only inside that lease's
+     * fence); the value says whether the lease must be a REGION lease. The owner is not limited. A bot with leases off
+     * takes them from its owner only. mine (SWARM in the registry): any lease type. tunnel (owner-only in the registry,
+     * Phase 2c part 2 slice 3): a region lease only. Any other owner-only command stays owner-only.
+     */
+    public static final Map<String, Boolean> LEASE_SCOPED_COMMANDS = Map.of("mine", false, "tunnel", true);
+    public static final long APPROACH_MS = 60_000L;
+    public static final long APPROACH_CHECK_MS = 500L;
 
     public CommandProtocol(BotIdentity self, Set<String> members, Wire wire, Executor executor, Policy policy,
                            LongSupplier clock, Consumer<String> log, long retryMs) {
@@ -131,6 +180,268 @@ public final class CommandProtocol {
     public void setLedgerTtlMs(long ttlMs) {
         synchronized (lock) {
             ledgerTtlMs = Math.max(1L, ttlMs);
+            if (disk != null) {
+                disk.setRetainMs(ledgerTtlMs);
+            }
+        }
+    }
+
+    /**
+     * Ostinato: Phase 2c part 2. Append-only command ledger in this bot's directory. Replayed on the call, before any
+     * command is sent or run. A file that cannot be opened refuses later non-idempotent work rather than guessing.
+     */
+    public void setLedgerFile(Path file) {
+        if (file == null) {
+            return;
+        }
+        synchronized (lock) {
+            try {
+                if (disk != null) {
+                    disk.close();
+                }
+                disk = SwarmLedger.open(file);
+                disk.setRetainMs(ledgerTtlMs);
+                ledgerBroken = false;
+                applyReplay(disk.replay());
+                log.accept("swarm: ledger " + file);
+            } catch (IOException e) {
+                disk = null;
+                ledgerBroken = true;
+                log.accept("swarm: ledger unreadable " + file + " (" + e.getMessage() + ")");
+            }
+        }
+    }
+
+    /** Ostinato: world check for a START that never got an END. Null means an unreadable effect is not repeated. */
+    public void setEffectCheck(EffectCheck check) {
+        effectCheck = check;
+    }
+
+    /** Release the ledger file so another process (a relaunch, or a test) can open it. */
+    public void closeLedger() {
+        synchronized (lock) {
+            if (disk == null) {
+                return;
+            }
+            try {
+                disk.close();
+            } catch (IOException e) {
+                log.accept("swarm: ledger close failed (" + e.getMessage() + ")");
+            }
+            disk = null;
+        }
+    }
+
+    private void applyReplay(SwarmLedger.Replay replay) {
+        for (SwarmLedger.Closed closed : replay.closed.values()) {
+            if (closed.hash.isEmpty() || ledger.containsKey(closed.id)) {
+                continue;
+            }
+            Tracked t = new Tracked(closed.id, closed.name, closed.hash,
+                    ExecutionState.transit(null, ExecutionState.ACCEPTED), closed.obs, true);
+            restoreExecution(t, closed.exec);
+            t.observation = closed.obs;
+            t.rejectReason = closed.reason.isEmpty() ? null : closed.reason;
+            t.storedAtMs = closed.atMs;
+            t.worldMutation = nonIdempotent(closed.name);
+            ledger.put(closed.id, t);
+            ended.add(closed.id);
+        }
+        while (ledger.size() > LEDGER_CAP) {
+            int before = ledger.size();
+            evictTerminal();
+            if (ledger.size() == before) {
+                break;
+            }
+        }
+        for (SwarmLedger.OpenStart start : replay.open.values()) {
+            if (!ledger.containsKey(start.id)) {
+                doubts.put(start.id, new Doubt(start.name, start.hash, start.note, start.args));
+            }
+        }
+        for (SwarmLedger.SentImage image : replay.sent.values()) {
+            if (image.body == null || image.body.isEmpty() || outbound.containsKey(image.id)) {
+                continue;
+            }
+            Sent s = new Sent(image.id, image.target, image.body, image.deadline);
+            s.leased = image.leased;
+            s.acked = image.acked;
+            s.accepted = image.accepted;
+            s.gaveUp = image.gaveUp;
+            s.fenced = image.fenced;
+            s.sends = Math.max(1, image.sends);
+            s.nextRetry = clock.getAsLong();
+            s.ackReason = image.reason;
+            s.execution = image.exec;
+            s.observation = image.obs;
+            outbound.put(image.id, s);
+        }
+    }
+
+    private static void restoreExecution(Tracked t, ExecutionState exec) {
+        if (exec == null || exec == ExecutionState.ACCEPTED) {
+            return;
+        }
+        if (exec == ExecutionState.FAILED || exec == ExecutionState.CANCELED) {
+            t.execution = ExecutionState.transit(t.execution, exec);
+            return;
+        }
+        t.execution = ExecutionState.transit(t.execution, ExecutionState.RUNNING);
+        if (exec.terminal()) {
+            t.execution = ExecutionState.transit(t.execution, exec);
+        }
+    }
+
+    /** Caller holds {@link #lock}. A terminal place/break/transfer gets an END line, once. */
+    private void noteTerminal(Tracked t) {
+        if (t == null || disk == null || !t.started || t.execution == null || !t.execution.terminal()) {
+            return;
+        }
+        if (!nonIdempotent(t.name) && !t.worldMutation) {
+            return;
+        }
+        if (!ended.add(t.id)) {
+            return;
+        }
+        doubts.remove(t.id);
+        try {
+            disk.end(clock.getAsLong(), t.id, t.execution,
+                    t.observation == null ? ObservationState.UNKNOWN : t.observation, t.rejectReason);
+        } catch (IOException e) {
+            ended.remove(t.id);
+            log.accept("swarm: ledger write failed (" + e.getMessage() + ")");
+        }
+    }
+
+    /** Caller holds {@link #lock}. Null when the ledger is full. */
+    private Tracked recordDone(UUID id, String name, String hash, String issuer) {
+        Tracked existing = ledger.get(id);
+        if (existing != null) {
+            return existing;
+        }
+        sweepExpired();
+        evictTerminal();
+        if (ledger.size() >= LEDGER_CAP) {
+            return null;
+        }
+        Tracked t = new Tracked(id, name, hash, ExecutionState.transit(null, ExecutionState.ACCEPTED),
+                ObservationState.CONFIRMED, true);
+        t.execution = ExecutionState.transit(t.execution, ExecutionState.RUNNING);
+        t.execution = ExecutionState.transit(t.execution, ExecutionState.SUCCEEDED);
+        t.observation = ObservationState.CONFIRMED;
+        t.issuer = issuer;
+        t.storedAtMs = clock.getAsLong();
+        t.worldMutation = nonIdempotent(name);
+        ledger.put(id, t);
+        noteTerminal(t);
+        log.accept("swarm: " + id + " already done (" + name + "); not repeating");
+        return t;
+    }
+
+    private boolean persistNewSent(Sent s) {
+        if (disk == null) {
+            return !ledgerBroken;
+        }
+        try {
+            disk.sent(clock.getAsLong(), s.id, s.target, s.deadline, s.leased, s.body);
+            return true;
+        } catch (IOException e) {
+            log.accept("swarm: ledger write failed (" + e.getMessage() + ")");
+            return false;
+        }
+    }
+
+    /** Caller holds {@link #lock}. */
+    private void persistOutbound(Sent s) {
+        if (disk == null || s == null) {
+            return;
+        }
+        try {
+            disk.state(clock.getAsLong(), s.id, s.acked, s.accepted, s.gaveUp, s.fenced, s.sends, s.execution,
+                    s.observation, s.ackReason);
+        } catch (IOException e) {
+            log.accept("swarm: ledger write failed (" + e.getMessage() + ")");
+        }
+    }
+
+    /** Caller holds {@link #lock}. False when the START line could not be forced to disk. */
+    private boolean persistStart(Parsed p) {
+        if (disk == null) {
+            return !ledgerBroken;
+        }
+        String note = "";
+        EffectCheck check = effectCheck;
+        if (check != null) {
+            try {
+                String captured = check.capture(p.id, p.name, p.args);
+                note = captured == null ? "" : captured;
+            } catch (RuntimeException e) {
+                note = "";
+            }
+        }
+        try {
+            disk.start(clock.getAsLong(), p.id, p.name, p.hash, p.args == null ? "" : p.args, note);
+            doubts.put(p.id, new Doubt(p.name, p.hash, note, p.args == null ? "" : p.args));
+            return true;
+        } catch (IOException e) {
+            log.accept("swarm: ledger write failed (" + e.getMessage() + ")");
+            return false;
+        }
+    }
+
+    private EffectCheck.Verdict effectVerdict(Parsed p, Doubt open) {
+        EffectCheck check = effectCheck;
+        if (check == null) {
+            return EffectCheck.Verdict.UNKNOWN;
+        }
+        try {
+            EffectCheck.Verdict verdict = check.evaluate(p.id, p.name, p.args, open.note);
+            return verdict == null ? EffectCheck.Verdict.UNKNOWN : verdict;
+        } catch (RuntimeException e) {
+            return EffectCheck.Verdict.UNKNOWN;
+        }
+    }
+
+    private static boolean doubtful(String name, CommandCatalog.Entry entry) {
+        return nonIdempotent(name) || (entry != null && entry.worldMutation);
+    }
+
+    /**
+     * Ostinato: an open START whose block or inventory already shows the effect is recorded done, with no
+     * {@link Executor#start}. Called every tick so a chunk that loads after relaunch is checked before any retry.
+     */
+    private void reconcileDoubts() {
+        List<UUID> ids = new ArrayList<>();
+        List<Doubt> copy = new ArrayList<>();
+        synchronized (lock) {
+            if (disk == null || effectCheck == null || doubts.isEmpty()) {
+                return;
+            }
+            for (Map.Entry<UUID, Doubt> e : doubts.entrySet()) {
+                if (ledger.containsKey(e.getKey())) {
+                    continue;
+                }
+                ids.add(e.getKey());
+                copy.add(e.getValue());
+            }
+        }
+        for (int i = 0; i < ids.size(); i++) {
+            Doubt d = copy.get(i);
+            EffectCheck.Verdict verdict;
+            try {
+                verdict = effectCheck.evaluate(ids.get(i), d.name, d.args, d.note);
+            } catch (RuntimeException e) {
+                verdict = EffectCheck.Verdict.UNKNOWN;
+            }
+            if (verdict != EffectCheck.Verdict.DONE) {
+                continue;
+            }
+            synchronized (lock) {
+                if (ledger.containsKey(ids.get(i)) || !doubts.containsKey(ids.get(i))) {
+                    continue;
+                }
+                recordDone(ids.get(i), d.name, d.hash, null);
+            }
         }
     }
 
@@ -165,6 +476,20 @@ public final class CommandProtocol {
 
     /** Tell peers what this bot can do. The body is sealed by {@link Wire}; this method does not sign. */
     public void advertise() {
+        boolean query;
+        synchronized (lock) {
+            query = !unknownPeersLocked().isEmpty();
+            if (query) {
+                armCapsProbeLocked(clock.getAsLong()); // Ostinato: this hello is the probe for now.
+            }
+        }
+        sendHello("*", query, query ? SwarmPriority.HIGH : SwarmPriority.NORMAL);
+    }
+
+    // Ostinato: a query asks the receiver to answer; a plain hello only announces. Queries and their answers go
+    // HIGH: a relaunched coordinator refuses every lease until it has the caps, so they must not wait behind
+    // NORMAL traffic in a chat queue (live 11-12: caps took 158 s).
+    private void sendHello(String to, boolean query, SwarmPriority priority) {
         CapabilityDescriptor caps;
         synchronized (lock) {
             caps = localCaps;
@@ -172,15 +497,59 @@ public final class CommandProtocol {
         if (caps == null || !caps.understood()) {
             return;
         }
-        wire.send("*", TYPE_HELLO, "1|hello|" + self.memberId() + "|" + self.signetKeyId() + "|" + caps.encode());
+        wire.send(to, TYPE_HELLO, "1|" + (query ? HELLO_QUERY : "hello") + "|" + self.memberId() + "|"
+                + self.signetKeyId() + "|" + caps.encode(), priority);
+    }
+
+    // Ostinato: online roster peers whose caps this bot does not know yet.
+    private List<String> unknownPeersLocked() {
+        List<String> unknown = new ArrayList<>();
+        for (String m : onlineMembers) {
+            if (!peerCaps.containsKey(m)) {
+                unknown.add(m);
+            }
+        }
+        java.util.Collections.sort(unknown);
+        return unknown;
+    }
+
+    private void armCapsProbeLocked(long now) {
+        nextCapsProbe = now + capsProbeGap;
+        capsProbeGap = Math.min(CAPS_PROBE_MAX_MS, capsProbeGap * 2);
+    }
+
+    // Ostinato: ask again, with backoff, while an online peer's caps are unknown. A lost hello or reply
+    // otherwise left a relaunched coordinator refusing every lease ("bot capabilities are unknown").
+    private void probeCaps(long now) {
+        List<String> unknown;
+        synchronized (lock) {
+            unknown = unknownPeersLocked();
+            if (unknown.isEmpty()) {
+                capsProbeGap = CAPS_PROBE_MIN_MS;
+                nextCapsProbe = Long.MAX_VALUE;
+                return;
+            }
+            if (!linkUp || now < nextCapsProbe) {
+                return;
+            }
+        }
+        log.accept("swarm: asking for caps, unknown " + unknown);
+        advertise();
     }
 
     // Ostinato: reconnect the existing protocol without discarding its command ledger.
     public void onReconnect() {
+        List<Decision> late;
         synchronized (lock) {
             linkUp = true;
+            late = new ArrayList<>(deferredAcks); // Ostinato: lease outcomes recorded while disconnected.
+            deferredAcks.clear();
         }
         advertise();
+        if (!late.isEmpty()) {
+            log.accept("swarm: reporting " + late.size() + " outcome(s) recorded while the link was down");
+            sendAll(late);
+        }
     }
 
     // Ostinato: one hello per online roster change, including peers returning after leaving.
@@ -191,13 +560,30 @@ public final class CommandProtocol {
             peers.retainAll(members);
             peers.remove(self.memberId());
             joined = !onlineMembers.containsAll(peers);
+            // Ostinato: forget a departed peer's caps. A relaunched peer's startup hello then reads as
+            // new and gets our hello back; our join-edge hello can land before its protocol exists.
+            for (String gone : onlineMembers) {
+                if (!peers.contains(gone)) {
+                    peerCaps.remove(gone);
+                }
+            }
             onlineMembers.clear();
             onlineMembers.addAll(peers);
+            if (joined) {
+                capsProbeGap = CAPS_PROBE_MIN_MS; // Ostinato: a fresh join probes quickly again.
+            }
         }
         if (joined) {
             advertise();
         }
         return joined;
+    }
+
+    /** Ostinato: command frames queued again by {@link #pump()} because no ack came yet. */
+    public long retried() {
+        synchronized (lock) {
+            return retried;
+        }
     }
 
     public boolean linkUp() {
@@ -223,6 +609,42 @@ public final class CommandProtocol {
      * @param previousId a command whose observation is unknown; mine and place are not retried
      */
     public String submit(String target, String commandLine, long deadlineMs, boolean dryRun, UUID previousId) {
+        return submit(target, commandLine, deadlineMs, dryRun, previousId, null);
+    }
+
+    /**
+     * Ostinato: send a command bound to a lease the coordinator already granted. The id is the lease's
+     * {@code commandId}, so the bot can match command and lease. The grant is sent before this.
+     */
+    public String submitLeased(String target, String commandLine, UUID commandId) {
+        return submit(target, commandLine, clock.getAsLong() + DEFAULT_DEADLINE_MS, false, null,
+                Objects.requireNonNull(commandId));
+    }
+
+    /**
+     * Ostinato: why {@link #submitLeased} would refuse this command line before sending it, or null. The lease
+     * coordinator asks this before offering, so a lease is never granted for a command that cannot be sent.
+     */
+    public String leaseRefusal(String target, String commandLine) {
+        if (target == null || target.isBlank() || commandLine == null || commandLine.isBlank()) {
+            return "send needs a target and a command";
+        }
+        String name = commandName(commandLine);
+        synchronized (lock) {
+            if (nonIdempotent(name) && mutationUnknownLocked(name)) {
+                return "not retrying " + name + " while observation is unknown";
+            }
+        }
+        if (!validToken(name) || !validToken(target.trim())) {
+            return "bad target or command name";
+        }
+        // Ostinato: the same side-effect-free checks submit() runs before sending (args, permission, caps).
+        String refused = allocatorRefuse(target.trim(), name, commandArgs(commandLine), false);
+        return refused == null ? null : refused.replaceFirst("^swarm: ", "");
+    }
+
+    private String submit(String target, String commandLine, long deadlineMs, boolean dryRun, UUID previousId,
+                          UUID givenId) {
         String parsedName = commandName(commandLine);
         synchronized (lock) {
             if (previousId != null && !mayRetry(previousId, parsedName)) {
@@ -253,13 +675,22 @@ public final class CommandProtocol {
         if (deadlineMs <= now) {
             return "swarm: deadline is already past";
         }
-        UUID id = UUID.randomUUID();
+        UUID id = givenId != null ? givenId : UUID.randomUUID(); // Ostinato: leased commands reuse the lease's id.
         String body = encodeCmd(id, self.memberId(), target.trim(), name, args, now, deadlineMs, dryRun);
         Sent sent = new Sent(id, target.trim(), body, deadlineMs);
+        sent.leased = givenId != null; // Ostinato:
         synchronized (lock) {
             outbound.put(id, sent);
+            // The SENT line is forced before the wire sees the body, so a crash still knows this id.
+            if (!persistNewSent(sent)) {
+                outbound.remove(id);
+                String failed = "swarm: ledger unwritable";
+                log.accept(failed);
+                return failed;
+            }
         }
-        boolean queued = wire.send(sent.target, TYPE_CMD, body, commandPriority(name));
+        boolean queued = wire.send(sent.target, TYPE_CMD, body, sendPriority(sent, commandPriority(name)),
+                deadlineOf(sent, now));
         synchronized (lock) {
             if (queued) {
                 sent.sends = 1;
@@ -271,6 +702,29 @@ public final class CommandProtocol {
         // Ostinato: callers display the queued line; it is not an ack.
         String line = "swarm: sent " + id + " to " + sent.target + " (awaiting ack)";
         return line;
+    }
+
+    /**
+     * Ostinato: the lease bound to command {@code id} ended and its deadline plus margin passed, so the old holder
+     * no longer holds authorization for it. Its observation stays unknown; it just stops blocking new leased work.
+     */
+    public void fenced(UUID id) {
+        if (id == null) {
+            return;
+        }
+        synchronized (lock) {
+            Sent s = outbound.get(id);
+            if (s != null) {
+                s.fenced = true;
+                if (disk != null) {
+                    try {
+                        disk.fenced(clock.getAsLong(), id);
+                    } catch (IOException e) {
+                        log.accept("swarm: ledger write failed (" + e.getMessage() + ")");
+                    }
+                }
+            }
+        }
     }
 
     /** False for mine/place (and other non-idempotent acts) when the previous observation is unknown. */
@@ -298,7 +752,8 @@ public final class CommandProtocol {
             return false;
         }
         for (Sent s : outbound.values()) {
-            if (s.observation == ObservationState.UNKNOWN && nonIdempotent(nameOfBody(s.body))) {
+            // Ostinato: a fenced command stays observation-unknown but no longer blocks a new leased one.
+            if (s.observation == ObservationState.UNKNOWN && !s.fenced && nonIdempotent(nameOfBody(s.body))) {
                 return true;
             }
         }
@@ -350,6 +805,7 @@ public final class CommandProtocol {
                         s.execution = ExecutionState.RUNNING;
                     }
                     log.accept("swarm: gave up on " + s.id + " at deadline; running, observation unknown");
+                    persistOutbound(s);
                     continue;
                 }
                 // Retries only while the link is up. A transport accept is still not an ack.
@@ -358,16 +814,18 @@ public final class CommandProtocol {
                 }
             }
         }
+        probeCaps(now); // Ostinato:
         for (Sent s : due) {
             if (!linkUp()) {
                 break;
             }
             // Ostinato: ordinary retries yield to safety commands and acknowledgements.
-            SwarmPriority priority = commandPriority(nameOfBody(s.body)) == SwarmPriority.HIGH
-                    ? SwarmPriority.HIGH : SwarmPriority.LOW;
-            boolean queued = wire.send(s.target, TYPE_CMD, s.body, priority);
+            SwarmPriority priority = sendPriority(s, commandPriority(nameOfBody(s.body)) == SwarmPriority.HIGH
+                    ? SwarmPriority.HIGH : SwarmPriority.LOW);
+            boolean queued = wire.send(s.target, TYPE_CMD, s.body, priority, deadlineOf(s, now));
             synchronized (lock) {
                 if (queued) {
+                    retried++; // Ostinato: link monitor counter.
                     s.sends++;
                     s.nextRetry = now + retryDelay(s.sends);
                 } else {
@@ -380,6 +838,19 @@ public final class CommandProtocol {
     // Ostinato: allow the slow whisper queue to drain; cap exponential backoff at 30 seconds.
     private long retryDelay(int sends) {
         return Math.min(30_000L, Math.min(retryMs, 30_000L) * (1L << Math.min(sends + 1, 15)));
+    }
+
+    /**
+     * Ostinato: a command bound to a lease goes at HIGH, first send and retries alike. Its lease is already running
+     * and the holder needs the command before it ends: live b11r2 had one wait behind lease traffic until its deadline.
+     */
+    private static SwarmPriority sendPriority(Sent s, SwarmPriority otherwise) {
+        return s.leased ? SwarmPriority.HIGH : otherwise;
+    }
+
+    // Ostinato: the sender stops waiting at the command's deadline; a line still queued then is logged once.
+    private static SwarmRateLimiter.Deadline deadlineOf(Sent s, long now) {
+        return new SwarmRateLimiter.Deadline(s.deadline - now, "command " + s.id + (s.leased ? " (leased)" : ""));
     }
 
     // Ostinato: safety commands preempt ordinary traffic, including on redelivery.
@@ -414,6 +885,11 @@ public final class CommandProtocol {
             log.accept("swarm: rejected bad payload (" + e.getMessage() + ")");
             return;
         }
+        process(transport, from, p);
+    }
+
+    // Ostinato: split from receive so a command held for its lease grant can be decided again later.
+    private void process(String transport, String from, Parsed p) {
         Decision d;
         synchronized (lock) {
             d = decide(transport, from, p);
@@ -457,10 +933,15 @@ public final class CommandProtocol {
                 if (ok && boom == null && "pause".equals(d.name)) {
                     ownerEmergency = true;
                 }
+                noteTerminal(t);
                 ack = ackBody(t);
             }
             if (ok && boom == null && "disconnect".equals(d.name)) {
                 onDisconnect();
+            }
+            LeaseHooks hooks = leaseHooks;
+            if (ok && boom == null && hooks != null) {
+                hooks.started(d.id, d.name); // Ostinato: lets the guard watch the leased process.
             }
             wire.send(from, TYPE_ACK, ack, SwarmPriority.HIGH); // Ostinato: acks preempt retries.
             return;
@@ -474,8 +955,7 @@ public final class CommandProtocol {
                     confirmed = false;
                 }
             }
-            String ack;
-            Decision targetAck = null; // Ostinato: snapshot the original outcome under the lock.
+            List<Decision> sends = new ArrayList<>(); // Ostinato: snapshot every ack under the lock.
             synchronized (lock) {
                 Tracked cancel = ledger.get(d.id);
                 Tracked target = d.cancelTarget == null ? null : ledger.get(d.cancelTarget);
@@ -489,41 +969,39 @@ public final class CommandProtocol {
                             move(target, ExecutionState.RUNNING);
                             target.observation = ObservationState.UNKNOWN;
                         }
-                    } else if (confirmed && target != null && !targetTerminal) {
-                        move(cancel, ExecutionState.RUNNING);
-                        move(cancel, ExecutionState.SUCCEEDED);
-                        cancel.observation = ObservationState.CONFIRMED;
-                        move(target, ExecutionState.RUNNING);
-                        move(target, ExecutionState.CANCELED);
-                        target.observation = ObservationState.CONFIRMED;
-                        target.rejectReason = null;
-                        targetAck = outcomeAck(target); // Ostinato: notify the original issuer too.
+                        sends.add(Decision.ack(from, ackBody(cancel)));
                     } else if (targetTerminal) {
                         // Verified finish won. The stop is not confirmed and must not rewrite the result.
                         move(cancel, ExecutionState.RUNNING);
                         cancel.observation = ObservationState.UNKNOWN;
                         cancel.rejectReason = "already-finished";
-                    } else {
-                        // Not confirmed (still running, or no such command). Unknown, never canceled.
+                        sends.add(Decision.ack(from, ackBody(cancel)));
+                    } else if (target == null) {
+                        // No such command. Unknown, never canceled.
                         move(cancel, ExecutionState.RUNNING);
                         cancel.observation = ObservationState.UNKNOWN;
-                        if (target != null && !targetTerminal) {
-                            move(target, ExecutionState.RUNNING);
-                            target.observation = ObservationState.UNKNOWN;
+                        sends.add(Decision.ack(from, ackBody(cancel)));
+                    } else {
+                        // Ostinato: pathing often outlives the first check. Hold the stop open and
+                        // re-check once per tick (pumpStops) until confirmed or the window runs out.
+                        PendingStop pending = pendingStops.get(target.id);
+                        if (pending == null) {
+                            pending = new PendingStop(target.id, CANCEL_CONFIRM_WINDOW_TICKS);
+                            pendingStops.put(target.id, pending);
+                        }
+                        move(cancel, ExecutionState.RUNNING);
+                        cancel.observation = ObservationState.CONFIRMED;
+                        pending.attach(cancel.id, from);
+                        if (confirmed) {
+                            settleStop(pending, true, sends);
+                        } else {
+                            sends.add(Decision.ack(from, ackBody(cancel))); // Ostinato: interim, non-terminal.
                         }
                     }
-                    ack = ackBody(cancel);
-                } else {
-                    ack = null;
                 }
             }
-            // Ostinato: send the original outcome outside the protocol lock.
-            if (targetAck != null) {
-                wire.send(targetAck.replyTo, TYPE_ACK, targetAck.ack, SwarmPriority.HIGH);
-            }
-            if (ack != null) {
-                wire.send(from, TYPE_ACK, ack, SwarmPriority.HIGH); // Ostinato: acks preempt retries.
-            }
+            // Ostinato: send outcomes outside the protocol lock; acks preempt retries.
+            sendAll(sends);
             return;
         }
         if (d.ack != null) {
@@ -546,6 +1024,15 @@ public final class CommandProtocol {
                     t.observation = ObservationState.UNKNOWN;
                 }
             }
+            // Ostinato: an open stop window ends here as unknown. Nothing is sent now or on reconnect,
+            // and the stopped command no longer holds the busy slot.
+            for (PendingStop p : pendingStops.values()) {
+                Tracked target = ledger.get(p.target);
+                if (target != null && !target.execution.terminal()) {
+                    target.slotReleased = true;
+                }
+            }
+            pendingStops.clear();
             long now = clock.getAsLong();
             for (Sent s : outbound.values()) {
                 if (s.gaveUp) {
@@ -581,13 +1068,22 @@ public final class CommandProtocol {
     } // Ostinato:
 
     public void pollExecutions() {
+        reconcileDoubts(); // Ostinato: a crashed place/break/transfer is checked before any retry.
+        pumpStops(); // Ostinato: one stop re-check per tick, before outcomes are polled.
+        pumpLeaseStops(); // Ostinato: lease expiry stops run with or without the link.
+        sweepHeld();
+        pumpApproaches(); // Ostinato: Phase 2c part 2, walk-to-verify
         List<UUID> running = new ArrayList<>();
         synchronized (lock) {
             if (!linkUp) {
                 return;
             }
+            idleUnknown.removeIf(i -> ledger.get(i) == null || ledger.get(i).execution.terminal()); // Ostinato:
             for (Tracked t : ledger.values()) {
-                if (t.started && t.execution == ExecutionState.RUNNING && t.observation != ObservationState.UNKNOWN) {
+                if (t.started && t.execution == ExecutionState.RUNNING
+                        && (t.observation != ObservationState.UNKNOWN || idleUnknown.contains(t.id))
+                        && !pendingStops.containsKey(t.id) // Ostinato: a stopping command is settled by its cancel.
+                        && !leaseStops.containsKey(t.id) && !t.leaseEnded) { // Ostinato: or by its lease end.
                     running.add(t.id);
                 }
             }
@@ -600,6 +1096,22 @@ public final class CommandProtocol {
                 next = null;
             }
             if (next == null || next == ExecutionState.RUNNING || next == ExecutionState.ACCEPTED) {
+                boolean idle;
+                try {
+                    idle = executor.unverifiedIdle(id);
+                } catch (RuntimeException e) {
+                    idle = false;
+                }
+                if (idle) { // Ostinato: stopped without a verified result: running, observation unknown
+                    synchronized (lock) {
+                        Tracked t = ledger.get(id);
+                        if (t != null && !t.execution.terminal() && t.observation != ObservationState.UNKNOWN) {
+                            t.observation = ObservationState.UNKNOWN;
+                            idleUnknown.add(id);
+                            log.accept("swarm: " + id + " went idle without a verified result; running, observation unknown");
+                        }
+                    }
+                }
                 continue;
             }
             Decision outcome = null; // Ostinato: capture send work while locked.
@@ -608,7 +1120,8 @@ public final class CommandProtocol {
                     return;
                 }
                 Tracked t = ledger.get(id);
-                if (t == null || t.execution.terminal()) {
+                if (t == null || t.execution.terminal() || pendingStops.containsKey(id) // Ostinato:
+                        || leaseStops.containsKey(id) || t.leaseEnded) {
                     continue;
                 }
                 if (t.ambiguous) {
@@ -619,6 +1132,8 @@ public final class CommandProtocol {
                     try {
                         move(t, next);
                         t.observation = ObservationState.CONFIRMED;
+                        idleUnknown.remove(id);
+                        noteTerminal(t);
                         outcome = outcomeAck(t); // Ostinato: publish verified terminal results.
                     } catch (IllegalStateException refused) {
                         log.accept("swarm: refused illegal outcome " + t.id + " " + refused.getMessage());
@@ -628,6 +1143,248 @@ public final class CommandProtocol {
             // Ostinato: wire callbacks must not run under the protocol lock.
             if (outcome != null) {
                 wire.send(outcome.replyTo, TYPE_ACK, outcome.ack, SwarmPriority.HIGH);
+            }
+        }
+    }
+
+    // ---- Ostinato: Phase 2a leases ----------------------------------------------------------------------
+
+    /** Lease checks for lease-needing commands. Null turns leases off (exactly Phase 1 behaviour). */
+    public void setLeaseHooks(LeaseHooks hooks) {
+        leaseHooks = hooks;
+    }
+
+    /** The grant for {@code commandId} arrived: a command that overtook it is decided now. */
+    public void leaseGranted(UUID commandId) {
+        Held h;
+        synchronized (lock) {
+            h = held.remove(commandId);
+        }
+        if (h != null) {
+            log.accept("swarm: lease granted for held " + commandId + "; deciding it now");
+            process(h.transport, h.from, h.p);
+        }
+    }
+
+    /**
+     * The lease bound to {@code commandId} is no longer valid. A held command is rejected {@code nolease}. A
+     * started one is stopped (only the leased process, never survival): a confirmed stop ends canceled/confirmed
+     * with {@code reason}; no confirmation inside the window leaves it running/unknown. Never succeeded or
+     * failed. The outcome goes to the issuer now, or at reconnect when the link is down.
+     */
+    public void leaseExpired(UUID commandId, String reason) {
+        List<Decision> sends = new ArrayList<>();
+        synchronized (lock) {
+            Held h = held.remove(commandId);
+            if (h != null) {
+                log.accept("swarm: rejected held " + commandId + " nolease (" + reason + ")");
+                sends.add(Decision.ack(h.from, rememberReject(h.p, "nolease")));
+            } else {
+                Tracked t = ledger.get(commandId);
+                if (t != null && t.started && !t.execution.terminal() && !t.leaseEnded
+                        && !leaseStops.containsKey(commandId)) {
+                    leaseStops.put(commandId, new LeaseStop(reason, CANCEL_CONFIRM_WINDOW_TICKS));
+                    log.accept("swarm: lease for " + commandId + " ended (" + reason + "); stopping the leased process");
+                }
+            }
+        }
+        deliver(sends);
+    }
+
+    /** True while a lease stop for {@code commandId} still waits for confirmation. */
+    public boolean leaseStopping(UUID commandId) {
+        synchronized (lock) {
+            return leaseStops.containsKey(commandId);
+        }
+    }
+
+    /** True while {@code commandId} waits for its grant. */
+    public boolean isHeld(UUID commandId) {
+        synchronized (lock) {
+            return held.containsKey(commandId);
+        }
+    }
+
+    // Ostinato: one lease-stop check per tick, link or no link: the bot must stop at its own deadline.
+    private void pumpLeaseStops() {
+        LeaseHooks hooks = leaseHooks;
+        List<UUID> ids;
+        synchronized (lock) {
+            if (leaseStops.isEmpty()) {
+                return;
+            }
+            ids = new ArrayList<>(leaseStops.keySet());
+        }
+        for (UUID id : ids) {
+            boolean confirmed;
+            try {
+                confirmed = hooks != null && hooks.stopLeased(id);
+            } catch (RuntimeException e) {
+                confirmed = false;
+            }
+            List<Decision> sends = new ArrayList<>();
+            synchronized (lock) {
+                LeaseStop stop = leaseStops.get(id);
+                if (stop == null) {
+                    continue;
+                }
+                Tracked t = ledger.get(id);
+                if (t == null || t.execution.terminal()) {
+                    leaseStops.remove(id); // An explicit cancel or the executor settled it; that outcome stands.
+                    if (t != null) {
+                        t.leaseEnded = true;
+                    }
+                    continue;
+                }
+                if (confirmed) {
+                    leaseStops.remove(id);
+                    move(t, ExecutionState.RUNNING);
+                    move(t, ExecutionState.CANCELED);
+                    t.observation = ObservationState.CONFIRMED;
+                    t.endReason = stop.reason;
+                    t.leaseEnded = true;
+                    noteTerminal(t);
+                    log.accept("swarm: " + id + " canceled (confirmed) reason=" + stop.reason);
+                } else if (--stop.ticksLeft <= 0) {
+                    leaseStops.remove(id);
+                    move(t, ExecutionState.RUNNING);
+                    t.observation = ObservationState.UNKNOWN;
+                    t.slotReleased = true;
+                    t.endReason = stop.reason;
+                    t.leaseEnded = true;
+                    log.accept("swarm: " + id + " stop not confirmed after " + stop.reason
+                            + "; running/unknown, never retried");
+                } else {
+                    continue;
+                }
+                Decision outcome = outcomeAck(t);
+                if (outcome != null) {
+                    sends.add(outcome);
+                }
+            }
+            deliver(sends);
+        }
+    }
+
+    // Ostinato: a command that waited HOLD_MS without its grant is rejected nolease.
+    private void sweepHeld() {
+        List<Decision> sends = new ArrayList<>();
+        synchronized (lock) {
+            if (held.isEmpty()) {
+                return;
+            }
+            long now = clock.getAsLong();
+            for (Iterator<Held> it = held.values().iterator(); it.hasNext(); ) {
+                Held h = it.next();
+                if (now >= h.deadline) {
+                    it.remove();
+                    String why = h.scoped ? "unauthorized" : "nolease"; // Ostinato: no lease, no lease-scoped authority
+                    log.accept("swarm: rejected " + h.p.id + " " + why + " (no grant within " + HOLD_MS + " ms)");
+                    sends.add(Decision.ack(h.from, rememberReject(h.p, why)));
+                }
+            }
+        }
+        deliver(sends);
+    }
+
+    // Ostinato: send now when the link is up, else keep for onReconnect. Never call under the lock.
+    private void deliver(List<Decision> sends) {
+        if (sends.isEmpty()) {
+            return;
+        }
+        boolean up;
+        synchronized (lock) {
+            up = linkUp;
+            if (!up) {
+                deferredAcks.addAll(sends);
+            }
+        }
+        if (up) {
+            sendAll(sends);
+        }
+    }
+
+    // Ostinato: re-check every open stop once. Called once per client tick from pollExecutions.
+    private void pumpStops() {
+        List<UUID> targets;
+        synchronized (lock) {
+            if (!linkUp || pendingStops.isEmpty()) {
+                return;
+            }
+            targets = new ArrayList<>(pendingStops.keySet());
+        }
+        for (UUID id : targets) {
+            boolean confirmed;
+            try {
+                confirmed = executor.confirmStopped(id);
+            } catch (RuntimeException e) {
+                confirmed = false;
+            }
+            List<Decision> sends = new ArrayList<>();
+            synchronized (lock) {
+                PendingStop pending = pendingStops.get(id);
+                if (!linkUp || pending == null) {
+                    continue; // Ostinato: settled meanwhile, or the link drop already ended it.
+                }
+                if (confirmed) {
+                    settleStop(pending, true, sends);
+                } else if (--pending.ticksLeft <= 0) {
+                    settleStop(pending, false, sends);
+                }
+            }
+            sendAll(sends);
+        }
+    }
+
+    // Ostinato: caller holds lock. Ends one stop window with exactly one target outcome and one
+    // final ack per attached cancel. Unconfirmed ends as running/unknown and frees the busy slot.
+    private void settleStop(PendingStop pending, boolean confirmed, List<Decision> sends) {
+        pendingStops.remove(pending.target);
+        Tracked target = ledger.get(pending.target);
+        boolean finished = target == null || target.execution.terminal();
+        boolean canceled = confirmed && !finished;
+        if (!finished) {
+            move(target, ExecutionState.RUNNING);
+            if (canceled) {
+                move(target, ExecutionState.CANCELED);
+                target.observation = ObservationState.CONFIRMED;
+                target.rejectReason = null;
+                noteTerminal(target);
+            } else {
+                target.observation = ObservationState.UNKNOWN;
+                target.slotReleased = true;
+                log.accept("swarm: stop of " + target.id + " not confirmed in "
+                        + CANCEL_CONFIRM_WINDOW_TICKS + " ticks; observation unknown");
+            }
+            Decision outcome = outcomeAck(target); // Ostinato: notify the original issuer too.
+            if (outcome != null) {
+                sends.add(outcome);
+            }
+        }
+        for (int i = 0; i < pending.cancels.size(); i++) {
+            Tracked cancel = ledger.get(pending.cancels.get(i));
+            if (cancel == null || cancel.execution.terminal()) {
+                continue;
+            }
+            move(cancel, ExecutionState.RUNNING);
+            if (canceled) {
+                move(cancel, ExecutionState.SUCCEEDED);
+                cancel.observation = ObservationState.CONFIRMED;
+            } else {
+                cancel.observation = ObservationState.UNKNOWN;
+                if (finished) {
+                    cancel.rejectReason = "already-finished";
+                }
+            }
+            sends.add(Decision.ack(pending.replyTo.get(i), ackBody(cancel)));
+        }
+    }
+
+    // Ostinato: never call under the protocol lock.
+    private void sendAll(List<Decision> sends) {
+        for (Decision d : sends) {
+            if (d.replyTo != null && d.ack != null) {
+                wire.send(d.replyTo, TYPE_ACK, d.ack, SwarmPriority.HIGH);
             }
         }
     }
@@ -683,6 +1440,29 @@ public final class CommandProtocol {
         }
     }
 
+    /**
+     * Ostinato: Phase 3 read API. The newest {@code max} commands in this bot's ledger (what it was asked to run), as
+     * command-center feed records. A copy taken under the protocol lock; nothing is changed.
+     */
+    public List<baritone.swarm.center.feed.BotFeed.Execution> feedExecutions(int max) {
+        synchronized (lock) {
+            long now = clock.getAsLong();
+            List<Tracked> all = new ArrayList<>(ledger.values());
+            all.sort((a, b) -> Long.compare(b.storedAtMs, a.storedAtMs));
+            List<baritone.swarm.center.feed.BotFeed.Execution> out = new ArrayList<>();
+            for (Tracked t : all) {
+                if (out.size() >= max) {
+                    break;
+                }
+                out.add(new baritone.swarm.center.feed.BotFeed.Execution(String.valueOf(t.id), t.name, t.issuer,
+                        t.execution == null ? "" : t.execution.name().toLowerCase(java.util.Locale.ROOT),
+                        t.observation == null ? "unknown" : t.observation.name().toLowerCase(java.util.Locale.ROOT),
+                        Math.max(0, now - t.storedAtMs), t.endReason));
+            }
+            return out;
+        }
+    }
+
     public ISwarmStatusView openStatusView() {
         StatusView view = new StatusView();
         synchronized (lock) {
@@ -703,7 +1483,21 @@ public final class CommandProtocol {
         }
     }
 
+    // Ostinato: Phase 2c part 2. A command that was held for its approach and is now decided another way leaves the
+    // approach: started (verified), or rejected for any reason, in which case the lease's approach is ended too.
     private Decision decide(String transport, String from, Parsed p) {
+        holdingForApproach = false;
+        Decision d = decide0(transport, from, p);
+        if (!holdingForApproach && approaching.remove(p.id) != null && d.kind != Kind.START) {
+            LeaseHooks hooks = leaseHooks;
+            if (hooks != null) {
+                hooks.approachEnded(p.id, null);
+            }
+        }
+        return d;
+    }
+
+    private Decision decide0(String transport, String from, Parsed p) {
         if (!validToken(from) || !from.equals(p.issuer)) {
             log.accept("swarm: rejected forged command " + p.id + " on " + transport);
             return Decision.ack(from, rejectAck(p.id, "forged", ExecutionState.FAILED));
@@ -719,21 +1513,51 @@ public final class CommandProtocol {
             }
             return Decision.ack(from, rememberReject(p, "wrong-target"));
         }
-        if (p.deadline < p.issuedAt || clock.getAsLong() > p.deadline) {
-            Tracked prior = ledger.get(p.id);
-            if (prior != null && prior.payloadHash.equals(p.hash)) {
-                return Decision.ack(from, ackBody(prior));
-            }
-            return Decision.ack(from, rememberReject(p, "expired"));
-        }
+        // A recorded outcome, including one replayed from disk, wins before a fresh start. An expired match still
+        // returns that outcome; an expired mismatch stays "expired", as it did before the ledger file existed.
+        boolean expired = p.deadline < p.issuedAt || clock.getAsLong() > p.deadline;
         Tracked prior = ledger.get(p.id);
         if (prior != null) {
-            if (!prior.payloadHash.equals(p.hash)) {
-                log.accept("swarm: rejected tampered replay " + p.id + " on " + transport);
-                return Decision.ack(from, rejectAck(p.id, "tampered-replay", prior.execution));
+            if (prior.payloadHash.equals(p.hash)) {
+                if (!expired) {
+                    log.accept("swarm: duplicate " + p.id + " on " + transport + "; returning recorded outcome");
+                }
+                return Decision.ack(from, ackBody(prior));
             }
-            log.accept("swarm: duplicate " + p.id + " on " + transport + "; returning recorded outcome");
-            return Decision.ack(from, ackBody(prior));
+            if (expired) {
+                return Decision.ack(from, rememberReject(p, "expired"));
+            }
+            log.accept("swarm: rejected tampered replay " + p.id + " on " + transport);
+            return Decision.ack(from, rejectAck(p.id, "tampered-replay", prior.execution));
+        }
+        // START with no END: the process died around the world change. Check the block or inventory before acting.
+        Doubt open = doubts.get(p.id);
+        boolean retryOpen = false;
+        if (open != null) {
+            if (!open.hash.equals(p.hash)) {
+                log.accept("swarm: rejected tampered replay " + p.id + " on " + transport);
+                return Decision.ack(from, rejectAck(p.id, "tampered-replay", ExecutionState.FAILED));
+            }
+            EffectCheck.Verdict verdict = effectVerdict(p, open);
+            if (verdict == EffectCheck.Verdict.DONE) {
+                Tracked done = recordDone(p.id, p.name, p.hash, p.issuer);
+                if (done == null) {
+                    return Decision.ack(from, rejectAck(p.id, "ledger-full", ExecutionState.FAILED));
+                }
+                return Decision.ack(from, ackBody(done));
+            }
+            if (expired || verdict != EffectCheck.Verdict.NOT_DONE) {
+                if (expired) {
+                    return Decision.ack(from, rememberReject(p, "expired"));
+                }
+                // No ack: the issuer keeps resending this id until the world can be read.
+                log.accept("swarm: " + p.id + " effect unknown; not repeating " + p.name);
+                return Decision.ack(from, null);
+            }
+            log.accept("swarm: " + p.id + " not done yet (" + p.name + "); retrying once");
+            retryOpen = true;
+        } else if (expired) {
+            return Decision.ack(from, rememberReject(p, "expired"));
         }
         CommandCatalog.Entry entry = describe(p.name);
         if (entry == null) {
@@ -747,6 +1571,7 @@ public final class CommandProtocol {
         if (denied != null) {
             return Decision.ack(from, rememberReject(p, denied));
         }
+        boolean scoped = leaseScoped(p, entry); // Ostinato: authority comes from the command's lease
         String missing = localCap(entry);
         if (missing != null) {
             return Decision.ack(from, rememberReject(p, missing));
@@ -760,13 +1585,76 @@ public final class CommandProtocol {
         if (!linkUp) {
             return Decision.ack(from, rememberReject(p, "link-down"));
         }
+        // Ostinato: Phase 2a. A lease-needing command runs only under a valid lease bound to its id. The
+        // coordinator sends the grant first; a command that overtakes its grant waits HOLD_MS, then nolease.
+        LeaseHooks hooks = leaseHooks;
+        if (scoped && (hooks == null || !hooks.needsLease(p.name, entry))) {
+            log.accept("swarm: rejected " + p.id + " unauthorized (" + p.name + " from a non-owner runs only under a lease)");
+            return Decision.ack(from, rememberReject(p, "unauthorized"));
+        }
+        if (hooks != null && hooks.needsLease(p.name, entry)) {
+            LeaseState ls = hooks.state(p.id);
+            if (ls == LeaseState.EXPIRED) {
+                if (scoped) {
+                    log.accept("swarm: rejected " + p.id + " unauthorized (" + p.name + " from a non-owner needs a valid"
+                            + " lease; the lease is not valid)");
+                    return Decision.ack(from, rememberReject(p, "unauthorized"));
+                }
+                log.accept("swarm: rejected " + p.id + " nolease (lease not valid)");
+                return Decision.ack(from, rememberReject(p, "nolease"));
+            }
+            if (ls != LeaseState.VALID) {
+                Held h = held.get(p.id);
+                if (h == null) {
+                    h = new Held(p, transport, from, clock.getAsLong() + HOLD_MS);
+                    h.scoped = scoped;
+                    held.put(p.id, h);
+                    log.accept("swarm: holding " + p.id + " for its lease grant");
+                }
+                return Decision.ack(from, null);
+            }
+            if (scoped && !hooks.leaseFrom(p.id, p.issuer, LEASE_SCOPED_COMMANDS.get(p.name.toLowerCase(Locale.ROOT)))) {
+                log.accept("swarm: rejected " + p.id + " unauthorized (" + p.name + " from a non-owner runs only under a"
+                        + " current lease from the coordinator)");
+                return Decision.ack(from, rememberReject(p, "unauthorized"));
+            }
+            // Ostinato: Phase 2c. A lease chosen from a shared observation runs only after the bot checked that
+            // observation in its own world. A failed check is a stored reject: never auto-retried.
+            String why = hooks.verify(p.id);
+            if (OBS_APPROACH.equals(why)) {
+                if (!entry.ownerEmergency && (busy() || approachingOther(p.id))) {
+                    hooks.approachEnded(p.id, null);
+                    return Decision.ack(from, rememberReject(p, "busy"));
+                }
+                holdingForApproach = true;
+                if (!approaching.containsKey(p.id)) {
+                    long now = clock.getAsLong();
+                    approaching.put(p.id, new Approach(new Held(p, transport, from, now),
+                            Math.min(now + APPROACH_MS, p.deadline), now + APPROACH_CHECK_MS));
+                    log.accept("swarm: approaching for " + p.id + " (shared observation not loaded here; held until"
+                            + " verified)");
+                }
+                return Decision.ack(from, null);
+            }
+            if (why != null) {
+                log.accept("swarm: rejected " + p.id + " " + why + " (shared observation not verified locally)");
+                return Decision.ack(from, rememberReject(p, why));
+            }
+        }
         // A verified inline command (eta, help, echo) may run beside an in-flight path.
         // A second path or world action may not: that would be a second active task.
-        if (!entry.ownerEmergency && !completesInline(p.name) && busy()) {
+        if (!entry.ownerEmergency && !completesInline(p.name) && (busy() || approachingOther(p.id))) {
             return Decision.ack(from, rememberReject(p, "busy"));
         }
         if (!reserve(p, true, null, ExecutionState.ACCEPTED, ObservationState.CONFIRMED, entry)) {
             return Decision.ack(from, rejectAck(p.id, "ledger-full", ExecutionState.FAILED));
+        }
+        // Flush START before executor.start (the caller runs that only after this returns).
+        if (!retryOpen && (disk != null || ledgerBroken) && doubtful(p.name, entry)) {
+            if (!persistStart(p)) {
+                ledger.remove(p.id);
+                return Decision.ack(from, rejectAck(p.id, "ledger-unwritable", ExecutionState.FAILED));
+            }
         }
         return Decision.start(p.id, p.name, p.args, from);
     }
@@ -846,8 +1734,14 @@ public final class CommandProtocol {
         CommandPermission perm = entry.permission;
         switch (perm) {
             case OWNER: {
-                String owner = policy.ownerName == null || policy.ownerName.isBlank() ? self.memberId() : policy.ownerName;
-                if (!AgentPolicy.ownerAllowed(true, owner, p.issuer)) {
+                if (leaseScoped(p, entry)) {
+                    // Ostinato: lease-scoped; the lease step decides (a current lease from the coordinator, or unauthorized)
+                    if (leaseHooks == null || !leaseHooks.coordinatorIs(p.issuer)) {
+                        return "unauthorized";
+                    }
+                    break;
+                }
+                if (!issuerIsOwner(p.issuer)) {
                     return "unauthorized";
                 }
                 break;
@@ -855,6 +1749,9 @@ public final class CommandProtocol {
             case SWARM:
                 if (!members.contains(p.issuer)) {
                     return "unauthorized";
+                }
+                if (leaseScoped(p, entry) && (leaseHooks == null || !leaseHooks.coordinatorIs(p.issuer))) {
+                    return "unauthorized"; // Ostinato: no lease can come from this issuer (not the coordinator, or leases off)
                 }
                 break;
             case AI:
@@ -981,11 +1878,13 @@ public final class CommandProtocol {
                         target.accepted = true;
                         target.gaveUp = false;
                         target.ackReason = "";
+                        persistOutbound(target);
                     }
                 } catch (IllegalArgumentException ignored) {
                     // Ostinato: malformed stop arguments cannot identify an original outcome.
                 }
             }
+            persistOutbound(s);
             log.accept("swarm: ack " + ack.id + " " + (ack.accepted ? "accepted" : "rejected")
                     + (ack.reason == null || ack.reason.isEmpty() ? "" : " " + ack.reason)
                     + " " + ack.execution.label() + " observation " + ack.observation.label());
@@ -1046,7 +1945,7 @@ public final class CommandProtocol {
 
     private boolean busy() {
         for (Tracked t : ledger.values()) {
-            if (t.started && !t.execution.terminal()) {
+            if (t.started && !t.execution.terminal() && !t.slotReleased) { // Ostinato: unconfirmed stops free the slot.
                 return true;
             }
         }
@@ -1173,7 +2072,8 @@ public final class CommandProtocol {
 
     private void onHello(String from, String body) {
         String[] f = body.split("\\|", -1);
-        if (f.length != 5 || !"1".equals(f[0]) || !"hello".equals(f[1])) {
+        boolean query = f.length == 5 && HELLO_QUERY.equals(f[1]); // Ostinato:
+        if (f.length != 5 || !"1".equals(f[0]) || !("hello".equals(f[1]) || query)) {
             log.accept("swarm: ignored bad hello");
             return;
         }
@@ -1194,9 +2094,18 @@ public final class CommandProtocol {
             }
             // Ostinato: compare understood capability sets, not descriptor identity or ordering.
             CapabilityDescriptor previous = peerCaps.put(from, caps);
-            if (previous != null && previous.version() == caps.version() && previous.kinds().equals(caps.kinds())) {
+            boolean same = previous != null && previous.version() == caps.version()
+                    && previous.kinds().equals(caps.kinds());
+            if (!same) {
+                log.accept("swarm: caps from " + from + " " + caps.encode()); // Ostinato: time caps after a relaunch.
+            }
+            if (same && !query) {
                 return;
             }
+        }
+        if (query) {
+            sendHello(from, false, SwarmPriority.HIGH); // Ostinato: always answer a query, directly, never as one.
+            return;
         }
         advertise(); // Ostinato: teach a late joiner our caps without an identical-hello loop.
     }
@@ -1261,7 +2170,8 @@ public final class CommandProtocol {
 
     private static String ackBody(Tracked t) {
         boolean accepted = t.rejectReason == null && t.execution != ExecutionState.FAILED;
-        String reason = t.rejectReason == null ? "" : t.rejectReason;
+        // Ostinato: a lease end (lease-expired, lease-revoked) is a reason, not a rejection.
+        String reason = t.rejectReason != null ? t.rejectReason : (t.endReason != null ? t.endReason : "");
         return "1|ack|" + t.id + "|" + (accepted ? "accepted" : "rejected") + "|" + reason + "|"
                 + t.execution.label() + "|" + t.observation.label();
     }
@@ -1313,6 +2223,12 @@ public final class CommandProtocol {
         default boolean send(String to, String type, String body, SwarmPriority priority) {
             return send(to, type, body);
         }
+
+        // Ostinato: a send the protocol stops waiting for at the deadline (commands); see SwarmRateLimiter.Deadline.
+        default boolean send(String to, String type, String body, SwarmPriority priority,
+                             SwarmRateLimiter.Deadline deadline) {
+            return send(to, type, body, priority);
+        }
     }
 
     /** Runs a command that has already passed auth, dedup and the safety check. */
@@ -1335,6 +2251,14 @@ public final class CommandProtocol {
 
         /** Null while still running. Terminal values are verified or confirmed results. */
         ExecutionState poll(UUID id);
+
+        /**
+         * Ostinato: true once the command's work stopped without a verified result (its process went idle without
+         * recording an outcome). The command then stays running with observation unknown, never succeeded (verified).
+         */
+        default boolean unverifiedIdle(UUID id) {
+            return false;
+        }
     }
 
     /** Owner name, AI dry-run and the tool whitelist. Empty owner means "this bot". */
@@ -1390,6 +2314,9 @@ public final class CommandProtocol {
         public boolean ambiguous;
         public boolean worldMutation;
         public long storedAtMs;
+        public boolean slotReleased; // Ostinato: stop requested but unconfirmed; no longer counts as busy.
+        public String endReason; // Ostinato: why a lease ended this command (lease-expired, lease-revoked).
+        public boolean leaseEnded; // Ostinato: settled by its lease; never polled or retried again.
 
         Tracked(UUID id, String name, String payloadHash, ExecutionState execution, ObservationState observation,
                 boolean started) {
@@ -1399,6 +2326,225 @@ public final class CommandProtocol {
             this.execution = execution;
             this.observation = observation;
             this.started = started;
+        }
+    }
+
+    /** Ostinato: Phase 2a lease checks, implemented by the bot's lease guard. */
+    public interface LeaseHooks {
+        /** Whether {@code name} may only run under a lease. */
+        boolean needsLease(String name, CommandCatalog.Entry entry);
+
+        /** State of the lease bound to {@code commandId}. Called under the protocol lock: must not call back. */
+        LeaseState state(UUID commandId);
+
+        /**
+         * Ostinato: Phase 2c. Checks the shared observation the lease bound to {@code commandId} was chosen from,
+         * once, before the command starts. Null to go on; else the reject reason (obs-stale, obs-unknown). Called
+         * under the protocol lock: must not call back.
+         */
+        /**
+         * Ostinato: Phase 2c part 2. The protocol stopped holding {@code commandId} for its approach: {@code why} null
+         * when it was decided another way (started, or rejected e.g. busy), else the reason the approach ended
+         * (obs-unknown: not verified within the budget). Called without the protocol lock or under it; must not call
+         * back.
+         */
+        default void approachEnded(UUID commandId, String why) {
+        }
+
+        default String verify(UUID commandId) {
+            return null;
+        }
+
+        /** Ostinato: whether {@code member} is the configured lease coordinator. */
+        default boolean coordinatorIs(String member) {
+            return false;
+        }
+
+        /**
+         * Ostinato: whether {@code commandId} carries a valid, current lease granted by {@code issuer}, the configured
+         * coordinator, and with {@code regionOnly} is a REGION lease (lease-scoped authority, {@link #LEASE_SCOPED_COMMANDS}).
+         */
+        default boolean leaseFrom(UUID commandId, String issuer, boolean regionOnly) {
+            return false;
+        }
+
+        /** A command started. Must not call back into the protocol. */
+        default void started(UUID commandId, String name) {
+        }
+
+        /** Stop only the leased process (never survival); true once it is confirmed stopped. */
+        boolean stopLeased(UUID commandId);
+    }
+
+    public enum LeaseState {
+        /** No grant seen yet (or no lease bound to this id). */
+        NONE,
+        /** Granted and inside the bot's own deadline. */
+        VALID,
+        /** Expired, revoked or superseded. */
+        EXPIRED
+    }
+
+    // Ostinato: Phase 2c part 2. Commands held while the bot walks to verify their shared observation.
+    private final Map<UUID, Approach> approaching = new LinkedHashMap<>();
+    private boolean holdingForApproach; // set by decide when it (re)holds a command for its approach
+
+    private static final class Approach {
+        final Held h;
+        final long deadline;
+        long nextCheck;
+
+        Approach(Held h, long deadline, long nextCheck) {
+            this.h = h;
+            this.deadline = deadline;
+            this.nextCheck = nextCheck;
+        }
+    }
+
+    /**
+     * Ostinato: Phase 2c part 2. The bot cannot get to the observation under the approach limits (no route without
+     * breaking, placing or a long fall): reject the held command obs-unknown now instead of waiting out the budget.
+     */
+    public void giveUpApproach(UUID commandId, String why) {
+        List<Decision> sends = new ArrayList<>();
+        boolean removed;
+        synchronized (lock) {
+            Approach a = approaching.remove(commandId);
+            removed = a != null;
+            if (removed) {
+                log.accept("swarm: rejected " + commandId + " " + leaseUnknown() + " (" + why + "; gave up approaching)");
+                sends.add(Decision.ack(a.h.from, rememberReject(a.h.p, leaseUnknown())));
+            }
+        }
+        if (removed) {
+            LeaseHooks hooks = leaseHooks;
+            if (hooks != null) {
+                hooks.approachEnded(commandId, leaseUnknown());
+            }
+            deliver(sends);
+        }
+    }
+
+    /** True while {@code commandId} is held for its approach (walk-to-verify). */
+    public boolean isApproaching(UUID commandId) {
+        synchronized (lock) {
+            return approaching.containsKey(commandId);
+        }
+    }
+
+    // Ostinato: Phase 2c part 2. Caller holds lock. Another command may not start while one is approaching.
+    private boolean approachingOther(UUID id) {
+        for (UUID a : approaching.keySet()) {
+            if (!a.equals(id)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Ostinato: Phase 2c part 2. Re-check approaching commands; give up at the budget. Once per client tick.
+    private void pumpApproaches() {
+        List<Approach> recheck = new ArrayList<>();
+        List<UUID> gaveUp = new ArrayList<>();
+        List<Decision> sends = new ArrayList<>();
+        synchronized (lock) {
+            if (!linkUp || approaching.isEmpty()) {
+                return;
+            }
+            long now = clock.getAsLong();
+            for (Iterator<Approach> it = approaching.values().iterator(); it.hasNext(); ) {
+                Approach a = it.next();
+                if (now >= a.deadline) {
+                    it.remove();
+                    gaveUp.add(a.h.p.id);
+                    log.accept("swarm: rejected " + a.h.p.id + " " + leaseUnknown() + " (not verified within "
+                            + (a.deadline - a.h.deadline) + " ms of approaching)");
+                    sends.add(Decision.ack(a.h.from, rememberReject(a.h.p, leaseUnknown())));
+                } else if (now >= a.nextCheck) {
+                    a.nextCheck = now + APPROACH_CHECK_MS;
+                    recheck.add(a);
+                }
+            }
+        }
+        LeaseHooks hooks = leaseHooks;
+        for (UUID id : gaveUp) {
+            if (hooks != null) {
+                hooks.approachEnded(id, leaseUnknown());
+            }
+        }
+        deliver(sends);
+        for (Approach a : recheck) {
+            process(a.h.transport, a.h.from, a.h.p);
+        }
+    }
+
+    private static String leaseUnknown() {
+        return "obs-unknown";
+    }
+
+    // Ostinato: a lease-scoped command (owner-only or swarm) from a non-owner: its authority is its lease.
+    private boolean leaseScoped(Parsed p, CommandCatalog.Entry entry) {
+        return (entry.permission == CommandPermission.SWARM || entry.permission == CommandPermission.OWNER)
+                && LEASE_SCOPED_COMMANDS.containsKey(p.name.toLowerCase(Locale.ROOT)) && !issuerIsOwner(p.issuer);
+    }
+
+    private static final class Held {
+        final Parsed p;
+        final String transport;
+        final String from;
+        final long deadline;
+        boolean scoped; // Ostinato: a lease-scoped command: no grant means unauthorized, not nolease
+
+        Held(Parsed p, String transport, String from, long deadline) {
+            this.p = p;
+            this.transport = transport;
+            this.from = from;
+            this.deadline = deadline;
+        }
+    }
+
+    private static final class LeaseStop {
+        final String reason;
+        int ticksLeft;
+
+        LeaseStop(String reason, int ticks) {
+            this.reason = reason;
+            this.ticksLeft = ticks;
+        }
+    }
+
+    // Ostinato: a stop still waiting for confirmStopped; later cancels of the same target attach to it.
+    private static final class PendingStop {
+        final UUID target;
+        final List<UUID> cancels = new ArrayList<>();
+        final List<String> replyTo = new ArrayList<>();
+        int ticksLeft;
+
+        PendingStop(UUID target, int ticksLeft) {
+            this.target = target;
+            this.ticksLeft = ticksLeft;
+        }
+
+        void attach(UUID cancel, String from) {
+            if (!cancels.contains(cancel)) {
+                cancels.add(cancel);
+                replyTo.add(from);
+            }
+        }
+    }
+
+    /** A non-idempotent command whose START line has no END yet. */
+    private static final class Doubt {
+        final String name;
+        final String hash;
+        final String note;
+        final String args;
+
+        Doubt(String name, String hash, String note, String args) {
+            this.name = name;
+            this.hash = hash;
+            this.note = note == null ? "" : note;
+            this.args = args == null ? "" : args;
         }
     }
 
@@ -1415,6 +2561,10 @@ public final class CommandProtocol {
         public String ackReason;
         public ExecutionState execution;
         public ObservationState observation;
+        /** Ostinato: its lease ended and the fence passed, so the holder can no longer act on it. */
+        public boolean fenced;
+        /** Ostinato: sent for a lease (submitLeased); goes at HIGH priority. */
+        public boolean leased;
 
         Sent(UUID id, String target, String body, long deadline) {
             this.id = id;

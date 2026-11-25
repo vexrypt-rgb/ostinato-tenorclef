@@ -15,6 +15,8 @@ import baritone.swarm.center.CenterLayout;
 import baritone.swarm.center.CenterRuntime;
 import baritone.swarm.center.desktop.CenterWindow;
 import baritone.swarm.center.LayoutStore;
+import baritone.swarm.center.host.CenterFeedService;
+import baritone.swarm.center.host.CenterLauncher;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -65,6 +67,18 @@ public class CenterCommand extends Command {
         switch (action) {
             case "open" -> {
                 args.requireMax(0);
+                // Ostinato: Phase 3. With the feed on, the window is its own process and outlives this client.
+                if (Baritone.settings().swarmCenterFeed.value) {
+                    Path dir = centerDir();
+                    try {
+                        long pid = CenterLauncher.launch(dir);
+                        logDirect("center: standalone window pid " + pid + " on " + dir
+                                + " (closing it leaves bots running)");
+                    } catch (IOException e) {
+                        throw new CommandInvalidStateException("center: could not start the window: " + e.getMessage());
+                    }
+                    return;
+                }
                 CenterRuntime.open();
                 if (!CenterWindow.mayShow()) {
                     logDirect("center: the window cannot open in this runtime");
@@ -74,11 +88,18 @@ public class CenterCommand extends Command {
             }
             case "close" -> {
                 args.requireMax(0);
+                if (Baritone.settings().swarmCenterFeed.value && CenterLauncher.close(centerDir())) {
+                    logDirect("center: standalone window closed");
+                    return;
+                }
                 CenterRuntime.close();
                 logDirect("center: closed");
             }
             case "layout" -> {
-                Path file = LayoutStore.file(directory());
+                // Ostinato: the standalone window reads prefs/layout-<user>.txt. Keep the config file too.
+                boolean feed = Baritone.settings().swarmCenterFeed.value;
+                Path shared = feed ? LayoutStore.sharedFile(centerDir()) : null;
+                Path file = shared != null ? shared : LayoutStore.file(directory());
                 if (!args.hasAny()) {
                     logDirect("center: layout " + LayoutStore.load(file).wire());
                     return;
@@ -93,6 +114,9 @@ public class CenterCommand extends Command {
                 }
                 try {
                     LayoutStore.save(file, layout);
+                    if (shared != null) {
+                        LayoutStore.save(LayoutStore.file(directory()), layout);
+                    }
                 } catch (IOException e) {
                     throw new CommandInvalidStateException("center: could not save layout");
                 }
@@ -101,6 +125,10 @@ public class CenterCommand extends Command {
             }
             default -> throw new CommandInvalidTypeException(args.consumed(), "open, close or layout");
         }
+    }
+
+    private Path centerDir() {
+        return CenterFeedService.dir(Baritone.settings(), net.minecraft.client.Minecraft.getInstance().gameDirectory.toPath());
     }
 
     private Path directory() {

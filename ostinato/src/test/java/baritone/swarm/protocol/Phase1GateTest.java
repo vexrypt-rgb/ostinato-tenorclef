@@ -327,6 +327,10 @@ public class Phase1GateTest {
         linked.exec.confirm = false;
         UUID liveCancel = UUID.randomUUID();
         linked.bob.receive("ipc", "Alice", CommandProtocol.TYPE_CMD, linked.cmd(liveCancel, "Alice", "Bob", "cancel", live.toString(), false));
+        // Ostinato: the stop is re-checked each tick; it settles as unknown once the window runs out.
+        for (int i = 0; i < CommandProtocol.CANCEL_CONFIRM_WINDOW_TICKS; i++) {
+            linked.bob.pollExecutions();
+        }
         assertEquals(ExecutionState.RUNNING, linked.bob.lookup(live).execution);
         assertEquals(ObservationState.UNKNOWN, linked.bob.lookup(live).observation);
         assertEquals(ExecutionState.RUNNING, linked.bob.lookup(liveCancel).execution);
@@ -340,7 +344,9 @@ public class Phase1GateTest {
 
     @Test
     public void gate_noAutoRetryMineOrPlaceOnUnknown() {
-        World w = World.create();
+        // Ostinato: Alice is the owner here: a non-owner's plain mine is now unauthorized (lease-scoped), and this test
+        // is about not retrying a non-idempotent command, not about who may send it.
+        World w = World.create(new CommandProtocol.Policy("Alice", true, false, AgentPolicy.DEFAULT_TOOLS));
         String sent = w.alice.submit("Bob", "mine 1");
         w.exchange();
         UUID id = idOf(sent);
@@ -366,12 +372,14 @@ public class Phase1GateTest {
         CommandProtocol.Sent first = w.alice.lookupSent(id);
         assertEquals(1, first.sends);
         assertFalse(first.acked);
+        assertEquals(0, w.alice.retried()); // Ostinato: the first send is not a retry.
         String body = first.body;
         w.clock.set(first.nextRetry); // Ostinato: respect queued-send backoff.
         w.alice.pump();
         CommandProtocol.Sent retried = w.alice.lookupSent(id);
         assertEquals(body, retried.body);
         assertEquals(2, retried.sends);
+        assertEquals(1, w.alice.retried()); // Ostinato: link monitor counter.
         assertFalse(retried.acked);
         assertTrue(w.aliceLane.q.size() >= 1);
         w.clock.set(retried.deadline);

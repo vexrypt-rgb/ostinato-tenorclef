@@ -1,9 +1,12 @@
 package baritone.behavior;
 
 import baritone.Baritone;
+import baritone.api.utils.input.Input;
 import baritone.api.Settings;
 import baritone.api.event.events.TickEvent;
 import baritone.api.process.IBaritoneProcess;
+import baritone.api.pathing.goals.Goal;
+import baritone.api.pathing.goals.GoalNear;
 import baritone.api.schematic.ISchematic;
 import baritone.api.schematic.format.ISchematicFormat;
 import baritone.api.schematic.partition.PartitionAxis;
@@ -16,14 +19,34 @@ import baritone.api.utils.Helper;
 import baritone.swarm.SwarmBuild;
 import baritone.swarm.SwarmConfig;
 import baritone.swarm.SwarmControl;
+import baritone.swarm.center.feed.BotFeed;
+import baritone.swarm.center.host.CenterFeedService;
 import baritone.swarm.SwarmEndpoint;
 import baritone.swarm.SwarmKeys;
+import baritone.swarm.SwarmSample;
+import baritone.swarm.TickRateMeter;
+import baritone.utils.PlanStats;
 import baritone.api.swarm.protocol.CapabilityDescriptor;
 import baritone.swarm.crypto.SigilEd25519;
 import baritone.swarm.crypto.SigilCircle;
 import baritone.swarm.protocol.AtCatalogBridge;
 import baritone.swarm.frame.SwarmFrame;
+import baritone.swarm.frame.SwarmMessage;
+import baritone.swarm.lease.BotLeaseGuard;
+import baritone.swarm.lease.ChestLeaseExpect;
+import baritone.swarm.lease.CoordinatorStore;
+import baritone.swarm.lease.LeaseCoordinator;
+import baritone.swarm.lease.LeaseFence;
+import baritone.swarm.lease.LeaseMessage;
+import baritone.swarm.lease.LeaseRate;
+import baritone.swarm.lease.ReservationResolver;
+import baritone.swarm.lease.ReservationKey;
+import baritone.swarm.lease.LeaseEndStop;
+import baritone.swarm.lease.LeasedVein;
+import baritone.process.ApproachProcess;
+import baritone.pathing.movement.CalculationContext;
 import baritone.swarm.protocol.CommandProtocol;
+import baritone.swarm.protocol.GameEffectCheck;
 import baritone.swarm.protocol.RegistryExecutor;
 import baritone.swarm.roster.SwarmRoster;
 import baritone.swarm.transport.ChatSwarmTransport;
@@ -31,8 +54,24 @@ import baritone.swarm.transport.LocalRoutingTransport;
 import baritone.swarm.transport.SwarmChannel;
 import baritone.swarm.transport.SwarmPriority;
 import baritone.swarm.transport.SwarmRateLimiter;
+import baritone.structure.DetectedStructure;
+import baritone.structure.StructureBehavior;
+import baritone.swarm.world.AutoReport;
+import baritone.swarm.world.ObservationMessage; // Ostinato: Phase 2c
+import baritone.swarm.world.ObservationRecord;
+import baritone.swarm.world.ObservationReporter;
+import baritone.swarm.world.RunEpoch;
+import baritone.swarm.world.ObservationOffer; // Ostinato: Phase 2c
+import baritone.swarm.world.ContainerDetail;
+import baritone.swarm.world.GatherAssign;
+import baritone.swarm.world.OpenChest;
+import baritone.swarm.world.ObservationVerifier;
+import baritone.swarm.world.ObsRefresh;
+import baritone.swarm.world.LoadedWorld;
+import baritone.swarm.world.WorldKnowledge;
 import baritone.api.swarm.protocol.ExternalCommandHook;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Vec3i;
 
 import java.io.File;
@@ -42,8 +81,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -61,18 +102,30 @@ public final class SwarmBehavior extends Behavior implements Helper {
         final SwarmControl control;
         /** Ostinato: null when swarmCommandProtocol is off. */
         final CommandProtocol protocol;
+        /** Ostinato: builds this bot's status sample (perf strip and link monitor). */
+        final Status status;
 
         // Ostinato: immutable loaded roster; restart the link when the file contents change.
         final Path rosterPath;
         final byte[] rosterBytes;
         long nextRosterCheck;
+        /**
+         * Ostinato: sends one SWL body sealed at HIGH priority, or URGENT for reconcile traffic; null when leases and
+         * coordinator are off.
+         */
+        LeaseSend leaseSend;
+        /** Ostinato: Phase 2c - sends one SWO body sealed at the given priority; null when leases and coordinator are off. */
+        ObsSend obsSend;
+        /** Ostinato: roster members of this bot's groups, without self. */
+        Set<String> peers = Collections.emptySet();
 
         Link(String self, LocalRoutingTransport transport, SwarmControl control, CommandProtocol protocol,
-             Path rosterPath, byte[] rosterBytes) {
+             Status status, Path rosterPath, byte[] rosterBytes) {
             this.self = self;
             this.transport = transport;
             this.control = control;
             this.protocol = protocol;
+            this.status = status; // Ostinato:
             this.rosterPath = rosterPath; // Ostinato:
             this.rosterBytes = rosterBytes; // Ostinato:
         }
@@ -88,8 +141,46 @@ public final class SwarmBehavior extends Behavior implements Helper {
     private volatile boolean ownerEmergency;
     private volatile boolean immediateSafety;
     private volatile boolean localSurvival;
+    // Ostinato: Phase 2a leases. Kept across link restarts so a lease outlives a reconnect; null while off.
+    private BotLeaseGuard leaseGuard;
+    private LeaseCoordinator leaseCoordinator;
+    private final LeaseRate leaseRate = new LeaseRate(SwarmBehavior::nowMs);
+    /** Chest menu whose block is already named, so a later tick can re-read counts after the crosshair moves. */
+    private net.minecraft.world.inventory.AbstractContainerMenu latchedChestMenu;
+    private BlockPos latchedChestPos;
+    // Ostinato: Phase 2c shared world observations. The store lives on the coordinator (memory only, rebuilt from
+    // bot reports after a restart); every bot with leases or coordinator on reports what it sees.
+    private WorldKnowledge worldKnowledge;
+    private final ObservationReporter obsReporter = new ObservationReporter(obsRunEpoch());
+
+    /**
+     * Ostinato: Phase 2c. This run's number on observation messages: larger than any earlier run of this instance,
+     * kept next to the coordinator state (the coordinator drops a bot's messages from an older run).
+     */
+    private static long obsRunEpoch() {
+        Path dir;
+        try {
+            dir = net.minecraft.client.Minecraft.getInstance().gameDirectory.toPath();
+        } catch (RuntimeException e) {
+            dir = Path.of(".");
+        }
+        return RunEpoch.next(dir.resolve("ostinato").resolve("swarm").resolve("obs-run-epoch"),
+                System.currentTimeMillis());
+    }
+    private long nextObsScanAt;
+    /** Set by {@code #swarm obs world <tag>}: overrides the server-derived world id (test stand-in for a world change). */
+    private volatile String obsWorldOverride;
+    private long nextFenceLogAt;
     /** swarm* setting values the link was started with; a change (e.g. from the GUI) restarts it. */
     private String startedWith;
+    // Ostinato: perf strip and link monitor. Written on the client thread, read by the command center.
+    private final TickRateMeter tickRate = new TickRateMeter();
+    private volatile SwarmSample localSample = SwarmSample.UNKNOWN;
+    private volatile List<PeerView> peerViews = List.of();
+    private long nextLocalSampleMs;
+
+    /** Ostinato: one swarm peer as the link monitor sees it; {@code local} means it is reached over the same-PC spool. */
+    public record PeerView(SwarmControl.PeerLink link, boolean local) {}
 
     public SwarmBehavior(Baritone baritone) {
         super(baritone);
@@ -97,6 +188,9 @@ public final class SwarmBehavior extends Behavior implements Helper {
 
     @Override
     public void onTick(TickEvent event) {
+        if (event.getType() == TickEvent.Type.IN) {
+            tickRate.tick(nowMs()); // Ostinato: perf strip tick rate.
+        }
         try {
             tick(event);
         } catch (Throwable t) {
@@ -105,10 +199,127 @@ public final class SwarmBehavior extends Behavior implements Helper {
             stop();
             startedWith = was; // so a settings change still restarts the link
         }
+        refreshSamples();
+        if (event.getType() == TickEvent.Type.IN) {
+            centerTick(); // Ostinato: Phase 3 command-center feed and host; off unless swarmCenterFeed/Host
+        }
+    }
+
+    // ---- Ostinato: Phase 3 command center -------------------------------------------------------------------
+
+    private final CenterFeedService centerFeed =
+            new CenterFeedService(baritone, new CenterInputs(), this::logDirect);
+
+    /** Ostinato: read-only feed out, owner window commands in; a failure here never reaches the swarm tick. */
+    private void centerTick() {
+        try {
+            centerFeed.tick(Baritone.settings(), net.minecraft.client.Minecraft.getInstance().gameDirectory.toPath());
+        } catch (Throwable t) {
+            if (!String.valueOf(t).equals(centerFailure)) {
+                centerFailure = String.valueOf(t);
+                logDirect("center-feed: tick failed: " + t);
+            }
+        }
+    }
+
+    private String centerFailure;
+
+    /** Ostinato: the command-center feed service (tests, #center). */
+    public CenterFeedService centerFeed() {
+        return centerFeed;
+    }
+
+    /** Ostinato: copies of this behavior's swarm state for the feed. Client thread. */
+    private final class CenterInputs implements CenterFeedService.Inputs {
+        @Override
+        public CenterFeedService.SwarmPart swarm(boolean commandHost) {
+            Link l = link;
+            CommandProtocol p = l != null ? l.protocol : retainedProtocol;
+            long now = nowMs();
+            int seen = 0;
+            for (PeerView v : peerViews) {
+                if (v.link().lastSeenMs() >= 0 && now - v.link().lastSeenMs() < SwarmControl.PEER_TIMEOUT_MS) {
+                    seen++;
+                }
+            }
+            boolean up = l != null && (l.protocol == null || l.protocol.linkUp());
+            BotLeaseGuard g = leaseGuard;
+            return new CenterFeedService.SwarmPart(commandHost, leaseCoordinator != null,
+                    p == null ? List.of() : p.feedExecutions(BotFeed.MAX_EXECUTIONS),
+                    g == null ? List.of() : g.feedLeases(), localSample,
+                    new BotFeed.Link(up, seen, failure));
+        }
+
+        @Override
+        public LeaseCoordinator coordinator() {
+            return leaseCoordinator;
+        }
+
+        @Override
+        public WorldKnowledge knowledge() {
+            return worldKnowledge;
+        }
+    }
+
+    /** Ostinato: once a second, cache this client's figures and the peer list for the command center. */
+    private void refreshSamples() {
+        long now = nowMs();
+        if (now < nextLocalSampleMs) {
+            return;
+        }
+        nextLocalSampleMs = now + 1000L;
+        try {
+            Link l = link;
+            localSample = l == null ? baseSample() : l.status.sample();
+            if (l == null) {
+                peerViews = List.of();
+            } else {
+                List<PeerView> views = new ArrayList<>();
+                for (SwarmControl.PeerLink p : l.control.peerLinks()) {
+                    views.add(new PeerView(p, l.transport.isLocal(p.name())));
+                }
+                peerViews = List.copyOf(views);
+            }
+        } catch (RuntimeException e) {
+            localSample = SwarmSample.UNKNOWN; // Ostinato: the strip shows n/a rather than a stale figure.
+        }
+    }
+
+    /** Ostinato: path time, tick rate, ping and RAM of this client; link fields unknown. Client thread only. */
+    private SwarmSample baseSample() {
+        int ping = -1;
+        try {
+            LocalPlayer p = ctx.player();
+            if (p != null && p.connection != null) {
+                net.minecraft.client.multiplayer.PlayerInfo info = p.connection.getPlayerInfo(p.getUUID());
+                ping = info == null ? -1 : info.getLatency();
+            }
+        } catch (RuntimeException ignored) {
+            ping = -1;
+        }
+        Runtime rt = Runtime.getRuntime();
+        long mb = 1024L * 1024L;
+        long max = rt.maxMemory();
+        return new SwarmSample(PlanStats.lastSearchMs.get(), tickRate.tpsX10(nowMs()), ping,
+                (int) ((rt.totalMemory() - rt.freeMemory()) / mb), max == Long.MAX_VALUE ? -1 : (int) (max / mb),
+                -1, -1, -1, -1, "");
+    }
+
+    /** Ostinato: this client's latest figures for the perf strip and link monitor (n/a until the first tick). */
+    public SwarmSample localSample() {
+        return localSample;
+    }
+
+    /** Ostinato: swarm peers with their latest sample and traffic, empty while the link is down. */
+    public List<PeerView> peerViews() {
+        return peerViews;
     }
 
     private void tick(TickEvent event) {
         Settings s = Baritone.settings();
+        if (event.getType() == TickEvent.Type.IN) {
+            leaseTick(s); // Ostinato: the guard ticks with or without a link, so expiry still stops the bot.
+        }
         if (!s.swarmEnabled.value) {
             if (link != null || loading != null) {
                 stop();
@@ -181,8 +392,779 @@ public final class SwarmBehavior extends Behavior implements Helper {
             link.protocol.noteOnlineMembers(onlinePlayerNames());
         }
         link.control.tick();
+        logLinkRate(link); // Ostinato:
+        coordinatorTick(s); // Ostinato:
+        obsTick(s); // Ostinato: Phase 2c
         LocalPlayer player = ctx.player();
         link.transport.flush(nowMs(), line -> send(player, line));
+        drainSelfFrames(); // Ostinato: a lease or command addressed to this client
+    }
+
+    // ---- Ostinato: Phase 2a leases -------------------------------------------------------------------------
+
+    private CommandProtocol leaseBoundTo;
+    private boolean coordinatorNeedsProtocolLogged;
+
+    /** Create, bind and tick the bot-side guard. swarmLeases=false drops it and clears the fence. */
+    private void leaseTick(Settings s) {
+        if (!s.swarmLeases.value) {
+            if (leaseGuard != null) {
+                if (leaseBoundTo != null) {
+                    leaseBoundTo.setLeaseHooks(null);
+                }
+                leaseGuard = null;
+                leaseBoundTo = null;
+                LeaseFence.clear();
+            }
+            return;
+        }
+        if (leaseGuard == null) {
+            BotLeaseGuard g = new BotLeaseGuard(leaseSender, SwarmBehavior::nowMs, this::logDirect,
+                    SwarmBehavior::allowedCoordinator, this::stopLeasedProcess, BotLeaseGuard.LEASED_COMMANDS);
+            leaseGuard = g;
+            // Ostinato: Phase 2c part 2 - while the bot walks to verify an observation it acts on nothing.
+            LeaseFence.install(() -> (g.invalidActive() && leasedInControl()) || approachInControl());
+            // Ostinato: Phase 2b - actions outside the active leased command's reservation box are denied.
+            // Ostinato: slice 3 S5b fix - any lease end stops the in-flight path before the next action; until the bot is
+            // idle the fence keeps denying inside the ended lease's box.
+            LeaseEndStop endStop = new LeaseEndStop(g, leaseEndBot(), this::logDirect, SwarmBehavior::nowMs);
+            leaseEndStop = endStop;
+            LeaseFence.installGeometry((kind, x, y, z) -> {
+                if (endStop.denied(kind, dimChar(), x, y, z)) {
+                    logFenceDenied(kind, x, y, z);
+                    return true;
+                }
+                // Ostinato: Phase 2c part 2 slice 3 - a region lease is re-verified right before its first action inside.
+                if (leasedInControl() && g.regionEntry(kind, dimChar(), x, y, z, this::regionLoaded) != null) {
+                    logFenceDenied(kind, x, y, z);
+                    return true;
+                }
+                // Ostinato: Phase 2c part 2 - each place inside a region lease re-reads the landing cell. Occupied or
+                // unreadable: no place. The lease stays; an occupied cell is corrected once.
+                if (kind == LeaseFence.Kind.PLACE && leasedInControl()
+                        && g.placeCell(dimChar(), x, y, z, this::placeOccupying) != null) {
+                    return true;
+                }
+                boolean out = leasedInControl() && g.outsideReservation(kind, dimChar(), x, y, z, isOre(x, y, z));
+                if (out) {
+                    logFenceDenied(kind, x, y, z); // Ostinato: Phase 2c - the fence is visible in the log
+                }
+                return out;
+            });
+            // Ostinato: Phase 2c part 2 - the builder asks before it selects a place, so an occupied cell is not a
+            // target it walks back to. The click fence above is the last check, for places that do not come from it.
+            LeaseFence.installPlaceCheck((x, y, z) -> leasedInControl()
+                    && g.placeCell(dimChar(), x, y, z, this::placeOccupying) != null);
+            // Ostinato: Phase 2c - the mine heads for the verified vein box the lease holds, even where its own
+            // seen-only scan knows no ore there yet. Only the mine asks, and only an active (started) lease answers,
+            // so this needs no in-control check (on its first tick the mine is not in control yet).
+            LeaseFence.installVein(() -> g.activeVein(dimChar()));
+            // Ostinato: a vein or region lease limits the mine's targets to its box (the fence denies the rest).
+            LeaseFence.installMineBox(() -> g.activeMineBox(dimChar()));
+            // Ostinato: Phase 2c - a leased mine that emptied its vein withdraws this bot's reports of it.
+            LeaseFence.installMinedOut((box, ores) -> {
+                obsReporter.minedOut(box, ores, nowMs());
+                logDirect("swarm-obs: vein " + box + " mined out; withdrawing this bot's reports of it");
+            });
+            // Ostinato: Phase 2c - a lease chosen from a shared observation is checked against this bot's own world
+            // before it acts; a stale record is reported back as a correction.
+            g.setObsCheck(this::checkObservation);
+            g.setPlaceCorrection(this::correctPlaceCell);
+            g.setContainerCorrection(this::correctContainer);
+            // Ostinato: Phase 2c part 2 - a chest click re-reads the open container before the items move.
+            LeaseFence.installContainerCheck(() -> {
+                String[] open = readOpenContainer();
+                return open != null && g.containerOpen(open[0], open[1]) != null;
+            });
+            // Ostinato: Phase 2c part 2 - the approach stops the moment its lease verifies, before the command starts.
+            g.setApproachRelease(this::releaseApproachNow);
+        }
+        CommandProtocol p = liveProtocol();
+        if (p != null && p != leaseBoundTo) {
+            leaseGuard.attach(p);
+            p.setLeaseHooks(leaseGuard);
+            leaseBoundTo = p;
+        }
+        leaseGuard.tick();
+        // Ostinato: Phase 2c part 2 - contents are reported when the container is open, before any click.
+        String[] open = readOpenContainer();
+        if (open != null) {
+            leaseGuard.containerOpen(open[0], open[1]);
+        }
+        if (leaseEndStop != null) {
+            leaseEndStop.tick(); // Ostinato: slice 3 S5b fix
+        }
+        driveApproach(leaseGuard);
+        logLeaseRate();
+    }
+
+    // ---- Ostinato: Phase 2c part 2, walk-to-verify --------------------------------------------------------------
+
+    /** How close the approach walks to the observation's box centre; it usually verifies long before. */
+    static final int APPROACH_RADIUS = 24;
+    private Goal approachGoal;
+    private ReservationKey approachBox;
+    private long nextApproachFenceLogAt = Long.MIN_VALUE;
+
+    /**
+     * While a lease waits for its observation to load here, walk toward it with the custom goal process; once the
+     * guard stops approaching (verified, stale, gave up) release that goal, so the leased command or nothing runs.
+     */
+    private void driveApproach(BotLeaseGuard g) {
+        ReservationKey box = g.approachTarget();
+        ApproachProcess ap = baritone.getApproachProcess();
+        if (box != null && (approachBox == null || !box.toString().equals(approachBox.toString()))) {
+            int[] c = LeasedVein.centre(box);
+            approachGoal = new GoalNear(new BlockPos(c[0], c[1], c[2]), APPROACH_RADIUS);
+            approachBox = box;
+            ap.approach(approachGoal);
+            logDirect("swarm-lease: walking to " + box + " to verify it (goal near " + c[0] + "," + c[1] + "," + c[2]
+                    + "; no breaking, no placing, no fall over "
+                    + CalculationContext.APPROACH_MAX_FALL + " blocks)");
+        } else if (box != null && ap.noRoute()) {
+            // Ostinato: Phase 2c part 2 - no route under the approach limits: end unknown now, not at the budget.
+            UUID cmd = g.approachCommand();
+            CommandProtocol p = liveProtocol();
+            if (cmd != null && p != null) {
+                p.giveUpApproach(cmd, "no approach route");
+            } else if (cmd != null) {
+                g.approachEnded(cmd, BotLeaseGuard.OBS_UNKNOWN);
+            }
+        } else if (box == null && approachBox != null) {
+            if (ap.goal() == approachGoal) {
+                ap.stop();
+            }
+            logDirect("swarm-lease: approach to " + approachBox + " over");
+            approachGoal = null;
+            approachBox = null;
+        }
+    }
+
+    /** The approaching lease verified: stop the approach now, so it never overlaps the leased command. */
+    private void releaseApproachNow() {
+        ApproachProcess ap = baritone.getApproachProcess();
+        if (approachGoal != null && ap.goal() == approachGoal) {
+            ap.stop();
+        }
+        if (approachBox != null) {
+            logDirect("swarm-lease: approach to " + approachBox + " over (verified; its command starts now)");
+        }
+        approachGoal = null;
+        approachBox = null;
+    }
+
+    /** True while this bot's approach goal is what moves it. Every break, place and container action is denied. */
+    private boolean approachInControl() {
+        Goal goal = approachGoal;
+        if (goal == null) {
+            return false;
+        }
+        try {
+            ApproachProcess ap = baritone.getApproachProcess();
+            boolean on = ap.isActive() && ap.goal() == goal;
+            if (on) {
+                long now = nowMs();
+                if (now >= nextApproachFenceLogAt) {
+                    nextApproachFenceLogAt = now + 2_000L;
+                    logDirect("swarm-lease: fence denied an action while approaching " + approachBox + " (fenceDenials="
+                            + (LeaseFence.denials() + 1) + ")");
+                }
+            }
+            return on;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private long nextRateLogAt = Long.MIN_VALUE;
+    private long nextLinkLogAt = Long.MIN_VALUE;
+    private long[] linkLast; // Ostinato: counters at the previous swarm-link-rate line
+    private Link linkLastFor; // a new link starts its counters at zero, so it takes a new baseline
+
+    /**
+     * Ostinato: this link's own counters over the last 60 s, once a minute: lines sent, heartbeats sent and skipped
+     * (peer had a recent frame), samples sent and withdrawn, lines that expired still queued, and the queue now.
+     */
+    private void logLinkRate(Link l) {
+        long now = nowMs();
+        if (nextLinkLogAt != Long.MIN_VALUE && now < nextLinkLogAt) {
+            return;
+        }
+        nextLinkLogAt = now + 60_000L;
+        SwarmRateLimiter lim = l.status.limiter;
+        long[] c = {lim.sent(), l.control.heartbeatsSent(), l.control.heartbeatsSkipped(), l.control.samplesSent(),
+                lim.withdrawn(), lim.expiredQueued()};
+        long[] prev = linkLastFor == l ? linkLast : null;
+        linkLast = c;
+        linkLastFor = l;
+        if (prev == null) {
+            return; // first call only takes the baseline
+        }
+        logDirect("swarm-link-rate sent=" + (c[0] - prev[0]) + "/min hb-sent=" + (c[1] - prev[1]) + " hb-skipped="
+                + (c[2] - prev[2]) + " samples=" + (c[3] - prev[3]) + " withdrawn=" + (c[4] - prev[4]) + " expired="
+                + (c[5] - prev[5]) + " queued=" + lim.queued() + " high=" + lim.queued(SwarmPriority.HIGH));
+    }
+
+    /** Ostinato: the live SWL rate, once a minute while any lease traffic is in the window. */
+    private void logLeaseRate() {
+        long now = nowMs();
+        if (nextRateLogAt != Long.MIN_VALUE && now < nextRateLogAt) {
+            return;
+        }
+        nextRateLogAt = now + LeaseRate.WINDOW_MS;
+        for (String line : leaseRate.describe()) {
+            if (!line.contains(" out=0/min in=0/min")) {
+                logDirect(line);
+            }
+        }
+    }
+
+    /** Start (once the link is up) and tick the coordinator. Not the designated one: it refuses and says why. */
+    private void coordinatorTick(Settings s) {
+        if (!s.swarmCoordinator.value) {
+            leaseCoordinator = null;
+            worldKnowledge = null; // Ostinato: Phase 2c
+            return;
+        }
+        Link l = link;
+        if (l == null) {
+            return;
+        }
+        if (l.protocol == null) {
+            if (!coordinatorNeedsProtocolLogged) {
+                coordinatorNeedsProtocolLogged = true;
+                logDirect("swarm-lease: refused coordinator=" + l.self + " reason=swarmCommandProtocol is false");
+            }
+            return;
+        }
+        if (leaseCoordinator == null || !leaseCoordinator.self().equalsIgnoreCase(l.self)) {
+            Path state = ctx.minecraft().gameDirectory.toPath().resolve("ostinato").resolve("swarm")
+                    .resolve("coordinator.state");
+            leaseCoordinator = new LeaseCoordinator(l.self, SwarmBehavior::allowedCoordinator,
+                    new CoordinatorStore(state), leaseSender,
+                    new LeaseCoordinator.Commands() {
+                        @Override
+                        public String submitLeased(String bot, String line, UUID id) {
+                            CommandProtocol p = liveProtocol();
+                            return p == null ? "swarm: link is not running" : p.submitLeased(bot, line, id);
+                        }
+
+                        @Override
+                        public String refusal(String bot, String line) {
+                            CommandProtocol p = liveProtocol();
+                            return p == null ? "link is not running" : p.leaseRefusal(bot, line);
+                        }
+
+                        @Override
+                        public void fenced(UUID id) {
+                            // Ostinato: the old holder's authorization ended, so its unknown mine stops blocking.
+                            CommandProtocol p = liveProtocol();
+                            if (p != null) {
+                                p.fenced(id);
+                            }
+                        }
+                    },
+                    SwarmBehavior::nowMs, System::currentTimeMillis, this::logDirect,
+                    () -> Baritone.settings().swarmLeaseSec.value * 1000L,
+                    Baritone.settings().swarmLeaseMarginMs.value, LeaseCoordinator.DEFAULT_SKEW_MS,
+                    name -> {
+                        Link cur = link;
+                        return cur == null || !cur.transport.isLocal(name);
+                    },
+                    () -> {
+                        Link cur = link;
+                        return cur == null ? Collections.<String>emptySet() : cur.peers;
+                    });
+            // Ostinato: Phase 2c - a new coordinator starts with an empty store that rebuilds from bot reports.
+            WorldKnowledge wk = new WorldKnowledge(SwarmBehavior::nowMs, this::logDirect);
+            worldKnowledge = wk;
+            // Ostinato: Phase 2c - the last message applied from each bot is kept with the coordinator's durable state.
+            LeaseCoordinator lc = leaseCoordinator;
+            wk.setMarkListener((bot, epoch, seq) -> lc.noteObsMark(bot, epoch, seq));
+            leaseCoordinator.setObsReportListener((res, reason, bot) -> wk.leaseReport(res, reason, bot));
+        }
+        if (leaseCoordinator.mode() == LeaseCoordinator.Mode.IDLE) {
+            if (!l.protocol.linkUp()) {
+                return;
+            }
+            leaseCoordinator.start();
+            WorldKnowledge wk0 = worldKnowledge;
+            if (wk0 != null) {
+                wk0.restoreMarks(leaseCoordinator.obsMarks()); // Ostinato: Phase 2c - before any message is applied
+            }
+            obsRebuild(l); // Ostinato: Phase 2c
+        }
+        leaseCoordinator.tick();
+        WorldKnowledge wk = worldKnowledge;
+        if (wk != null) {
+            wk.tick(); // Ostinato: Phase 2c rebuild timeout and entity expiry
+        }
+        logLeaseRate();
+    }
+
+    /** swarmCoordinatorId, else agentOwner. Bots take coordinator ops only from this member. */
+    private static String allowedCoordinator() {
+        Settings s = Baritone.settings();
+        String c = s.swarmCoordinatorId.value == null ? "" : s.swarmCoordinatorId.value.trim();
+        if (!c.isEmpty()) {
+            return c;
+        }
+        return s.agentOwner.value == null ? "" : s.agentOwner.value.trim();
+    }
+
+    /** Ostinato: one sealed SWL send; {@code urgent} picks {@link SwarmPriority#URGENT} over HIGH. */
+    interface LeaseSend {
+        boolean send(String to, String body, boolean urgent);
+    }
+
+    // ---- Ostinato: Phase 2c shared world observations ------------------------------------------------------
+
+    /** Ostinato: Phase 2c. One sealed SWO send at the given priority. */
+    interface ObsSend {
+        boolean send(String to, String body, SwarmPriority priority, SwarmRateLimiter.Deadline deadline);
+    }
+
+    /**
+     * Ostinato: Phase 2c. The id observations are bound to: the {@code #swarm obs world} override, else "sp" in
+     * single player, else a short hash of the server address (the address itself never leaves the bot).
+     */
+    private String obsWorldId() {
+        String o = obsWorldOverride;
+        if (o != null) {
+            return o;
+        }
+        if (ctx.minecraft().hasSingleplayerServer()) {
+            return "sp";
+        }
+        net.minecraft.client.multiplayer.ServerData sd = ctx.minecraft().getCurrentServer();
+        String ip = sd == null || sd.ip == null ? "" : sd.ip.trim().toLowerCase(java.util.Locale.ROOT);
+        if (ip.isEmpty()) {
+            return "unknown";
+        }
+        long h = 1125899906842597L; // stable across runs and PCs, unlike String.hashCode salt-free but short
+        for (int i = 0; i < ip.length(); i++) {
+            h = 31 * h + ip.charAt(i);
+        }
+        String b = Long.toString(h & 0x7fffffffffffffffL, 36);
+        return "s" + b.substring(0, Math.min(6, b.length()));
+    }
+
+    /** True when this bot is the designated coordinator and runs one. */
+    private boolean selfIsCoordinator(Link l) {
+        return worldKnowledge != null && l.self.equalsIgnoreCase(allowedCoordinator());
+    }
+
+    /**
+     * Ostinato: Phase 2c. The coordinator (re)binds its store to the current world, asks every bot for its
+     * observations (one Q broadcast) and refuses picks until each live peer answered with E or 25 s passed.
+     */
+    private void obsRebuild(Link l) {
+        WorldKnowledge wk = worldKnowledge;
+        LeaseCoordinator c = leaseCoordinator;
+        if (wk == null || l.obsSend == null || (c != null && c.mode() == LeaseCoordinator.Mode.REFUSED)) {
+            return;
+        }
+        String world = obsWorldId();
+        wk.setWorld(world);
+        Set<String> online = new HashSet<>();
+        for (String n : onlinePlayerNames()) {
+            online.add(n.toLowerCase(java.util.Locale.ROOT));
+        }
+        List<String> live = new ArrayList<>();
+        for (String p : l.peers) {
+            if (online.contains(p.toLowerCase(java.util.Locale.ROOT))) {
+                live.add(p);
+            }
+        }
+        l.obsSend.send("*", new ObservationMessage(ObservationMessage.Op.Q, world, new ArrayList<>()).encode(),
+                SwarmPriority.HIGH, null);
+        wk.startRebuild(live);
+        obsReporter.onQuery(true, nowMs()); // the coordinator's own records go straight into the store
+    }
+
+    /** Ostinato: Phase 2c. Scan, report and (on the coordinator) follow world changes. */
+    private void obsTick(Settings s) {
+        Link l = link;
+        if (l == null || l.obsSend == null || ctx.player() == null || ctx.minecraft().level == null) {
+            return;
+        }
+        long now = nowMs();
+        String world = obsWorldId();
+        if (obsReporter.setWorld(world)) {
+            logDirect("swarm-obs: reporting for world " + world);
+            nextObsScanAt = now;
+        }
+        boolean coordinator = selfIsCoordinator(l);
+        WorldKnowledge wk = worldKnowledge;
+        if (coordinator && wk.rebuildAsked() && !world.equals(wk.world())) {
+            obsRebuild(l); // world or session changed under the coordinator: drop everything and ask again
+        }
+        if (now >= nextObsScanAt) {
+            nextObsScanAt = now + 5_000L;
+            net.minecraft.core.BlockPos p = ctx.player().blockPosition();
+            ObservationReporter.Scan scan = ObservationReporter.scan(reservationWorld(), dimChar(), p.getX(),
+                    p.getY(), p.getZ(), 16, 8);
+            obsReporter.observe(scan.seen, scan.box, now);
+        }
+        String coordName = allowedCoordinator();
+        boolean entityFeed = coordinator || (!coordName.isEmpty() && l.transport.isLocal(coordName));
+        noteTracked(now, entityFeed);
+        if (coordinator) {
+            if (!wk.rebuildAsked()) {
+                return; // not started yet: keep the reports until the store is bound
+            }
+            decideRefreshed(wk); // Ostinato: Phase 2c part 2 - held obs leases whose refresh is over
+            obsReporter.tick(now, true, m -> {
+                wk.apply(l.self, m);
+                return true;
+            });
+            return;
+        }
+        String to = allowedCoordinator();
+        if (to.isEmpty()) {
+            return;
+        }
+        boolean spool = l.transport.isLocal(to);
+        SwarmRateLimiter lim = spool ? null : l.status.limiter;
+        // Ostinato: Phase 2c - one priority, offered over chat only to a free link, each hand-over logged
+        // (ObservationOffer).
+        obsReporter.tick(now, spool, m -> ObservationOffer.offer(m, to, lim, l.obsSend::send, line -> logDirect(line),
+                obsReporter::withdrawn));
+    }
+
+    /**
+     * Ostinato: Phase 2c part 2. Structures the structure tracker already found, and living entities inside
+     * {@link AutoReport#ENTITY_RADIUS}. Chests stay on the block scan. Both go through the existing reporter and
+     * its caps; an entity that walks out is left to expire. Entities are reported only on a local link: a 5 s record
+     * cannot stay fresh across the 15 s chat gap.
+     */
+    private void noteTracked(long now, boolean entityFeed) {
+        net.minecraft.core.BlockPos feet = ctx.player().blockPosition();
+        char dim = dimChar();
+        StructureBehavior structures = baritone.getStructureBehavior();
+        List<AutoReport.Structure> found = new ArrayList<>();
+        if (structures != null) {
+            for (DetectedStructure s : structures.all()) {
+                int conf = s.source == DetectedStructure.Source.SERVER ? 100
+                        : (int) Math.round(s.confidence * 100.0);
+                found.add(new AutoReport.Structure(s.id, s.variant, s.pos.getX(), s.pos.getY(), s.pos.getZ(), conf));
+            }
+        }
+        obsReporter.note(AutoReport.structures(dim, feet.getX(), feet.getY(), feet.getZ(), found), now,
+                ObservationReporter.RESEND_MS);
+        if (!entityFeed) {
+            return;
+        }
+        net.minecraft.client.multiplayer.ClientLevel level = ctx.minecraft().level;
+        net.minecraft.client.player.LocalPlayer me = ctx.player();
+        if (level == null || me == null) {
+            return;
+        }
+        List<AutoReport.Mob> mobs = new ArrayList<>();
+        net.minecraft.world.phys.AABB box = me.getBoundingBox().inflate(AutoReport.ENTITY_RADIUS);
+        for (net.minecraft.world.entity.LivingEntity e : level.getEntitiesOfClass(
+                net.minecraft.world.entity.LivingEntity.class, box, x -> x != me && x.isAlive())) {
+            String type = net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).getPath();
+            net.minecraft.core.BlockPos at = e.blockPosition();
+            mobs.add(new AutoReport.Mob(type, e.getId(), at.getX(), at.getY(), at.getZ()));
+        }
+        obsReporter.note(AutoReport.entities(dim, feet.getX(), feet.getY(), feet.getZ(), mobs), now,
+                AutoReport.ENTITY_RESEND_MS);
+    }
+
+    /** Ostinato: Phase 2c. SWO inbound, on the tick thread. */
+    private void onObsMessage(SwarmMessage msg) {
+        ObservationMessage m = ObservationMessage.decode(msg.body());
+        if (m == null) {
+            return;
+        }
+        if (m.op == ObservationMessage.Op.Q) {
+            if (!msg.from().equalsIgnoreCase(allowedCoordinator())) {
+                return; // only the designated coordinator may ask for a dump
+            }
+            String mine = obsReporter.world();
+            if (mine == null || !mine.equals(m.worldId)) {
+                logDirect("swarm-obs: rebuild from " + msg.from() + " for world " + m.worldId + " but this bot is in "
+                        + mine + "; not answering");
+                return;
+            }
+            Link l = link;
+            obsReporter.onQuery(l != null && l.transport.isLocal(msg.from()), nowMs());
+            logDirect("swarm-obs: rebuild asked by " + msg.from() + ", dumping " + obsReporter.reportedSize()
+                    + " records");
+            return;
+        }
+        if (m.op == ObservationMessage.Op.F) { // Ostinato: Phase 2c part 2 - the coordinator's refresh request
+            if (!msg.from().equalsIgnoreCase(allowedCoordinator())) {
+                return;
+            }
+            String mine = obsReporter.world();
+            if (mine == null || !mine.equals(m.worldId)) {
+                return; // another world: these records are not ours to check
+            }
+            onRefreshRequest(m);
+            return;
+        }
+        WorldKnowledge wk = worldKnowledge;
+        if (wk != null) {
+            wk.apply(msg.from(), m);
+        }
+    }
+
+    /** Ostinato: Phase 2c. The bot-side check before acting on a lease chosen from a shared observation. */
+    private String checkObservation(String resource, String expect) {
+        ObservationVerifier.Result r = ObservationVerifier.verify(resource, expect, dimChar(), reservationWorld());
+        if (r.state == ObservationVerifier.State.CONFIRMED) {
+            logDirect("swarm-obs: verified " + resource + " (" + r.why + ")");
+            return null;
+        }
+        if (r.state == ObservationVerifier.State.STALE) {
+            obsReporter.correction(resource, r.key, r.detail, nowMs());
+            logDirect("swarm-obs: stale " + resource + " (" + r.why + "); reporting the correction");
+            return BotLeaseGuard.OBS_STALE;
+        }
+        String answer = BotLeaseGuard.answerFor(r); // Ostinato: Phase 2c part 2 - by the notLoaded flag, never the text
+        if (BotLeaseGuard.OBS_APPROACH.equals(answer)) {
+            return answer; // walk closer, then check again
+        }
+        logDirect("swarm-obs: cannot verify " + resource + " (" + r.why + ")");
+        return BotLeaseGuard.OBS_UNKNOWN;
+    }
+
+    // Ostinato: slice 3 S5b fix.
+    private LeaseEndStop leaseEndStop;
+
+    private LeaseEndStop.Bot leaseEndBot() {
+        return new LeaseEndStop.Bot() {
+            @Override
+            public void releaseForcedInputs() {
+                // the same release #stop does (PathingBehavior.cancelEverything): every key when safe, the clicks always
+                baritone.getPathingBehavior().releaseForcedInputs(baritone.getPathingBehavior().isSafeToCancel());
+            }
+
+            @Override
+            public boolean clickForced() {
+                return baritone.getInputOverrideHandler().isInputForcedDown(Input.CLICK_LEFT)
+                        || baritone.getInputOverrideHandler().isInputForcedDown(Input.CLICK_RIGHT);
+            }
+
+            @Override
+            public void stopLeasedProcesses() {
+                for (IBaritoneProcess p : leasedProcesses()) {
+                    if (p.isActive()) {
+                        p.onLostControl();
+                    }
+                }
+            }
+
+            @Override
+            public boolean otherProcessInControl() {
+                Optional<IBaritoneProcess> p = baritone.getPathingControlManager().mostRecentInControl();
+                return p.isPresent() && p.get().isActive() && !leasedProcesses().contains(p.get());
+            }
+
+            @Override
+            public boolean cancelSegmentIfSafe() {
+                return baritone.getPathingBehavior().cancelSegmentIfSafe();
+            }
+
+            @Override
+            public boolean idle() {
+                if (baritone.getPathingBehavior().isPathing() || baritone.getPathingBehavior().getInProgress().isPresent()) {
+                    return false;
+                }
+                for (IBaritoneProcess p : leasedProcesses()) {
+                    if (p.isActive()) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        };
+    }
+
+    /** Ostinato: Phase 2c. One log line per 2 s when the reservation fence denies an action. */
+    private void logFenceDenied(LeaseFence.Kind kind, int x, int y, int z) {
+        long now = nowMs();
+        if (now < nextFenceLogAt) {
+            return;
+        }
+        nextFenceLogAt = now + 2_000L;
+        logDirect("swarm-lease: fence denied " + kind + " at " + x + "," + y + "," + z + " outside reservation"
+                + " (fenceDenials=" + (LeaseFence.denials() + 1) + ")");
+    }
+
+    // Ostinato: one Sender for guard and coordinator, so reconcile replies reach the URGENT queue.
+    private final BotLeaseGuard.Sender leaseSender = new BotLeaseGuard.Sender() {
+        @Override
+        public boolean send(String to, String body) {
+            return sendLease(to, body, false);
+        }
+
+        @Override
+        public boolean send(String to, String body, boolean urgent) {
+            return sendLease(to, body, urgent);
+        }
+    };
+
+    private boolean sendLease(String to, String body, boolean urgent) {
+        Link l = link;
+        if (l == null) {
+            return false;
+        }
+        // A sealed frame from this client is rejected as SELF, so a lease to the coordinator stays on this client.
+        if (to != null && to.equalsIgnoreCase(l.self)) {
+            boolean ok = sendToSelf(LeaseMessage.TYPE, body);
+            if (ok) {
+                LeaseMessage sentMsg = LeaseMessage.parse(body);
+                leaseRate.sent(to, sentMsg == null ? null : sentMsg.op);
+            }
+            return ok;
+        }
+        if (l.leaseSend == null) {
+            return false;
+        }
+        boolean ok = l.leaseSend.send(to, body, urgent);
+        if (ok) {
+            LeaseMessage sentMsg = LeaseMessage.parse(body); // Ostinato: per-op counts, log-only
+            leaseRate.sent(to, sentMsg == null ? null : sentMsg.op);
+        }
+        return ok;
+    }
+
+    private static final class SelfFrame {
+        final String type;
+        final String body;
+
+        SelfFrame(String type, String body) {
+            this.type = type;
+            this.body = body;
+        }
+    }
+
+    /** Lease and command frames addressed to this client. Drained on the tick thread. */
+    private final ArrayDeque<SelfFrame> selfFrames = new ArrayDeque<>();
+
+    private boolean sendToSelf(String type, String body) {
+        if (type == null || body == null) {
+            return false;
+        }
+        synchronized (selfFrames) {
+            if (selfFrames.size() >= 64) {
+                return false;
+            }
+            selfFrames.addLast(new SelfFrame(type, body));
+        }
+        return true;
+    }
+
+    private static boolean selfCommand(String type) {
+        return CommandProtocol.TYPE_CMD.equals(type) || CommandProtocol.TYPE_ACK.equals(type)
+                || CommandProtocol.TYPE_HELLO.equals(type);
+    }
+
+    /** At most one handshake worth of frames. A frame that queues another is delivered on a later pass of this call. */
+    private void drainSelfFrames() {
+        for (int n = 0; n < 32; n++) {
+            SelfFrame f;
+            synchronized (selfFrames) {
+                f = selfFrames.pollFirst();
+            }
+            if (f == null) {
+                return;
+            }
+            deliverSelf(f);
+        }
+    }
+
+    private void deliverSelf(SelfFrame f) {
+        Link l = link;
+        if (l == null) {
+            return;
+        }
+        if (LeaseMessage.TYPE.equals(f.type)) {
+            onLeaseMessage(new SwarmMessage("local", l.self, l.self, 0L, 0L, f.type, f.body));
+            return;
+        }
+        CommandProtocol p = l.protocol;
+        if (p != null && selfCommand(f.type)) {
+            p.receive("local", l.self, f.type, f.body);
+        }
+    }
+
+    /** SWL inbound, on the tick thread (SwarmControl.tick). */
+    private void onLeaseMessage(SwarmMessage msg) {
+        LeaseMessage m = LeaseMessage.parse(msg.body());
+        if (m == null) {
+            return;
+        }
+        leaseRate.received(msg.from(), m.op); // Ostinato: per-op counts
+        BotLeaseGuard g = leaseGuard;
+        if (g != null && m.op.fromCoordinator()) {
+            g.onMessage(msg.from(), m);
+        }
+        LeaseCoordinator c = leaseCoordinator;
+        if (c != null) {
+            c.onMessage(msg.from(), m); // Bot ops; a coordinator op from a rival is counted there.
+        }
+    }
+
+    private List<IBaritoneProcess> leasedProcesses() {
+        return List.of(baritone.getMineProcess(), baritone.getTunnelProcess(), baritone.getBuilderProcess(),
+                baritone.getCustomGoalProcess());
+    }
+
+    /** True while one of the leased processes (mine, tunnel, builder, custom goal) is the one in control. */
+    /** Ostinato: Phase 2b reservation dimension letter: o, n or e. */
+    private char dimChar() {
+        net.minecraft.client.multiplayer.ClientLevel w = ctx.minecraft().level;
+        if (w == null) {
+            return '?';
+        }
+        net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> d = w.dimension();
+        return d == net.minecraft.world.level.Level.NETHER ? 'n' : d == net.minecraft.world.level.Level.END ? 'e' : 'o';
+    }
+
+    /** Ostinato: Phase 2b. Ores (and ancient debris) are what a vein reservation limits. */
+    private boolean isOre(int x, int y, int z) {
+        net.minecraft.client.multiplayer.ClientLevel w = ctx.minecraft().level;
+        if (w == null) {
+            return false;
+        }
+        net.minecraft.world.level.block.state.BlockState st = w.getBlockState(new net.minecraft.core.BlockPos(x, y, z));
+        return st.is(net.minecraft.world.level.block.Blocks.ANCIENT_DEBRIS)
+                || net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(st.getBlock()).getPath().endsWith("_ore");
+    }
+
+    private boolean leasedInControl() {
+        try {
+            Optional<IBaritoneProcess> p = baritone.getPathingControlManager().mostRecentInControl();
+            return p.isPresent() && leasedProcesses().contains(p.get());
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Stop only the leased processes, never survival and never cancelEverything. True once none of them is active
+     * or in control; the guard calls again each tick until then.
+     */
+    private boolean stopLeasedProcess(UUID commandId) {
+        try {
+            for (IBaritoneProcess p : leasedProcesses()) {
+                if (p.isActive()) {
+                    p.onLostControl();
+                }
+            }
+            for (IBaritoneProcess p : leasedProcesses()) {
+                if (p.isActive()) {
+                    return false;
+                }
+            }
+            return !leasedInControl();
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     // Ostinato: read the tab roster on the client tick thread, never in the async loader.
@@ -229,6 +1211,8 @@ public final class SwarmBehavior extends Behavior implements Helper {
         loadingFor = self;
         // Ostinato: @ catalog text, read on this thread. Null when the protocol is off or TenorClef is absent.
         final boolean protocolOn = s.swarmCommandProtocol.value;
+        final boolean leasesOn = s.swarmLeases.value; // Ostinato:
+        final boolean coordinatorOn = s.swarmCoordinator.value; // Ostinato:
         final Set<String> online = protocolOn ? onlinePlayerNames() : Set.of(); // Ostinato: initial snapshot.
         final String atCatalog = protocolOn ? AtCatalogBridge.exportInstalled() : null;
         loading = CompletableFuture.supplyAsync(() -> {
@@ -245,6 +1229,7 @@ public final class SwarmBehavior extends Behavior implements Helper {
                 Path sigilHome = SwarmKeys.sigilHome(home, env);
                 Map<String, SigilCircle> circles = SwarmKeys.circlesFor(roster, self, sigilHome);
                 SwarmRateLimiter limiter = new SwarmRateLimiter(rate, burst, unsafe, queueMax, nowMs());
+                limiter.setLog(this::logDirect); // Ostinato: "expired still queued" lines
                 ChatSwarmTransport chat = new ChatSwarmTransport(self, channel, template, roster, limiter,
                         cfg.maxLineChars);
                 for (SwarmRoster.Group g : roster.groupsOf(self)) {
@@ -258,11 +1243,22 @@ public final class SwarmBehavior extends Behavior implements Helper {
                         System::currentTimeMillis);
                 endpoint.setMemberCheck(roster::isMember);
                 SwarmKeys.bindSigning(endpoint, self, sigilHome);
-                SwarmControl control = new SwarmControl(roster, endpoint, new Status(), System::currentTimeMillis,
+                String command = "";
+                for (SwarmRoster.Group g : roster.groupsOf(self)) {
+                    command = SwarmSample.commandOf(chat.templateFor(chat.channelFor(g.id())));
+                    break; // Ostinato: the monitor shows the first group's command.
+                }
+                Status status = new Status(limiter, chat, command);
+                SwarmControl control = new SwarmControl(roster, endpoint, status, System::currentTimeMillis,
                         this::logDirect, () -> "queued " + limiter.queued() + ", sent " + limiter.sent() + ", dropped "
                         + limiter.dropped() + ", too long " + transport.tooLong() + String.format(", rate %.2f/s burst %d",
                         limiter.rate(), limiter.burst()));
                 control.enableBuild(new Regions());
+                // Ostinato: status samples go at TELEMETRY, only while nothing URGENT/HIGH waits and the link is under
+                // half its cap; the limiter also takes queued ones back the moment that stops holding.
+                control.setSampling(s.swarmStatusSample.value, () -> limiter.telemetryRoom(nowMs()));
+                // Ostinato: a peer that got any line inside the heartbeat interval needs no heartbeat.
+                control.setRecentlySent((peer, window) -> transport.sentWithin(peer, nowMs(), window));
                 // Ostinato: command protocol rides the same sealed link. Off, this stays null.
                 CommandProtocol protocol = null;
                 if (protocolOn) {
@@ -284,18 +1280,34 @@ public final class SwarmBehavior extends Behavior implements Helper {
 
                                 @Override
                                 public boolean send(String to, String type, String body, SwarmPriority priority) {
-                                    return sendSealed(endpoint, roster, self, to, type, body, priority);
+                                    if (to != null && to.equalsIgnoreCase(self) && selfCommand(type)) {
+                                        return sendToSelf(type, body);
+                                    }
+                                    return sendSealed(endpoint, roster, self, to, type, body, priority, null);
+                                }
+
+                                @Override
+                                public boolean send(String to, String type, String body, SwarmPriority priority,
+                                                    SwarmRateLimiter.Deadline deadline) {
+                                    if (to != null && to.equalsIgnoreCase(self) && selfCommand(type)) {
+                                        return sendToSelf(type, body);
+                                    }
+                                    return sendSealed(endpoint, roster, self, to, type, body, priority, deadline);
                                 }
                             },
                             new RegistryExecutor(baritone, () -> externalHook, atCatalog),
                             new CommandProtocol.Policy(s.agentOwner.value, s.agentOwnerOnly.value,
                                     s.agentDryRun.value, s.agentTools.value),
                             System::currentTimeMillis, this::logDirect, 2000L);
+                    created.setEffectCheck(new GameEffectCheck(baritone));
+                    created.setLedgerFile(dir.resolve("swarm-ledger.log"));
                     created.setOwnerEmergency(ownerEmergency);
                     created.setImmediateSafety(immediateSafety);
                     created.setLocalSurvival(localSurvival);
                     created.setGroups(groupIds);
-                    created.setLocalCapabilities(CapabilityDescriptor.gameplay());
+                    // Ostinato: advertise the lease cap only while swarmLeases is on.
+                    created.setLocalCapabilities(leasesOn ? CapabilityDescriptor.of("navigation", "mining",
+                            "building", "combat", "inventory", "lease") : CapabilityDescriptor.gameplay());
                     try {
                         Map<String, SigilEd25519> pins = SwarmKeys.signets(sigilHome);
                         for (Map.Entry<String, SigilEd25519> e : pins.entrySet()) {
@@ -313,8 +1325,26 @@ public final class SwarmBehavior extends Behavior implements Helper {
                         created.advertise();
                     }
                     protocol = created;
+                    status.protocol = created; // Ostinato: retried count for the link monitor.
                 }
-                return new Link(self, transport, control, protocol, rp, rosterBytes); // Ostinato:
+                Link made = new Link(self, transport, control, protocol, status, rp, rosterBytes); // Ostinato:
+                // Ostinato: Phase 2a SWL rides the same sealed link at HIGH priority. Off, nothing registers.
+                if (leasesOn || coordinatorOn) {
+                    Set<String> peers = new HashSet<>();
+                    for (SwarmRoster.Group g : roster.groupsOf(self)) {
+                        peers.addAll(g.members());
+                    }
+                    peers.removeIf(m -> m.equalsIgnoreCase(self));
+                    made.peers = Collections.unmodifiableSet(peers);
+                    made.leaseSend = (to, body, urgent) -> sendSealed(endpoint, roster, self, to, LeaseMessage.TYPE,
+                            body, urgent ? SwarmPriority.URGENT : SwarmPriority.HIGH);
+                    control.registerHandler(LeaseMessage.TYPE, this::onLeaseMessage);
+                    // Ostinato: Phase 2c - SWO observation reports (spool when the coordinator is local).
+                    made.obsSend = (to, body, priority, deadline) -> sendSealed(endpoint, roster, self, to,
+                            ObservationMessage.TYPE, body, priority, deadline);
+                    control.registerHandler(ObservationMessage.TYPE, this::onObsMessage);
+                }
+                return made;
             } catch (RuntimeException e) {
                 throw e;
             } catch (Exception e) {
@@ -326,7 +1356,9 @@ public final class SwarmBehavior extends Behavior implements Helper {
     static String settingsKey(Settings s) {
         StringBuilder b = new StringBuilder();
         for (Settings.Setting<?> setting : s.allSettings) {
-            if (setting.getName().startsWith("swarm") && setting != s.swarmEnabled) {
+            // Ostinato: Phase 3 command-center settings never touch the link, so changing them must not restart it.
+            if (setting.getName().startsWith("swarm") && setting != s.swarmEnabled
+                    && !setting.getName().startsWith("swarmCenter")) {
                 b.append(setting.getName()).append('=').append(setting.value).append('\n');
             }
         }
@@ -362,6 +1394,12 @@ public final class SwarmBehavior extends Behavior implements Helper {
 
     private static boolean sendSealed(SwarmEndpoint endpoint, SwarmRoster roster, String self, String to, String type,
                                       String body, SwarmPriority priority) { // Ostinato:
+        return sendSealed(endpoint, roster, self, to, type, body, priority, null);
+    }
+
+    private static boolean sendSealed(SwarmEndpoint endpoint, SwarmRoster roster, String self, String to, String type,
+                                      String body, SwarmPriority priority,
+                                      SwarmRateLimiter.Deadline deadline) { // Ostinato:
         try {
             String group = null;
             for (SwarmRoster.Group g : roster.groupsOf(self)) {
@@ -374,7 +1412,7 @@ public final class SwarmBehavior extends Behavior implements Helper {
                 return false;
             }
             String dest = ("*".equals(to) || "all".equalsIgnoreCase(to)) ? SwarmFrame.BROADCAST : to;
-            endpoint.send(group, dest, type, body, priority); // Ostinato: cancels overtake retries.
+            endpoint.send(group, dest, type, body, priority, deadline); // Ostinato: cancels overtake retries.
             return true;
         } catch (Exception e) {
             return false;
@@ -515,13 +1553,475 @@ public final class SwarmBehavior extends Behavior implements Helper {
         Link l = link;
         List<String> base = l == null ? Collections.singletonList("swarm: " + state()) : l.control.statusLines();
         CommandProtocol p = anyProtocol();
-        if (p == null) {
-            return base;
-        }
         // Ostinato: read-only protocol lines. Building this list does not touch execution.
         List<String> all = new ArrayList<>(base);
-        all.addAll(p.statusLines());
+        if (p != null) {
+            all.addAll(p.statusLines());
+        }
+        all.addAll(leaseStatusLines());
         return all;
+    }
+
+    /** Ostinato: lease guard, coordinator and SWL rate lines; empty while both settings are off. */
+    public List<String> leaseStatusLines() {
+        List<String> out = new ArrayList<>();
+        BotLeaseGuard g = leaseGuard;
+        if (g != null) {
+            out.add("swarm-lease guard: coordinator=" + allowedCoordinator() + " ignored=" + g.ignoredCount()
+                    + " grantRejects=" + g.grantRejectCount() + " fenceDenials=" + LeaseFence.denials()
+                    + " geometryDenials=" + LeaseFence.geometryDenials()); // Ostinato: Phase 2c
+            for (String line : g.describe()) {
+                out.add("  " + line);
+            }
+        }
+        LeaseCoordinator c = leaseCoordinator;
+        if (c != null) {
+            out.addAll(c.describe());
+        }
+        if (g != null || c != null) {
+            out.addAll(leaseRate.describe());
+        }
+        return out;
+    }
+
+    /** Ostinato: {@code #swarm lease <bot> <resource> <command...>}. Only on the designated coordinator. */
+    public String leaseOffer(String bot, String resource, String commandLine) {
+        LeaseCoordinator c = leaseCoordinator;
+        if (c == null) {
+            return "swarm: swarmCoordinator is false (or the link is not up yet)";
+        }
+        WorldKnowledge wk = worldKnowledge;
+        // Ostinato: Phase 2c - obs:<ore> picks the best shared vein observation; the bot verifies it before acting.
+        if (resource.startsWith("obs:")) {
+            String ore = resource.substring(4).trim().toLowerCase(java.util.Locale.ROOT);
+            if (wk == null || ore.isEmpty()) {
+                return "swarm-lease: not offering " + resource + ": no observation store";
+            }
+            WorldKnowledge.Pick p = wk.pick(ore, dimChar(), key -> c.busyReason(key) != null);
+            if (p.record == null) {
+                // Ostinato: Phase 2c part 2 - suspect or out-of-date records are re-checked before giving up.
+                String held = holdForRefresh(wk, c, bot, ore, resource, commandLine);
+                return held != null ? held : "swarm-lease: not offering " + resource + ": " + p.reason;
+            }
+            logDirect("swarm-obs: " + resource + " picked " + p.record);
+            return c.lease(bot, p.record.key, commandLine, p.record.detail);
+        }
+        // Ostinato: Phase 2b - vein:/chest:/region: shorthand becomes a canonical reservation key here.
+        ReservationResolver.Result r =
+                ReservationResolver.resolve(resource, dimChar(), reservationWorld());
+        if (r.error != null) {
+            // Ostinato: Phase 2c - the coordinator cannot see the vein, but a bot reported one covering it.
+            int[] at = r.error.contains("unloaded") ? veinSeed(resource) : null;
+            ObservationRecord rec = at == null || wk == null ? null : wk.covering(dimChar(), at[0], at[1], at[2]);
+            if (rec != null) {
+                logDirect("swarm-obs: " + resource + " is not loaded here; using " + rec);
+                return c.lease(bot, rec.key, commandLine, rec.detail);
+            }
+            return "swarm-lease: not offering " + resource + ": " + r.error;
+        }
+        // Ostinato: Phase 2c part 2 - a stored contents claim rides on the chest lease so the on-open check can refuse.
+        return c.lease(bot, r.key, commandLine, ChestLeaseExpect.of(wk, r.key));
+    }
+
+    /**
+     * Ostinato: Phase 2c part 2. {@code #swarm gather <ore> <n>} hands each usable vein to one bot.
+     * Cost is manhattan travel plus two per ore block, plus a switch penalty when the bot is not idle. A vein or a
+     * bot already chosen is not chosen again. The lease is {@code mine <ore>} with the reported detail, so the bot
+     * verifies the vein before it digs. The coordinator is a candidate too: peers are only the other members.
+     */
+    public String gather(String ore, int n) {
+        LeaseCoordinator c = leaseCoordinator;
+        WorldKnowledge wk = worldKnowledge;
+        SwarmControl ctrl = control();
+        if (c == null || wk == null || ctrl == null) {
+            return "swarm gather: coordinator is not up";
+        }
+        String want = ore == null ? "" : ore.trim().toLowerCase(java.util.Locale.ROOT);
+        if (n <= 0 || want.isEmpty()) {
+            return "swarm gather: usage <ore> <count>";
+        }
+        List<ObservationRecord> records = wk.usableVeins(want, dimChar(), key -> c.busyReason(key) != null);
+        List<GatherAssign.Named> peers = new ArrayList<>();
+        for (SwarmControl.Peer p : ctrl.placedPeers()) {
+            peers.add(new GatherAssign.Named(p.name(), p.pos(), p.proc()));
+        }
+        GatherAssign.Named local = null;
+        if (ctx.player() != null) {
+            BetterBlockPos feet = ctx.playerFeet();
+            String proc = baritone.getPathingControlManager().mostRecentInControl()
+                    .map(IBaritoneProcess::displayName).orElse("idle");
+            local = new GatherAssign.Named(ctx.player().getName().getString(),
+                    feet.x + "," + feet.y + "," + feet.z, proc);
+        }
+        List<GatherAssign.Bot> bots = GatherAssign.candidates(peers, local);
+        Map<String, ObservationRecord> byKey = new HashMap<>();
+        List<GatherAssign.Vein> veins = new ArrayList<>();
+        for (ObservationRecord r : records) {
+            if (r.ore() == null) {
+                continue;
+            }
+            ReservationKey k = ReservationKey.parse(r.key);
+            if (k == null) {
+                continue;
+            }
+            int[] centre = LeasedVein.centre(k);
+            int blocks = r.count() < 0 ? 1 : r.count();
+            veins.add(new GatherAssign.Vein(r.key, centre[0], centre[1], centre[2], blocks));
+            byKey.put(r.key, r);
+        }
+        List<GatherAssign.Assignment> plan = GatherAssign.assign(bots, veins, n);
+        if (plan.isEmpty()) {
+            return "swarm gather: nothing to assign (" + bots.size() + " bots, " + veins.size() + " veins)";
+        }
+        int offered = 0;
+        StringBuilder brief = new StringBuilder();
+        for (GatherAssign.Assignment a : plan) {
+            ObservationRecord record = byKey.get(a.key);
+            String line = c.lease(a.bot, a.key, "mine " + record.ore(), record.detail);
+            logDirect("swarm gather: " + a.bot + " " + a.key + " cost " + a.cost + " -> " + line);
+            if (line != null && line.startsWith("swarm-lease: offered")) {
+                offered++;
+            }
+            if (brief.length() > 0) {
+                brief.append("; ");
+            }
+            brief.append(a.bot).append(' ').append(a.key).append(' ').append(a.cost);
+        }
+        return "swarm gather: " + offered + "/" + plan.size() + " offered (" + brief + ")";
+    }
+
+    // ---- Ostinato: Phase 2c part 2, slice 2: refresh before reuse ------------------------------------------------
+
+    private final ObsRefresh obsRefresh = new ObsRefresh();
+
+    /**
+     * Ask the swarm to re-check the suspect or out-of-date records of {@code ore} and hold the lease request until
+     * they are answered (or {@link ObsRefresh#WAIT_MS}); null when there is nothing to refresh.
+     */
+    private String holdForRefresh(WorldKnowledge wk, LeaseCoordinator c, String bot, String ore, String resource,
+                                  String commandLine) {
+        if (obsRefresh.holding(bot, resource)) {
+            return "swarm-lease: holding " + resource + " for " + bot + ": a refresh is already under way";
+        }
+        List<ObservationRecord> cand = wk.refreshCandidates(ore, dimChar(), key -> c.busyReason(key) != null,
+                ObsRefresh.MAX_KEYS);
+        Link l = link;
+        if (cand.isEmpty() || l == null || l.obsSend == null || wk.world() == null) {
+            return null;
+        }
+        List<ObservationMessage.Entry> entries = new ArrayList<>();
+        List<String> keys = new ArrayList<>();
+        for (ObservationRecord r : cand) {
+            entries.add(new ObservationMessage.Entry(r.key, r.detail, 0L, 0));
+            keys.add(r.key);
+        }
+        if (!l.obsSend.send("*", new ObservationMessage(ObservationMessage.Op.F, wk.world(), entries).encode(),
+                SwarmPriority.HIGH, null)) {
+            return null;
+        }
+        obsRefresh.hold(bot, ore, resource, commandLine, keys, nowMs());
+        String line = "swarm-obs: refreshing " + keys + " before offering " + resource + " to " + bot
+                + " (suspect or out of date); holding the request up to " + ObsRefresh.WAIT_MS + " ms";
+        logDirect(line);
+        return "swarm-lease: holding " + resource + " for " + bot + ": refreshing " + keys.size() + " record(s)";
+    }
+
+    /** Decide the held requests whose refresh is over, once each. Coordinator tick. */
+    private void decideRefreshed(WorldKnowledge wk) {
+        LeaseCoordinator c = leaseCoordinator;
+        if (c == null || obsRefresh.size() == 0) {
+            return;
+        }
+        for (ObsRefresh.Pending p : obsRefresh.due(wk::refreshed, nowMs())) {
+            WorldKnowledge.Pick pick = wk.pick(p.ore, dimChar(), key -> c.busyReason(key) != null);
+            if (pick.record == null) {
+                logDirect("swarm-lease: not offering " + p.resource + " to " + p.bot + ": " + pick.reason
+                        + " (after the refresh of " + p.keys + ")");
+                continue;
+            }
+            logDirect("swarm-obs: " + p.resource + " picked " + pick.record + " (after the refresh of " + p.keys + ")");
+            logDirect(c.lease(p.bot, pick.record.key, p.commandLine, pick.record.detail));
+        }
+    }
+
+    /** A refresh request from the coordinator: check each record here and answer through the reporter. */
+    private void onRefreshRequest(ObservationMessage m) {
+        for (ObservationMessage.Entry e : m.entries) {
+            ObservationVerifier.Result r = ObservationVerifier.verify(e.key, e.detail, dimChar(), reservationWorld());
+            String did = obsReporter.refreshAnswer(e.key, e.detail, r, nowMs());
+            logDirect("swarm-obs: refresh asked for " + e.key + ": " + did);
+        }
+    }
+
+    /** Ostinato: Phase 2c. The x,y,z of a {@code vein:x,y,z} shorthand, else null. */
+    private static int[] veinSeed(String resource) {
+        if (!resource.startsWith("vein:")) {
+            return null;
+        }
+        String[] f = resource.substring(5).split(",", -1);
+        if (f.length != 3) {
+            return null;
+        }
+        try {
+            return new int[]{Integer.parseInt(f[0].trim()), Integer.parseInt(f[1].trim()), Integer.parseInt(f[2].trim())};
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** Ostinato: Phase 2c. {@code #swarm obs status}. */
+    public List<String> obsStatusLines() {
+        List<String> out = new ArrayList<>();
+        ObservationReporter rep = obsReporter;
+        out.add("swarm-obs reporter: world=" + rep.world() + " reported=" + rep.reportedSize() + " pending="
+                + rep.pending() + " sent=" + rep.sentMessages() + "msg/" + rep.sentEntries() + "entries corrections="
+                + rep.corrections() + " queries=" + rep.queries() + " fenceDenials=" + LeaseFence.denials()
+                + " geometryDenials=" + LeaseFence.geometryDenials());
+        WorldKnowledge wk = worldKnowledge;
+        if (wk != null) {
+            out.addAll(wk.status(8));
+        }
+        return out;
+    }
+
+    /** Ostinato: Phase 2c. {@code #swarm obs see|waypoint|structure}: report one observation by hand. */
+    public String obsSee(String key, String detail, int confidence, long ageMs) {
+        if (!ObservationMessage.validKey(key)) {
+            return "swarm-obs: bad key " + key;
+        }
+        if (detail == null || !detail.matches("[A-Za-z0-9_:.,@-]{1,48}")) {
+            return "swarm-obs: bad detail " + detail;
+        }
+        if (obsReporter.world() == null) {
+            return "swarm-obs: not reporting yet (link down or not in a world)";
+        }
+        obsReporter.manual(key, detail, confidence, ageMs, nowMs());
+        return "swarm-obs: queued " + key + " " + detail + " conf=" + confidence + " age=" + ageMs + "ms";
+    }
+
+    /**
+     * Ostinato: Phase 2c. {@code #swarm obs gone <key>}: report that a record no longer holds, as a verified
+     * correction (an operator who checked, or a test of message order).
+     */
+    public String obsGone(String key) {
+        if (!ObservationMessage.validKey(key)) {
+            return "swarm-obs: bad key " + key;
+        }
+        if (obsReporter.world() == null) {
+            return "swarm-obs: not reporting yet (link down or not in a world)";
+        }
+        obsReporter.correction(key, null, null, nowMs());
+        return "swarm-obs: queued gone " + key;
+    }
+
+    /** Ostinato: Phase 2c. {@code #swarm obs world <tag|auto>}: test equivalent of a world/session change. */
+    public String obsWorld(String tag) {
+        if ("auto".equalsIgnoreCase(tag)) {
+            obsWorldOverride = null;
+            return "swarm-obs: world id back to auto";
+        }
+        if (!ObservationMessage.validWorld(tag)) {
+            return "swarm-obs: bad world tag " + tag;
+        }
+        obsWorldOverride = tag;
+        return "swarm-obs: world id set to " + tag;
+    }
+
+    /**
+     * Ostinato: Phase 2c part 2. The landing cell, read from the live world. Empty when it is air or replaceable,
+     * null when the chunk is not held, otherwise the short block id.
+     */
+    private String placeOccupying(int x, int y, int z) {
+        net.minecraft.client.multiplayer.ClientLevel w = ctx.minecraft().level;
+        if (w == null || !w.getChunkSource().hasChunk(x >> 4, z >> 4)) {
+            return null;
+        }
+        net.minecraft.world.level.block.state.BlockState st = w.getBlockState(new net.minecraft.core.BlockPos(x, y, z));
+        net.minecraft.world.level.block.Block block = st.getBlock();
+        if (block instanceof net.minecraft.world.level.block.AirBlock) {
+            return "";
+        }
+        if (block instanceof net.minecraft.world.level.block.SnowLayerBlock) {
+            return st.getValue(net.minecraft.world.level.block.SnowLayerBlock.LAYERS) == 1 ? "" : "snow";
+        }
+        if (block == net.minecraft.world.level.block.Blocks.LARGE_FERN
+                || block == net.minecraft.world.level.block.Blocks.TALL_GRASS) {
+            return "";
+        }
+        if (st.canBeReplaced()) {
+            return "";
+        }
+        return net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(block).getPath();
+    }
+
+    /**
+     * Ostinato: Phase 2c part 2. The open chest, as a canonical {@code c:} key and a contents detail. Null when no
+     * chest menu is open or the block behind it cannot be named.
+     *
+     * <p>On the client the menu's container is a plain inventory, not the block entity, so a single chest is named
+     * from the one open lid in reach, or from the chest already remembered for this menu. A double chest stays
+     * unreadable.
+     */
+    private String[] readOpenContainer() {
+        net.minecraft.client.player.LocalPlayer player = ctx.player();
+        if (player == null || !(player.containerMenu instanceof net.minecraft.world.inventory.ChestMenu menu)) {
+            latchedChestMenu = null;
+            latchedChestPos = null;
+            return null;
+        }
+        net.minecraft.world.Container inv = menu.getContainer();
+        net.minecraft.core.BlockPos blockEntityPos = inv instanceof net.minecraft.world.level.block.entity.BlockEntity be
+                ? be.getBlockPos() : null;
+        if (menu != latchedChestMenu) {
+            latchedChestMenu = menu;
+            latchedChestPos = null;
+        }
+        net.minecraft.core.BlockPos remembered = latchedChestPos != null ? latchedChestPos : lookedAtChest(player);
+        java.util.List<net.minecraft.core.BlockPos> lids = blockEntityPos != null ? java.util.List.of() : openChestLids(player);
+        net.minecraft.core.BlockPos pos = OpenChest.position(
+                blockEntityPos, menu.getRowCount(), lids, remembered);
+        if (pos == null) {
+            return null;
+        }
+        String[] read = OpenChest.read(inv, pos, dimChar(), reservationWorld());
+        if (read != null && blockEntityPos == null) {
+            latchedChestPos = pos;
+        }
+        return read;
+    }
+
+    /** How far from the player's block a chest can be and still be the one this player opened. */
+    private static final int OPEN_CHEST_REACH = 6;
+
+    /**
+     * Chest blocks in reach whose lid is open. The client block event sets the lid target and leaves the opener
+     * count at zero, and the openness stays zero until the lid ticks, so a closed-looking lid is ticked once here.
+     */
+    private java.util.List<net.minecraft.core.BlockPos> openChestLids(net.minecraft.client.player.LocalPlayer player) {
+        net.minecraft.client.multiplayer.ClientLevel level = ctx.minecraft().level;
+        if (level == null) {
+            return java.util.List.of();
+        }
+        net.minecraft.core.BlockPos origin = player.blockPosition();
+        net.minecraft.core.BlockPos.MutableBlockPos cursor = new net.minecraft.core.BlockPos.MutableBlockPos();
+        java.util.List<net.minecraft.core.BlockPos> open = new java.util.ArrayList<>();
+        for (int dx = -OPEN_CHEST_REACH; dx <= OPEN_CHEST_REACH; dx++) {
+            for (int dy = -OPEN_CHEST_REACH; dy <= OPEN_CHEST_REACH; dy++) {
+                for (int dz = -OPEN_CHEST_REACH; dz <= OPEN_CHEST_REACH; dz++) {
+                    cursor.set(origin.getX() + dx, origin.getY() + dy, origin.getZ() + dz);
+                    net.minecraft.world.level.block.state.BlockState state = level.getBlockState(cursor);
+                    net.minecraft.world.level.block.Block block = state.getBlock();
+                    if (block != net.minecraft.world.level.block.Blocks.CHEST
+                            && block != net.minecraft.world.level.block.Blocks.TRAPPED_CHEST) {
+                        continue;
+                    }
+                    net.minecraft.world.level.block.entity.BlockEntity be = level.getBlockEntity(cursor);
+                    if (!(be instanceof net.minecraft.world.level.block.entity.ChestBlockEntity chest)) {
+                        continue;
+                    }
+                    if (chest.getOpenNess(1.0F) <= 0.0F) {
+                        net.minecraft.world.level.block.entity.ChestBlockEntity.lidAnimateTick(level, cursor, state, chest);
+                    }
+                    if (chest.getOpenNess(1.0F) > 0.0F) {
+                        open.add(cursor.immutable());
+                    }
+                }
+            }
+        }
+        return open;
+    }
+
+    /** The chest under the crosshair, when it is in reach. Null for any other block. */
+    private net.minecraft.core.BlockPos lookedAtChest(net.minecraft.client.player.LocalPlayer player) {
+        net.minecraft.client.multiplayer.ClientLevel level = ctx.minecraft().level;
+        if (level == null || !(ctx.minecraft().hitResult instanceof net.minecraft.world.phys.BlockHitResult hit)
+                || hit.getType() != net.minecraft.world.phys.HitResult.Type.BLOCK) {
+            return null;
+        }
+        net.minecraft.core.BlockPos pos = hit.getBlockPos();
+        net.minecraft.core.BlockPos origin = player.blockPosition();
+        if (Math.abs(pos.getX() - origin.getX()) > OPEN_CHEST_REACH
+                || Math.abs(pos.getY() - origin.getY()) > OPEN_CHEST_REACH
+                || Math.abs(pos.getZ() - origin.getZ()) > OPEN_CHEST_REACH) {
+            return null;
+        }
+        net.minecraft.world.level.block.Block block = level.getBlockState(pos).getBlock();
+        if (block != net.minecraft.world.level.block.Blocks.CHEST
+                && block != net.minecraft.world.level.block.Blocks.TRAPPED_CHEST) {
+            return null;
+        }
+        return pos;
+    }
+
+    /** An occupied place cell: the old record of that cell is replaced by the block that is actually there. */
+    private void correctPlaceCell(char dim, int x, int y, int z, String blockId) {
+        String key = "b:" + dim + ":" + x + "," + y + "," + z;
+        obsReporter.correction(key, key, blockId, nowMs());
+        logDirect("swarm-obs: place cell " + x + "," + y + "," + z + " occupied by " + blockId
+                + "; reporting the correction");
+    }
+
+    /** The open container's counts replace the shared record of that chest. */
+    private void correctContainer(String key, String detail) {
+        obsReporter.correction(key, key, detail, nowMs());
+        logDirect("swarm-obs: container " + key + " contents " + detail + "; reporting the correction");
+    }
+
+    /** Ostinato: Phase 2c part 2 slice 3. Every chunk the box touches is held by this client. */
+    private boolean regionLoaded(ReservationKey k) {
+        net.minecraft.client.multiplayer.ClientLevel w = ctx.minecraft().level;
+        return w != null && LoadedWorld.boxHeld(k.x1, k.z1, k.x2, k.z2, (cx, cz) -> w.getChunkSource().hasChunk(cx, cz));
+    }
+
+    /**
+     * Ostinato: this client's loaded world, as the reservation resolver, the observation verifier and the reporter see
+     * it. Loaded means the client's chunk source holds the chunk; 26.3's ClientLevel.hasChunkAt is always true.
+     */
+    private ReservationResolver.World reservationWorld() {
+        return new baritone.swarm.world.LoadedWorld(new baritone.swarm.world.LoadedWorld.Client() {
+            @Override
+            public boolean chunkHeld(int chunkX, int chunkZ) {
+                net.minecraft.client.multiplayer.ClientLevel w = ctx.minecraft().level;
+                return w != null && w.getChunkSource().hasChunk(chunkX, chunkZ);
+            }
+
+            @Override
+            public String blockId(int x, int y, int z) {
+                net.minecraft.client.multiplayer.ClientLevel w = ctx.minecraft().level;
+                if (w == null) {
+                    return "minecraft:air";
+                }
+                net.minecraft.core.BlockPos p = new net.minecraft.core.BlockPos(x, y, z);
+                return net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(w.getBlockState(p).getBlock())
+                        .toString();
+            }
+
+            @Override
+            public int[] otherChestHalf(int x, int y, int z) {
+                net.minecraft.client.multiplayer.ClientLevel w = ctx.minecraft().level;
+                if (w == null) {
+                    return null;
+                }
+                net.minecraft.core.BlockPos p = new net.minecraft.core.BlockPos(x, y, z);
+                net.minecraft.world.level.block.state.BlockState st = w.getBlockState(p);
+                if (!(st.getBlock() instanceof net.minecraft.world.level.block.ChestBlock)
+                        || st.getValue(net.minecraft.world.level.block.ChestBlock.TYPE)
+                        == net.minecraft.world.level.block.state.properties.ChestType.SINGLE) {
+                    return null;
+                }
+                net.minecraft.core.BlockPos o = p.relative(net.minecraft.world.level.block.ChestBlock.getConnectedDirection(st));
+                return new int[]{o.getX(), o.getY(), o.getZ()};
+            }
+        });
+    }
+
+    /** Ostinato: {@code #swarm lease revoke <resource|leaseId>}. */
+    public String leaseRevoke(String resourceOrId) {
+        LeaseCoordinator c = leaseCoordinator;
+        if (c == null) {
+            return "swarm: swarmCoordinator is false (or the link is not up yet)";
+        }
+        return c.revoke(resourceOrId);
     }
 
     /** Builds one region of a file in the schematics folder, as ordered over the link. */
@@ -570,6 +2070,25 @@ public final class SwarmBehavior extends Behavior implements Helper {
     private volatile boolean pendingStart;
 
     private final class Status implements SwarmControl.LocalStatus {
+        private final SwarmRateLimiter limiter;
+        private final ChatSwarmTransport chat;
+        private final String command;
+        volatile CommandProtocol protocol;
+
+        Status(SwarmRateLimiter limiter, ChatSwarmTransport chat, String command) {
+            this.limiter = limiter;
+            this.chat = chat;
+            this.command = command;
+        }
+
+        /** Ostinato: client figures plus this link's chat budget, losses and retries. Client thread. */
+        @Override
+        public SwarmSample sample() {
+            CommandProtocol p = protocol;
+            return baseSample().withLink(limiter.sentInWindow(nowMs()), limiter.windowCap(),
+                    limiter.dropped() + chat.tooLong() + chat.inboundDropped(), p == null ? -1 : p.retried(), command);
+        }
+
         @Override
         public String name() {
             return ctx.player() == null ? "?" : ctx.player().getName().getString();

@@ -14,14 +14,25 @@ public final class LayoutStore {
 
     private LayoutStore() {}
 
-    public static Path file(Path configDir) {
+    /** OS user, safe for a file name. Blank becomes {@code user}. */
+    public static String userSlug() {
         String user = System.getProperty("user.name", "user");
-        String safe = user.replaceAll("[^A-Za-z0-9._-]", "_");
-        if (safe.isBlank()) {
-            safe = "user";
-        }
+        String safe = user == null ? "" : user.replaceAll("[^A-Za-z0-9._-]", "_");
+        return safe.isBlank() ? "user" : safe;
+    }
+
+    public static Path file(Path configDir) {
         Path dir = configDir == null ? Path.of(System.getProperty("user.home"), ".ostinato") : configDir;
-        return dir.resolve("command-center-layout-" + safe + ".txt");
+        return dir.resolve("command-center-layout-" + userSlug() + ".txt");
+    }
+
+    /**
+     * The file the standalone window and {@code #center layout} share when the feed is on:
+     * {@code <centerDir>/prefs/layout-<os user>.txt}. {@link #file} stays the in-game config path.
+     */
+    public static Path sharedFile(Path centerDir) {
+        Path root = centerDir == null ? Path.of(System.getProperty("user.home"), ".ostinato") : centerDir;
+        return root.resolve("prefs").resolve("layout-" + userSlug() + ".txt");
     }
 
     public static CenterLayout load(Path file) {
@@ -29,14 +40,26 @@ public final class LayoutStore {
             if (file == null || !Files.isRegularFile(file)) {
                 return CenterLayout.WALL;
             }
-            for (String raw : Files.readAllLines(file)) {
+            return parse(Files.readString(file));
+        } catch (RuntimeException | IOException ignored) {
+            return CenterLayout.WALL;
+        }
+    }
+
+    /** The layout in a file's text: the first line that is not blank or a comment. Anything else is the wall. */
+    public static CenterLayout parse(String text) {
+        if (text == null) {
+            return CenterLayout.WALL;
+        }
+        try {
+            for (String raw : text.split("\\R")) {
                 String line = raw.trim();
                 if (line.isEmpty() || line.startsWith("#")) {
                     continue;
                 }
                 return CenterLayout.parse(line);
             }
-        } catch (RuntimeException | IOException ignored) {
+        } catch (RuntimeException ignored) {
             return CenterLayout.WALL;
         }
         return CenterLayout.WALL;

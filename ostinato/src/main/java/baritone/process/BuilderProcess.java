@@ -17,6 +17,7 @@
 
 package baritone.process;
 
+import baritone.api.process.ProcessOutcome;
 import baritone.Baritone;
 import baritone.altoclef.AltoClefSettings;
 import baritone.api.pathing.goals.Goal;
@@ -37,6 +38,7 @@ import baritone.api.utils.*;
 import baritone.api.utils.Rotation;
 import baritone.api.utils.input.Input;
 import baritone.pathing.cadenza.Cadenza;
+import baritone.swarm.lease.LeaseFence;
 import baritone.pathing.cadenza.CadenzaGoal;
 import baritone.pathing.cadenza.CadenzaSession;
 import baritone.pathing.movement.CalculationContext;
@@ -184,6 +186,8 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
 
     @Override
     public void build(String name, ISchematic schematic, Vec3i origin) {
+        requestOutcome.start(); // Ostinato: build, clear area (tunnel w h d), schematica/litematica each start a request
+        hadWork = false;
         this.regionGuard = null; // a plain build is not restricted; buildRegion sets this after calling build
         //Shouldn't get initially called
         if (this.fromAltoclef && this.stateStack.isEmpty()) {
@@ -447,6 +451,16 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
     @Override
     public boolean isActive() {
         return schematic != null;
+    }
+
+    // ---- Ostinato: the outcome of each build request (a swarm command reports success only from this) -------------
+    private final RequestOutcome requestOutcome = new RequestOutcome();
+    /** This request found a block that was not as the schematic wants it at least once (so finishing changed something). */
+    private boolean hadWork;
+
+    @Override
+    public ProcessOutcome outcome() {
+        return requestOutcome.outcome();
     }
 
     public BlockState placeAt(int x, int y, int z, BlockState current) {
@@ -878,6 +892,9 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
                     }
                     BlockState curr = bcc.bsi.get0(x, y, z);
                     if (MovementHelper.isReplaceable(x, y, z, curr, bcc.bsi) && !valid(curr, desired, false)) {
+                        if (LeaseFence.placeBlocked(x, y, z)) {
+                            continue; // live cell is occupied or unreadable; do not click a place into it
+                        }
                         if (dy == 1 && bcc.bsi.get0(x, y + 1, z).getBlock() instanceof AirBlock) {
                             continue;
                         }
@@ -1095,7 +1112,10 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
             };
         }
         BuilderCalculationContext bcc = new BuilderCalculationContext();
-        if (!recalc(bcc)) {
+        requestOutcome.running(); // Ostinato:
+        boolean wrong = recalc(bcc);
+        hadWork |= wrong; // Ostinato: something to break or place: "Done building" afterwards is a verified change
+        if (!wrong) {
             if (Baritone.settings().buildInLayers.value && layer * Baritone.settings().layerHeight.value < stopAtHeight) {
                 logDirect("Starting layer " + layer);
                 layer++;
@@ -1105,6 +1125,11 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
             int max = Baritone.settings().buildRepeatCount.value;
             numRepeats++;
             if (repeat.equals(new Vec3i(0, 0, 0)) || (max != -1 && numRepeats >= max)) {
+                // Ostinato: success only if this request had work to do; already as wanted is a no-op (failed)
+                if (hadWork) {
+                    requestOutcome.didOne();
+                }
+                requestOutcome.endFor(ProcessOutcome.Reason.NONE);
                 logDirect("Done building");
                 if (Baritone.settings().notificationOnBuildFinished.value) {
                     logNotification("Done building", false);
@@ -1398,6 +1423,8 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
                 BlockState desired = bcc.getSchematic(pos.x, pos.y, pos.z, state);
                 if (desired == null) {
                     outOfBounds.add(pos);
+                } else if (LeaseFence.placeBlocked(pos.x, pos.y, pos.z)) {
+                    // live cell is occupied or unreadable; pathing back to it would only retry the refused place
                 } else if (containsBlockState(approxPlaceable, desired)) {
                     placeable.add(pos);
                 } else {
@@ -1725,6 +1752,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
 
     @Override
     public void onLostControl() {
+        requestOutcome.finish(); // Ostinato: an end it did not choose (stop, another process) is a cancel
         if (this.fromAltoclef && this.stateStack.isEmpty()) {
             pushState();
         }

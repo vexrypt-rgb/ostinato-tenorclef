@@ -23,6 +23,7 @@ import baritone.swarm.crypto.SigilCodec;
 import baritone.swarm.crypto.SigilEd25519;
 import baritone.swarm.crypto.SigilException;
 import baritone.swarm.crypto.SigilS2S;
+import baritone.swarm.crypto.SigilS2SJoiner;
 import baritone.swarm.crypto.SigilWire;
 import baritone.swarm.frame.SwarmChunker;
 import baritone.swarm.frame.SwarmFrame;
@@ -32,6 +33,7 @@ import baritone.swarm.frame.SwarmReassembler;
 import baritone.swarm.frame.SwarmReject;
 import baritone.swarm.frame.SwarmReplayGuard;
 import baritone.swarm.transport.SwarmPriority;
+import baritone.swarm.transport.SwarmRateLimiter;
 import baritone.swarm.transport.SwarmTransport;
 
 import java.io.Closeable;
@@ -68,6 +70,7 @@ public final class SwarmEndpoint implements Closeable {
     private final SwarmChunker chunker;
     private final SwarmReplayGuard replay;
     private final SwarmReassembler reassembler;
+    private final SigilS2SJoiner joiner; // Ostinato: multi-line signed frames
     private final Map<SwarmReject, Long> rejects = new EnumMap<>(SwarmReject.class);
     private SwarmReject lastReject;
     private volatile BiPredicate<String, String> memberCheck = (group, from) -> true;
@@ -100,6 +103,7 @@ public final class SwarmEndpoint implements Closeable {
         this.chunker = new SwarmChunker(selfId, clockMs.getAsLong() / 1000L, cfg);
         this.replay = new SwarmReplayGuard(cfg);
         this.reassembler = new SwarmReassembler(cfg);
+        this.joiner = new SigilS2SJoiner(cfg.reassemblyTimeoutMs(), cfg.maxPendingMessages());
     }
 
     public String selfId() { return self; }
@@ -158,6 +162,12 @@ public final class SwarmEndpoint implements Closeable {
 
     public long send(String group, String to, String type, String body, SwarmPriority priority)
             throws SwarmFrameException, SigilException, IOException {
+        return send(group, to, type, body, priority, null);
+    }
+
+    /** Ostinato: {@link #send(String, String, String, String, SwarmPriority)} with the sender's deadline for its lines. */
+    public long send(String group, String to, String type, String body, SwarmPriority priority,
+                     SwarmRateLimiter.Deadline deadline) throws SwarmFrameException, SigilException, IOException {
         SigilCircle circle = groups.get(group);
         if (circle == null) {
             throw new SwarmFrameException(SwarmReject.WRONG_GROUP, "no circle for group " + group);
@@ -170,12 +180,19 @@ public final class SwarmEndpoint implements Closeable {
         }
         for (SwarmFrame f : frames) {
             String enc = f.encode();
-            lines.add(signed
-                    ? SigilS2S.sealSingle(circle, localSignet, enc, cfg.sealLineBudget())
-                    : SigilCodec.sealSingle(cfg.wire(), circle, enc, cfg.sealLineBudget()));
+            if (signed) {
+                // Ostinato: one signature per frame; the frame may take up to frameLines lines.
+                List<String> parts = SigilS2S.seal(circle, localSignet, enc, "", cfg.sealLineBudget());
+                if (parts.size() > cfg.frameLines()) {
+                    throw new SigilException("frame needs " + parts.size() + " lines > " + cfg.frameLines());
+                }
+                lines.addAll(parts);
+            } else {
+                lines.add(SigilCodec.sealSingle(cfg.wire(), circle, enc, cfg.sealLineBudget()));
+            }
         }
         for (String line : lines) {
-            transport.sendTo(group, to, line, priority);
+            transport.sendTo(group, to, line, priority, deadline);
         }
         return frames.get(0).msgId();
     }
@@ -193,7 +210,7 @@ public final class SwarmEndpoint implements Closeable {
                 out.add(m);
             }
         }
-        int expired = reassembler.expire(clockMs.getAsLong());
+        int expired = reassembler.expire(clockMs.getAsLong()) + joiner.expire(clockMs.getAsLong());
         for (int i = 0; i < expired; i++) {
             count(SwarmReject.EXPIRED);
         }
@@ -217,6 +234,24 @@ public final class SwarmEndpoint implements Closeable {
                 circle = o.circle;
                 total = o.total;
                 signer = o.keyid;
+                if (total > 1) {
+                    // Ostinato: a frame sealed over several lines; verified once all of them are here.
+                    SigilS2SJoiner.Result j = joiner.offer(o, pins, now);
+                    switch (j.status) {
+                        case JOINED:
+                            text = j.text;
+                            circle = j.circle;
+                            signer = j.keyid;
+                            total = 1;
+                            break;
+                        case BAD:
+                            return reject(SwarmReject.UNSEALED);
+                        case DUPLICATE:
+                            return reject(SwarmReject.REPLAY); // a re-delivered line, e.g. a chat echo
+                        default:
+                            return null; // waiting for more lines
+                    }
+                }
             } else {
                 if (signedOut()) {
                     return reject(SwarmReject.UNSEALED);

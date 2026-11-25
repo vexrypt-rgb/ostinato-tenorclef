@@ -23,6 +23,7 @@ import baritone.api.command.ICommand;
 import baritone.api.command.manager.ICommandManager;
 import baritone.api.pathing.calc.IPathingControlManager;
 import baritone.api.process.IBaritoneProcess;
+import baritone.api.process.ProcessOutcome; // Ostinato:
 import baritone.api.pathing.goals.Goal; // Ostinato:
 import baritone.api.swarm.protocol.ExecutionState;
 import baritone.api.swarm.protocol.ExternalCommandHook;
@@ -46,6 +47,11 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
     private final Map<UUID, String> started = new ConcurrentHashMap<>();
     private final Map<UUID, Goal> goals = new ConcurrentHashMap<>(); // Ostinato:
     private final Set<UUID> seenActivity = ConcurrentHashMap.newKeySet(); // Ostinato:
+    // Ostinato: the process that ran each command, and the outcome request numbers before it started, so a command's
+    // success comes from that process's own recorded outcome for this request, never from the process going idle.
+    private final Map<UUID, IBaritoneProcess> processOf = new ConcurrentHashMap<>();
+    private final Map<UUID, Map<IBaritoneProcess, Long>> requestBefore = new ConcurrentHashMap<>();
+    private final Set<UUID> unverifiedIdle = ConcurrentHashMap.newKeySet();
     private final Map<String, CommandCatalog.Entry> atCommands;
 
     public RegistryExecutor(IBaritone baritone, Supplier<ExternalCommandHook> hook) {
@@ -100,6 +106,7 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
         String line = args == null || args.isEmpty() ? name : name + " " + args;
         ICommand command = commands().getCommand(name);
         if (command != null) {
+            requestBefore.put(id, outcomeRequests()); // Ostinato: before execute() can start a new request
             boolean ok = commands().execute(line);
             if (ok) {
                 started.put(id, name);
@@ -176,8 +183,16 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
             Optional<IBaritoneProcess> cur = mgr.mostRecentInControl();
             if (cur.isPresent() && cur.get().isActive()) {
                 seenActivity.add(id); // Ostinato:
+                pin(id, cur.get()); // Ostinato: only the process this command started
                 captureGoal(id, name); // Ostinato:
                 return null;
+            }
+            // Ostinato: a recorded outcome for this command's request is its result, even if poll never saw the
+            // process in control (a mine with nothing to mine can end on its first tick).
+            ExecutionState recorded = recordedOutcome(id);
+            if (recorded != null) {
+                unverifiedIdle.remove(id);
+                return recorded;
             }
             // Ostinato: an idle control slot is not completion, especially before the first process tick.
             captureGoal(id, name); // Ostinato: execute() may activate the custom-goal process on a later tick.
@@ -196,12 +211,117 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
             } // Ostinato:
             Goal goal = goals.get(id); // Ostinato:
             if (goal == null) { // Ostinato:
-                return ExecutionState.SUCCEEDED; // Ostinato: a non-goto process is done once it has run and gone idle.
+                // Ostinato: a process going idle is not a success. Only its own recorded outcome for this request is
+                // (a mine that found nothing went idle too and used to report succeeded (verified)); without one the
+                // command stays running with observation unknown.
+                unverifiedIdle.add(id);
+                return null;
             } // Ostinato:
             return goal.isInGoal(baritone.getPlayerContext().playerFeet()) // Ostinato:
                     ? ExecutionState.SUCCEEDED : ExecutionState.FAILED; // Ostinato: idle away from the captured goal is failure, not a hang.
         } catch (Throwable ignored) {
             return null;
+        }
+    }
+
+    /** Ostinato: true once this command's process went idle without a recorded outcome (observation unknown). */
+    @Override
+    public boolean unverifiedIdle(UUID id) {
+        return unverifiedIdle.contains(id);
+    }
+
+    /** Ostinato: the outcome request numbers of the processes that record outcomes, right now. */
+    private Map<IBaritoneProcess, Long> outcomeRequests() {
+        Map<IBaritoneProcess, Long> m = new java.util.HashMap<>();
+        // Ostinato: every process that records outcomes. Each on its own: one that cannot be read leaves the others.
+        java.util.List<Supplier<? extends IBaritoneProcess>> recording = java.util.List.of(baritone::getMineProcess,
+                baritone::getGetToBlockProcess, baritone::getCustomGoalProcess, baritone::getBuilderProcess,
+                baritone::getFarmProcess, baritone::getFollowProcess, baritone::getExploreProcess);
+        for (Supplier<? extends IBaritoneProcess> get : recording) {
+            try {
+                IBaritoneProcess p = get.get();
+                ProcessOutcome o = p == null ? null : outcomeOf(p);
+                if (o != null) {
+                    m.put(p, o.request());
+                }
+            } catch (Throwable ignored) {
+                // this process cannot be compared against; a command it runs cannot be verified
+            }
+        }
+        return m;
+    }
+
+    /** Ostinato: the process's recorded outcome ({@link ProcessOutcome#NONE} if it records none), or null if unreadable. */
+    static ProcessOutcome outcomeOf(IBaritoneProcess p) {
+        try {
+            return p == null ? null : p.outcome();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Ostinato: pin {@code id} to {@code p} only if p records outcomes and its request advanced since the command
+     * started, i.e. p is running this command's request. Any other process seen in control (one left over from earlier,
+     * a survival or approach process, one with no outcome API) is never pinned; the poll keeps looking, and the outcome
+     * falls back to the one recording process whose request this command started. p2c2 slice 1 rerun (21 Nov): the
+     * swarm's approach process was still in control on the mine command's first poll, the command was pinned to it,
+     * and the mine's recorded success was never read.
+     */
+    private void pin(UUID id, IBaritoneProcess p) {
+        if (processOf.containsKey(id)) {
+            return;
+        }
+        Map<IBaritoneProcess, Long> before = requestBefore.get(id);
+        ProcessOutcome o = outcomeOf(p);
+        if (before == null || o == null || !before.containsKey(p) || o.request() <= before.get(p)) {
+            return;
+        }
+        processOf.put(id, p);
+    }
+
+    /**
+     * Ostinato: the verified result of this command from its process's recorded outcome, or null when there is none
+     * (a process that does not record outcomes, a request that is not this command's, or one not ended).
+     */
+    private ExecutionState recordedOutcome(UUID id) {
+        Map<IBaritoneProcess, Long> before = requestBefore.get(id);
+        if (before == null) {
+            return null;
+        }
+        IBaritoneProcess p = processOf.get(id);
+        if (p == null) { // never seen in control: the one recording process whose request this command started
+            for (Map.Entry<IBaritoneProcess, Long> e : before.entrySet()) {
+                ProcessOutcome o = outcomeOf(e.getKey());
+                if (o != null && o.request() > e.getValue()) {
+                    if (p != null) {
+                        return null; // two started: cannot tell which is this command's
+                    }
+                    p = e.getKey();
+                }
+            }
+        }
+        if (p == null || !before.containsKey(p)) {
+            return null;
+        }
+        return verdict(outcomeOf(p), before.get(p));
+    }
+
+    /**
+     * Ostinato: SUCCEEDED or FAILED when the request this command started (the one right after
+     * {@code requestBefore}) ended so; else null (still running, cancelled, or replaced by a later request).
+     */
+    static ExecutionState verdict(ProcessOutcome o, long requestBefore) {
+        if (o == null || o.request() != requestBefore + 1 || !o.terminal()) {
+            return null;
+        }
+        switch (o.state()) {
+            case SUCCEEDED:
+                return ExecutionState.SUCCEEDED;
+            case FAILED:
+                return ExecutionState.FAILED;
+            default:
+                return null; // cancelled from outside or unknown: not a verified result of this command
         }
     }
 

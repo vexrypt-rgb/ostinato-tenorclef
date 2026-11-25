@@ -1,0 +1,239 @@
+/*
+ * This file is part of Baritone.
+ *
+ * Baritone is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Baritone is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with Baritone.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package baritone.swarm.lease;
+
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
+
+/**
+ * Ostinato: the last-line fence for lease-protected world actions (break, place, container clicks).
+ *
+ * <p>{@link #denied()} is true only while a leased command is active, its lease is no longer valid, and the process
+ * in control is the leased one (mine, builder or custom goal). Eating, fleeing lava and fighting are other processes
+ * (or no process) and are never fenced. With {@code swarmLeases=false} nothing installs a check and this is always
+ * false.
+ */
+public final class LeaseFence {
+
+    private static final BooleanSupplier OFF = () -> false;
+    private static volatile BooleanSupplier check = OFF;
+    private static volatile long denials;
+
+    private LeaseFence() {}
+
+    public static void install(BooleanSupplier c) {
+        check = c == null ? OFF : c;
+    }
+
+    public static void clear() {
+        check = OFF;
+        geometry = NO_GEOMETRY;
+        vein = NO_VEIN; // Ostinato: Phase 2c
+        mineBox = NO_VEIN;
+        placeCheck = NO_PLACE;
+        containerCheck = NO_CONTAINER;
+    }
+
+    private static volatile Supplier<ReservationKey> mineBox = () -> null;
+
+    /** Ostinato: supplies the vein or region box the active leased mine is confined to (null when none). */
+    public static void installMineBox(Supplier<ReservationKey> b) {
+        mineBox = b == null ? NO_VEIN : b;
+    }
+
+    /** Ostinato: the box the active leased mine may take targets from, or null. A broken supplier gives null. */
+    public static ReservationKey mineBox() {
+        Supplier<ReservationKey> b = mineBox;
+        try {
+            return b.get();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** Ostinato: Phase 2c. Supplies the vein box the active leased mine holds (null when none). */
+    private static final Supplier<ReservationKey> NO_VEIN = () -> null;
+    private static volatile Supplier<ReservationKey> vein = NO_VEIN;
+
+    public static void installVein(Supplier<ReservationKey> v) {
+        vein = v == null ? NO_VEIN : v;
+    }
+
+    /**
+     * Ostinato: Phase 2c. The verified vein box the active leased mine may head for, or null. A broken supplier gives
+     * null: the mine then falls back to its own targets, which the geometry fence still checks.
+     */
+    public static ReservationKey veinTarget() {
+        Supplier<ReservationKey> v = vein;
+        if (v == NO_VEIN) {
+            return null;
+        }
+        try {
+            return v.get();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** Ostinato: Phase 2c. Told when a leased mine finds its loaded vein box empty of its ore. */
+    public interface MinedOut {
+        void minedOut(ReservationKey box, java.util.Set<String> ores);
+    }
+
+    private static final MinedOut NO_MINED_OUT = (box, ores) -> {};
+    private static volatile MinedOut minedOut = NO_MINED_OUT;
+
+    public static void installMinedOut(MinedOut m) {
+        minedOut = m == null ? NO_MINED_OUT : m;
+    }
+
+    /**
+     * Ostinato: Phase 2c. The mine checked the whole leased box (loaded) and found none of {@code ores} left. The swarm
+     * side withdraws this bot's own reports of that vein (p2ch run 3: a part-mined vein reported mid-mine stayed in
+     * the shared store and was picked again). A broken listener never stops the mine.
+     */
+    public static void minedOut(ReservationKey box, java.util.Set<String> ores) {
+        try {
+            minedOut.minedOut(box, ores);
+        } catch (RuntimeException ignored) {
+            // the mine ends either way
+        }
+    }
+
+    /** True when the current action must not run. Counts each denial. */
+    public static boolean denied() {
+        BooleanSupplier c = check;
+        if (c == OFF) {
+            return false;
+        }
+        boolean d;
+        try {
+            d = c.getAsBoolean();
+        } catch (RuntimeException e) {
+            d = false; // A broken check must not freeze the bot.
+        }
+        if (d) {
+            denials++;
+        }
+        return d;
+    }
+
+    /** Ostinato: Phase 2b. The kind of world action a positional check is asked about. */
+    public enum Kind { BREAK, PLACE, CONTAINER }
+
+    /** Ostinato: Phase 2b. Position-aware check: does this action fall outside the active reservation? */
+    public interface Geometry {
+        boolean outside(Kind kind, int x, int y, int z);
+    }
+
+    private static final Geometry NO_GEOMETRY = (k, x, y, z) -> false;
+    private static volatile Geometry geometry = NO_GEOMETRY;
+
+    public static void installGeometry(Geometry g) {
+        geometry = g == null ? NO_GEOMETRY : g;
+    }
+
+    /**
+     * Ostinato: Phase 2c part 2. A place the builder is about to select. True when that place must not happen (the
+     * landing cell inside a region lease is occupied or cannot be read). Fails open: the click fence still checks.
+     */
+    public interface PlaceCheck {
+        boolean blocked(int x, int y, int z);
+    }
+
+    private static final PlaceCheck NO_PLACE = (x, y, z) -> false;
+    private static volatile PlaceCheck placeCheck = NO_PLACE;
+
+    public static void installPlaceCheck(PlaceCheck c) {
+        placeCheck = c == null ? NO_PLACE : c;
+    }
+
+    public static boolean placeBlocked(int x, int y, int z) {
+        PlaceCheck c = placeCheck;
+        if (c == NO_PLACE) {
+            return false;
+        }
+        try {
+            return c.blocked(x, y, z);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Ostinato: Phase 2c part 2. A shared-container click. True when the open container's contents do not match the
+     * leased claim, or cannot be read under a chest lease. Fails open: a broken check must not freeze every chest.
+     */
+    public interface ContainerCheck {
+        boolean blocked();
+    }
+
+    private static final ContainerCheck NO_CONTAINER = () -> false;
+    private static volatile ContainerCheck containerCheck = NO_CONTAINER;
+
+    public static void installContainerCheck(ContainerCheck c) {
+        containerCheck = c == null ? NO_CONTAINER : c;
+    }
+
+    public static boolean containerBlocked() {
+        ContainerCheck c = containerCheck;
+        if (c == NO_CONTAINER) {
+            return false;
+        }
+        try {
+            return c.blocked();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Ostinato: true when the action must not run, either because the lease is invalid ({@link #denied()}) or because
+     * the position is outside the reservation the active leased command holds. Fails open like {@link #denied()}.
+     */
+    public static boolean denied(Kind kind, int x, int y, int z) {
+        if (denied()) {
+            return true;
+        }
+        Geometry g = geometry;
+        if (g == NO_GEOMETRY) {
+            return false;
+        }
+        boolean d;
+        try {
+            d = g.outside(kind, x, y, z);
+        } catch (RuntimeException e) {
+            d = false;
+        }
+        if (d) {
+            denials++;
+            geometryDenials++;
+        }
+        return d;
+    }
+
+    private static volatile long geometryDenials;
+
+    public static long geometryDenials() {
+        return geometryDenials;
+    }
+
+    public static long denials() {
+        return denials;
+    }
+}

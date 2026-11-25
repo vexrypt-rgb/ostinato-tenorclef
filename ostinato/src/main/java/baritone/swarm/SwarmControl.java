@@ -24,6 +24,7 @@ import baritone.swarm.frame.SwarmReject;
 import baritone.swarm.protocol.CommandProtocol;
 import baritone.swarm.roster.SwarmRoster;
 import baritone.swarm.transport.SwarmPriority;
+import baritone.swarm.transport.WindowCounter;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -31,6 +32,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.BiPredicate;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
@@ -46,6 +49,12 @@ public final class SwarmControl {
 
     public static final String PING = "PING";
     public static final String PONG = "PONG";
+    /** Ostinato: a {@link SwarmSample} broadcast. No reply; members that do not know the type ignore it. */
+    public static final String STS = "STS";
+    /** Ostinato: sample period when the command protocol is off. With it on, every third heartbeat is the sample. */
+    public static final long SAMPLE_INTERVAL_MS = 30_000L;
+    /** Ostinato: window the per-member traffic count covers. */
+    public static final long TRAFFIC_WINDOW_MS = 60_000L;
     /** Pings older than this no longer match a pong for RTT. */
     public static final long PING_TTL_MS = 120_000L;
     static final int MAX_FIELD = 40;
@@ -59,6 +68,16 @@ public final class SwarmControl {
 
         /** Current Baritone process, or {@code "idle"}. */
         String process();
+
+        /** Ostinato: figures for the performance strip and link monitor; unknown unless the host supplies them. */
+        default SwarmSample sample() {
+            return SwarmSample.UNKNOWN;
+        }
+    }
+
+    /** Ostinato: a copy of one member's last sample and traffic, safe to hand to another thread. */
+    public record PeerLink(String name, long lastSeenMs, SwarmSample sample, long sampleAtMs, int receivedInWindow,
+                           long received) {
     }
 
     /** What we know about one other member. */
@@ -70,6 +89,9 @@ public final class SwarmControl {
         String proc;
         long rttMs = -1;
         long pongAtMs = -1;
+        SwarmSample sample = SwarmSample.UNKNOWN; // Ostinato:
+        long sampleAtMs = -1; // Ostinato:
+        final WindowCounter traffic = new WindowCounter(TRAFFIC_WINDOW_MS, 1024); // Ostinato:
 
         Peer(String name) {
             this.name = name;
@@ -82,6 +104,9 @@ public final class SwarmControl {
         public String proc() { return proc; }
         public long rttMs() { return rttMs; }
         public long pongAtMs() { return pongAtMs; }
+        /** Ostinato: last {@code STS} sample, or {@link SwarmSample#UNKNOWN} (an older bot, or none yet). */
+        public SwarmSample sample() { return sample; }
+        public long sampleAtMs() { return sampleAtMs; }
     }
 
     private final SwarmRoster roster;
@@ -97,6 +122,22 @@ public final class SwarmControl {
     private CommandProtocol commandProtocol;
     public static final long PEER_TIMEOUT_MS = 30_000L; // Ostinato: bounded crash detection.
     private long nextHeartbeatMs; // Ostinato:
+    /** Ostinato: heartbeat period while the send queue is empty. */
+    public static final long HEARTBEAT_MS = 10_000L;
+    /** Ostinato: longest gap between heartbeats while the queue is busy; under PEER_TIMEOUT_MS with room for one loss. */
+    public static final long BUSY_HEARTBEAT_MS = 20_000L;
+    // Ostinato: whether any line left for a peer inside a window; such a peer needs no heartbeat.
+    private BiPredicate<String, Long> recentlySent = (peer, windowMs) -> false;
+    // Ostinato: when a heartbeat was last queued for each peer (lower case), so a slow queue gets no second one.
+    private final Map<String, Long> lastHbQueued = new HashMap<>();
+    // Ostinato: when each peer last came due under the plain schedule, for the sent/skipped counts only.
+    private final Map<String, Long> lastHbDue = new HashMap<>();
+    private long heartbeatsSent; // Ostinato: heartbeat lines queued (a broadcast counts once)
+    private long heartbeatsSkipped; // Ostinato: peer heartbeats left out because the peer had a recent frame
+    private long nextSampleMs; // Ostinato: sample timer, its own since heartbeats no longer carry it.
+    private boolean sampling; // Ostinato: off until the host turns it on (setSampling).
+    private BooleanSupplier linkQuiet = () -> true; // Ostinato:
+    private long samplesSent; // Ostinato:
     private long ignored;
     private long sendFailures;
     private final Map<String, Consumer<SwarmMessage>> extraHandlers = new HashMap<>();
@@ -127,7 +168,7 @@ public final class SwarmControl {
         if (PING.equals(type) || PONG.equals(type) || SwarmBuild.BUILD.equals(type)
                 || SwarmBuild.STAT.equals(type) || SwarmBuild.STOP.equals(type)
                 || CommandProtocol.TYPE_CMD.equals(type) || CommandProtocol.TYPE_ACK.equals(type)
-                || CommandProtocol.TYPE_HELLO.equals(type)) {
+                || CommandProtocol.TYPE_HELLO.equals(type) || STS.equals(type)) {
             throw new IllegalArgumentException("reserved swarm message type " + type);
         }
         extraHandlers.put(type, handler);
@@ -222,15 +263,12 @@ public final class SwarmControl {
             try {
                 long now = clockMs.getAsLong(); // Ostinato:
                 if (protocol.linkUp() && now >= nextHeartbeatMs) { // Ostinato:
-                    for (SwarmRoster.Group group : roster.groupsOf(endpoint.selfId())) { // Ostinato:
-                        try { // Ostinato:
-                            endpoint.send(group.id(), SwarmFrame.BROADCAST, PING, "hb", SwarmPriority.NORMAL); // Ostinato:
-                        } catch (Exception e) { // Ostinato:
-                            sendFailures++; // Ostinato:
-                        } // Ostinato:
-                    } // Ostinato: short heartbeats avoid status payloads and chat log spam.
-                    nextHeartbeatMs = now + 10_000L; // Ostinato:
-                } // Ostinato:
+                    nextHeartbeatMs = now + 1_000L; // Ostinato: each peer is checked once a second
+                    heartbeat(now);
+                }
+                if (sampling && protocol.linkUp()) {
+                    sample(now); // Ostinato: own timer; no longer every third heartbeat
+                }
                 for (Peer peer : peers.values()) { // Ostinato:
                     if (peer.lastSeenMs >= 0 && now - peer.lastSeenMs >= PEER_TIMEOUT_MS) { // Ostinato:
                         protocol.onPeerDisconnect(peer.name); // Ostinato:
@@ -241,7 +279,141 @@ public final class SwarmControl {
             } catch (RuntimeException e) {
                 log.accept("swarm: command protocol tick failed: " + e.getMessage());
             }
+        } else if (sampling) {
+            sample(clockMs.getAsLong());
         }
+    }
+
+    /**
+     * Ostinato: any frame a peer gets is proof we are alive, so a heartbeat goes only to a peer that got nothing from
+     * us in the last interval (HEARTBEAT_MS; BUSY_HEARTBEAT_MS while the link is busy, which is still inside
+     * PEER_TIMEOUT_MS with room for one loss). All due: one broadcast. Some: one directed heartbeat each. None:
+     * nothing. Before this, an idle link carried a heartbeat every 10 s on top of every lease message.
+     */
+    private void heartbeat(long now) {
+        long need = linkQuiet.getAsBoolean() ? HEARTBEAT_MS : BUSY_HEARTBEAT_MS;
+        String self = endpoint.selfId();
+        Map<String, Boolean> seen = new HashMap<>();
+        for (SwarmRoster.Group group : roster.groupsOf(self)) {
+            List<String> due = new ArrayList<>();
+            int others = 0;
+            for (String member : group.members()) {
+                if (member.equalsIgnoreCase(self)) {
+                    continue;
+                }
+                others++;
+                String k = member.toLowerCase(Locale.ROOT);
+                if (seen.containsKey(k)) { // in an earlier group too: that group's heartbeat covers it
+                    continue;
+                }
+                boolean recent = recentlySent.test(member, need);
+                Long queuedAt = lastHbQueued.get(k);
+                boolean waiting = queuedAt != null && now - queuedAt < need;
+                Long dueAt = lastHbDue.get(k);
+                if (dueAt == null || now - dueAt >= need) { // the plain schedule would have sent one now
+                    lastHbDue.put(k, now);
+                    if (recent) heartbeatsSkipped++;
+                }
+                boolean send = !recent && !waiting;
+                seen.put(k, send);
+                if (send) {
+                    due.add(member);
+                }
+            }
+            if (due.isEmpty()) {
+                continue;
+            }
+            List<String> to = due.size() == others ? List.of(SwarmFrame.BROADCAST) : due;
+            for (String dest : to) {
+                try {
+                    endpoint.send(group.id(), dest, PING, "hb", SwarmPriority.NORMAL);
+                    heartbeatsSent++;
+                } catch (Exception e) {
+                    sendFailures++;
+                }
+            }
+            for (String member : due) {
+                lastHbQueued.put(member.toLowerCase(Locale.ROOT), now);
+            }
+        }
+    }
+
+    /**
+     * Ostinato: the status sample goes out on its own timer at TELEMETRY, the lowest priority. It is not even queued
+     * while anything URGENT or HIGH waits or the link is past half its cap ({@code linkQuiet}), and the rate limiter
+     * takes back a queued one the moment either becomes true, so it never delays a real message.
+     */
+    private void sample(long now) {
+        if (now < nextSampleMs) {
+            return;
+        }
+        if (!linkQuiet.getAsBoolean()) {
+            nextSampleMs = now + 5_000L;
+            return;
+        }
+        nextSampleMs = now + SAMPLE_INTERVAL_MS;
+        String body = null;
+        for (SwarmRoster.Group group : roster.groupsOf(endpoint.selfId())) {
+            if (group.members().size() < 2) {
+                continue;
+            }
+            try {
+                if (body == null) {
+                    body = sampleBody();
+                }
+                endpoint.send(group.id(), SwarmFrame.BROADCAST, STS, body, SwarmPriority.TELEMETRY);
+                samplesSent++;
+            } catch (Exception e) {
+                sendFailures++;
+            }
+        }
+    }
+
+    /** Ostinato: the local sample, encoded; a host failure sends an unknown sample rather than nothing. */
+    private String sampleBody() {
+        try {
+            SwarmSample s = local.sample();
+            String body = s == null ? "" : s.encode();
+            return body.isEmpty() ? "-" : body; // never an empty frame body
+        } catch (RuntimeException e) {
+            return "-";
+        }
+    }
+
+    /**
+     * Ostinato: turn the {@code STS} sample on or off. {@code quiet} says whether telemetry may use the link (nothing
+     * URGENT or HIGH waits and it is under half its cap); while false, no sample is queued and heartbeats stretch to
+     * BUSY_HEARTBEAT_MS.
+     */
+    public synchronized void setSampling(boolean enabled, BooleanSupplier quiet) {
+        this.sampling = enabled;
+        this.linkQuiet = quiet == null ? () -> true : quiet;
+    }
+
+    /**
+     * Ostinato: {@code sent.test(peer, windowMs)} says whether any line left for {@code peer} in the last
+     * {@code windowMs}; such a peer gets no heartbeat. Null keeps every heartbeat.
+     */
+    public synchronized void setRecentlySent(BiPredicate<String, Long> sent) {
+        this.recentlySent = sent == null ? (peer, windowMs) -> false : sent;
+    }
+
+    /** Ostinato: {@code STS} frames sent. */
+    public synchronized long samplesSent() { return samplesSent; }
+    /** Ostinato: heartbeat lines queued; a broadcast counts once. */
+    public synchronized long heartbeatsSent() { return heartbeatsSent; }
+    /** Ostinato: heartbeats a peer did not need because it had just got another frame from us. */
+    public synchronized long heartbeatsSkipped() { return heartbeatsSkipped; }
+
+    /** Ostinato: a copy of every known member's sample and traffic, for the command center. */
+    public synchronized List<PeerLink> peerLinks() {
+        long now = clockMs.getAsLong();
+        List<PeerLink> out = new ArrayList<>(peers.size());
+        for (Peer p : peers.values()) {
+            out.add(new PeerLink(p.name, p.lastSeenMs, p.sample, p.sampleAtMs, p.traffic.count(now),
+                    p.traffic.total()));
+        }
+        return out;
     }
 
     private void handle(SwarmMessage m) {
@@ -249,8 +421,18 @@ public final class SwarmControl {
         Peer p = peers.computeIfAbsent(m.from(), Peer::new);
         p.lastSeenMs = now;
         p.lastGroup = m.group();
+        p.traffic.add(now); // Ostinato: link monitor traffic per member.
         switch (m.type()) {
+            case STS: // Ostinato: performance sample; no reply.
+                p.sample = SwarmSample.parse(m.body());
+                p.sampleAtMs = now;
+                break;
             case PING:
+                if ("hb".equals(m.body())) {
+                    // Ostinato: a heartbeat needs no reply; each member's own heartbeat keeps it seen. A pong
+                    // here doubled the Phase 1 chat load for nothing.
+                    break;
+                }
                 try {
                     endpoint.send(m.group(), m.from(), PONG, "hb".equals(m.body()) ? "hb" : pongBody(m.msgId()), SwarmPriority.HIGH); // Ostinato: compact heartbeat reply.
                 } catch (Exception e) {
@@ -360,6 +542,17 @@ public final class SwarmControl {
 
     public synchronized Peer peer(String name) {
         return peers.get(name);
+    }
+
+    /** Peers that have advertised a position. Copies nothing; the caller only reads. */
+    public synchronized List<Peer> placedPeers() {
+        List<Peer> out = new ArrayList<>();
+        for (Peer p : peers.values()) {
+            if (p.pos != null && !p.pos.isEmpty() && !"?".equals(p.pos)) {
+                out.add(p);
+            }
+        }
+        return out;
     }
 
     /** Human-readable status: roster, last-seen ages, link health. */

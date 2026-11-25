@@ -1,12 +1,10 @@
 package baritone.swarm.center;
 
-import baritone.api.command.FormPlacement;
-
 import java.util.Map;
 
 /**
- * Ostinato: a tile button is a registry form. Goto and mine aimed at another bot are sent with
- * {@code swarm send}, and that send is itself an owner command in the same registry.
+ * Ostinato: a tile button is a registry form. Goto aimed at another bot is sent with {@code swarm send} and mine
+ * with a leased {@code swarm lease} offer; that send or offer is itself an owner command in the same registry.
  * Despawn, spawn, layout, and stop-all stay on their own lines. Closing the window is not a command.
  */
 public final class TileActions {
@@ -18,25 +16,9 @@ public final class TileActions {
 
     private TileActions() {}
 
+    /** Ostinato: the rule lives in {@link TileRoute} so the standalone window previews the same line. */
     public static String route(ButtonModel button, String bot, Map<String, String> values) {
-        String line = button.line(values);
-        if (button.form().placement() != FormPlacement.TILE) {
-            return line;
-        }
-        if (bot == null || bot.isBlank() || "local".equalsIgnoreCase(bot)) {
-            return line;
-        }
-        String command = button.command();
-        if ("goto".equals(command) || "mine".equals(command)) {
-            return "swarm send " + bot + " " + line;
-        }
-        if ("swarm".equals(command) && "cancel".equals(button.form().id())) {
-            String id = values == null ? null : values.get("id");
-            if (id == null || id.isBlank()) {
-                return "swarm send " + bot + " cancel";
-            }
-        }
-        return line;
+        return TileRoute.route(button, bot, values);
     }
 
     /**
@@ -45,8 +27,14 @@ public final class TileActions {
      */
     public static RegistryResult press(UnifiedRegistry registry, RegistryCall call, ButtonModel button,
                                        Map<String, String> values, String bot, Sink sink) {
-        String line = button.line(values);
-        String routed = route(button, bot, values);
+        String line;
+        String routed;
+        try {
+            line = button.line(values);
+            routed = route(button, bot, values);
+        } catch (IllegalArgumentException e) {
+            return RegistryResult.denied(e.getMessage()); // Ostinato: for example a cancel with no running command
+        }
         RegistryCall scoped = call.withLine(line);
         if (bot != null && !bot.isBlank()) {
             scoped = scoped.withScope(RegistryCall.Scope.ONE, bot);

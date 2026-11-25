@@ -22,6 +22,7 @@ import baritone.altoclef.AltoClefSettings;
 import baritone.api.BaritoneAPI;
 import baritone.api.pathing.goals.*;
 import baritone.api.process.IMineProcess;
+import baritone.api.process.ProcessOutcome;
 import baritone.api.process.PathingCommand;
 import baritone.api.process.PathingCommandType;
 import baritone.api.utils.*;
@@ -38,6 +39,9 @@ import baritone.legit.LegitGatherLive;
 import baritone.legit.LegitScan;
 import baritone.legit.LegitTargets;
 import baritone.legit.McSeenView;
+import baritone.swarm.lease.LeaseFence; // Ostinato: Phase 2c
+import baritone.swarm.lease.LeasedVein; // Ostinato: Phase 2c
+import baritone.swarm.lease.ReservationKey; // Ostinato: Phase 2c
 import baritone.utils.BaritoneProcessHelper;
 import baritone.utils.BlockStateInterface;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -90,15 +94,72 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         return filter != null;
     }
 
+    // ---- Ostinato: the outcome of each mine request (a swarm command reports success only from this) ----------
+
+    private final MineOutcome requestOutcome = new MineOutcome();
+    /** Target blocks within reach on the last tick; one that no longer matches counts as mined. */
+    private final Set<BlockPos> targetsInReach = new HashSet<>();
+
+    @Override
+    public ProcessOutcome outcome() {
+        synchronized (requestOutcome) {
+            return requestOutcome.outcome();
+        }
+    }
+
+    /** Ostinato: blocks of the current request mined so far (diagnostics). */
+    public int minedThisRequest() {
+        synchronized (requestOutcome) {
+            return requestOutcome.mined();
+        }
+    }
+
+    /** Ostinato: the mine ends itself for {@code why}; the outcome is decided when the request is closed. */
+    private void endFor(ProcessOutcome.Reason why) {
+        synchronized (requestOutcome) {
+            requestOutcome.endFor(why);
+        }
+        cancel();
+    }
+
+    /** Counts target blocks next to the bot that stopped matching since the last tick (the bot broke them). */
+    private void countMined() {
+        if (filter == null || ctx.player() == null || ctx.world() == null) {
+            return;
+        }
+        BlockPos feet = ctx.playerFeet();
+        for (BlockPos pos : new ArrayList<>(targetsInReach)) {
+            if (!ctx.world().isLoaded(pos) || !filter.has(ctx.world().getBlockState(pos))) {
+                synchronized (requestOutcome) {
+                    requestOutcome.minedOne();
+                }
+                targetsInReach.remove(pos);
+            } else if (pos.distSqr(feet) > 36) {
+                targetsInReach.remove(pos); // walked away from it unbroken
+            }
+        }
+        if (knownOreLocations != null) {
+            for (BlockPos pos : knownOreLocations) {
+                if (pos.distSqr(feet) <= 25 && ctx.world().isLoaded(pos) && filter.has(ctx.world().getBlockState(pos))) {
+                    targetsInReach.add(pos);
+                }
+            }
+        }
+    }
+
     @Override
     public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
+        synchronized (requestOutcome) { // Ostinato:
+            requestOutcome.running();
+        }
+        countMined(); // Ostinato:
         if (desiredQuantity > 0) {
             int curr = ctx.player().getInventory().getNonEquipmentItems().stream()
                     .filter(stack -> filter.has(stack))
                     .mapToInt(ItemStack::getCount).sum();
             if (curr >= desiredQuantity) {
                 logDirect("Have " + curr + " valid items");
-                cancel();
+                endFor(ProcessOutcome.Reason.NONE); // Ostinato: a success only if this request mined something
                 return null;
             }
         }
@@ -115,7 +176,7 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
                 if (Baritone.settings().notificationOnMineFail.value) {
                     logNotification("Unable to find any path to " + filter + ", canceling mine", true);
                 }
-                cancel();
+                endFor(ProcessOutcome.Reason.UNREACHABLE); // Ostinato:
                 return null;
             }
         }
@@ -127,6 +188,12 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         updateLoucaSystem();
         int mineGoalUpdateInterval = Baritone.settings().mineGoalUpdateInterval.value;
         List<BlockPos> curr = new ArrayList<>(knownOreLocations);
+        // Ostinato: Phase 2c - while a vein or region lease is held, ore outside its box is not a target (the fence
+        // would deny it).
+        ReservationKey leased = LeaseFence.mineBox();
+        if (leased != null) {
+            curr.removeIf(pos -> !LeasedVein.keep(leased, pos.getX(), pos.getY(), pos.getZ(), filter.has(baritone.bsi.get0(pos))));
+        }
         if (mineGoalUpdateInterval != 0 && tickCount++ % mineGoalUpdateInterval == 0) { // big brain
             CalculationContext context = new CalculationContext(baritone, true);
             if (LegitTargets.active()) {
@@ -138,7 +205,7 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         }
         if (Baritone.settings().legitMine.value) {
             if (!addNearby()) {
-                cancel();
+                endFor(ProcessOutcome.Reason.MISSING_RESOURCE); // Ostinato:
                 return null;
             }
         }
@@ -173,7 +240,7 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         if (command == null) {
             // none in range
             // maybe say something in chat? (ahem impact)
-            cancel();
+            endFor(ProcessOutcome.Reason.MISSING_RESOURCE); // Ostinato:
             return null;
         }
         return command;
@@ -344,6 +411,12 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
             } else {
                 chosen = locs2;
             }
+            // Ostinato: Phase 2c - a held vein or region lease limits the targets to its box.
+            ReservationKey held = LeaseFence.mineBox();
+            if (held != null) {
+                chosen.removeIf(pos -> !LeasedVein.keep(held, pos.getX(), pos.getY(), pos.getZ(),
+                        filter.has(context.get(pos.getX(), pos.getY(), pos.getZ()))));
+            }
             if (chosen.isEmpty()) {
                 locs = chosen;
             } else {
@@ -355,6 +428,14 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
             }
         }
         // we don't know any ore locations at the moment
+        // Ostinato: Phase 2c - a held vein lease was verified in this bot's world before the command ran, so head for
+        // its box rather than wander; once the box is loaded and holds none of the ore, the vein is done.
+        ReservationKey vein = LeaseFence.veinTarget();
+        // Ostinato: a region lease too: head for the ordered box, and end once it holds none of the ore.
+        ReservationKey steer = LeasedVein.steerBox(vein, LeaseFence.mineBox());
+        if (steer != null) {
+            return veinGoal(steer, filter, legit);
+        }
         if (LegitTargets.active()) {
             // Ostinato: no visible ore. One bot may cave, branch, or swim. This is not a path toward a cached ore.
             return legitGather();
@@ -390,6 +471,43 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
             };
         }
         return new PathingCommand(branchPointRunaway, PathingCommandType.REVALIDATE_GOAL_AND_PATH);
+    }
+
+    /**
+     * Ostinato: Phase 2c. The goal for a held vein lease when no known ore is a target: the leased ore still in the
+     * box (it becomes the known ore, so the usual mining runs on it), the box centre while part of it is not loaded
+     * here, or null (the mine ends and the lease is released) once the loaded box holds none of it.
+     */
+    private PathingCommand veinGoal(ReservationKey vein, BlockOptionalMetaLookup filter, boolean legit) {
+        CalculationContext context = new CalculationContext(baritone);
+        LeasedVein.Scan scan = LeasedVein.scan(vein, (x, y, z) -> !context.bsi.worldContainsLoadedChunk(x, z)
+                ? LeasedVein.Blocks.UNLOADED
+                : filter.has(context.get(x, y, z)) && !blacklist.contains(new BlockPos(x, y, z))
+                ? LeasedVein.Blocks.MATCH : LeasedVein.Blocks.OTHER);
+        if (scan.state == LeasedVein.State.UNKNOWN) {
+            int[] c = LeasedVein.centre(vein);
+            return new PathingCommand(new GoalNear(new BlockPos(c[0], c[1], c[2]), 3), PathingCommandType.REVALIDATE_GOAL_AND_PATH);
+        }
+        if (scan.state == LeasedVein.State.MINED_OUT && vein.type != ReservationKey.Type.VEIN) {
+            logDirect("swarm-lease: region " + vein + " holds none of the ore here, ending the leased mine");
+            return null;
+        }
+        if (scan.state == LeasedVein.State.MINED_OUT) {
+            logDirect("swarm-lease: vein " + vein + " mined out here, ending the leased mine");
+            // Ostinato: Phase 2c - withdraw this bot's own reports of the vein it just emptied (part-mined states too).
+            LeaseFence.minedOut(vein, filter.blocks().stream()
+                    .map(b -> net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(b.getBlock()).getPath())
+                    .collect(Collectors.toSet()));
+            return null;
+        }
+        List<BlockPos> ore = new ArrayList<>();
+        for (int[] p : scan.ore) {
+            ore.add(new BlockPos(p[0], p[1], p[2]));
+        }
+        knownOreLocations = new ArrayList<>(ore);
+        Goal goal = Baritone.settings().cadenza.value ? cadenzaGoal(context, ore, filter)
+                : new GoalComposite(ore.stream().map(loc -> coalesce(loc, ore, context)).toArray(Goal[]::new));
+        return new PathingCommand(goal, legit ? PathingCommandType.FORCE_REVALIDATE_GOAL_AND_PATH : PathingCommandType.REVALIDATE_GOAL_AND_PATH);
     }
 
     /**
@@ -459,7 +577,7 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
             if (Baritone.settings().notificationOnMineFail.value) {
                 logNotification("No locations for " + filter + " known, cancelling", true);
             }
-            cancel();
+            endFor(ProcessOutcome.Reason.MISSING_RESOURCE); // Ostinato:
             return;
         }
         knownOreLocations = locs;
@@ -688,7 +806,7 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         switch (plan.strategy) {
             case REJECT:
                 logDirect(plan.refusal == null ? LegitGather.MULTI_BOT_REFUSAL : plan.refusal);
-                cancel();
+                endFor(ProcessOutcome.Reason.REJECTED); // Ostinato:
                 return null;
             case LOOK:
                 float yaw = ctx.player().getYRot();
@@ -835,6 +953,9 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
 
     @Override
     public void mine(int quantity, BlockOptionalMetaLookup filter) {
+        synchronized (requestOutcome) { // Ostinato: a new request (or the end, filter null) closes the previous one
+            requestOutcome.finish();
+        }
         this.filter = filter;
         if (this.filterFilter() == null) {
             this.filter = null;
@@ -849,6 +970,13 @@ public final class MineProcess extends BaritoneProcessHelper implements IMinePro
         this.legitSeen.clear();
         this.legitBranchStep = 0;
         this.legitBranchIndex = 0;
+        // Ostinato: a real request starts a new outcome; the end of one (filter null) leaves the closed outcome.
+        this.targetsInReach.clear();
+        if (this.filter != null) {
+            synchronized (requestOutcome) {
+                requestOutcome.start();
+            }
+        }
         if (filter != null) {
             rescan(new ArrayList<>(), new CalculationContext(baritone));
         }

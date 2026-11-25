@@ -2101,6 +2101,12 @@ public final class Settings {
     public final Setting<Integer> swarmMaxChunks = new Setting<>(32); // Ostinato: room for signed cancel envelopes.
 
     /**
+     * Swarm messaging: chat lines one signed frame may span (1-4). One signature covers all of a frame's lines,
+     * so 2 lines carry about three times what a single signed line does.
+     */
+    public final Setting<Integer> swarmFrameLines = new Setting<>(2); // Ostinato
+
+    /**
      * Swarm messaging: how long a partially received message waits for its missing frames
      * before it is dropped, in milliseconds.
      */
@@ -2159,6 +2165,74 @@ public final class Settings {
      * Off, {@code #swarm} ping, status, reload, build and stop behave as before.
      */
     public final Setting<Boolean> swarmCommandProtocol = new Setting<>(false);
+
+    /**
+     * Ostinato: swarm Phase 2a bot side. On, a command marked lease-needing ({@code mine}, {@code tunnel}) only
+     * starts with a lease from the coordinator, and Baritone's break, place and container clicks for it stop when
+     * the lease runs out. Eating, fleeing and fighting never wait for a lease. Needs {@link #swarmCommandProtocol}.
+     * Off (with {@link #swarmCoordinator} off) is exactly Phase 1.
+     */
+    public final Setting<Boolean> swarmLeases = new Setting<>(false);
+
+    /**
+     * Ostinato: run the swarm lease coordinator in this client. Only one client may run it; a second one stays
+     * inactive and logs why. Its state is kept in {@code ostinato/swarm/coordinator.state} in the game directory.
+     */
+    public final Setting<Boolean> swarmCoordinator = new Setting<>(false);
+
+    /**
+     * Ostinato: Phase 3 command center read feed. On, this bot writes {@code bots/<name>.json} about once a second and
+     * {@code terrain/<name>.json} every 10 s into {@link #swarmCenterDir} (plus {@code coordinator.json} while it runs
+     * the lease coordinator), for the standalone command-center window. Read-only data out; nothing a bot does
+     * depends on it. Off: nothing is written and no thread starts.
+     */
+    public final Setting<Boolean> swarmCenterFeed = new Setting<>(false);
+
+    /**
+     * Ostinato: Phase 3 command host. On, this bot listens on 127.0.0.1 (ephemeral port, HMAC-signed requests only) for
+     * the command-center window and runs each request through the unified registry as a window call, exactly like a
+     * button in the in-game window. Also writes {@code catalog.json}, {@code host.json} and {@code host.key}. One
+     * bot per swarm (the owner's issuer). Off: no socket.
+     */
+    public final Setting<Boolean> swarmCenterHost = new Setting<>(false);
+
+    /**
+     * Ostinato: Phase 3 shared command-center directory, the same absolute path on every bot of this PC. Empty means
+     * {@code center} next to {@link #swarmLocalSpoolDir} when that is set, else {@code ostinato/center} in the game
+     * directory (not shared across instances).
+     */
+    public final Setting<String> swarmCenterDir = new Setting<>("");
+
+    /**
+     * Ostinato: the member whose lease messages bots accept. Empty means the circle owner (the first roster lead).
+     * Lease messages from anyone else are ignored and counted.
+     */
+    public final Setting<String> swarmCoordinatorId = new Setting<>("");
+
+    /**
+     * Ostinato: lease length D in seconds. Bots renew every D/6 from the grant on (15 s at 90), and timer resends
+     * run at D/3. On a chat transport it is raised to at least 60 so renewals stay inside the whisper budget.
+     * <p>
+     * Sizing: a coordinator restart must fit inside the time a held lease has left. In the worst case (the holder
+     * was about to renew when the coordinator died) that is 5D/6. Measured live (Phase 2a, 3 clients + server):
+     * restart 24-36 s, reconcile about 8 s, GRANT delivery over chat up to about 10 s, plus a 5 s margin, about
+     * 61 s, so D must be at least 73 s; 90 leaves 75 s. Cost: a holder that crashes blocks its resource for up to
+     * D (90 s) before another bot can be granted it.
+     */
+    public final Setting<Integer> swarmLeaseSec = new Setting<>(90);
+
+    /**
+     * Ostinato: extra milliseconds the coordinator waits past a lease's end before it treats the lease as gone.
+     */
+    public final Setting<Integer> swarmLeaseMarginMs = new Setting<>(3000);
+
+    /**
+     * Swarm: send a small status sample (path time, tick rate, ping, RAM, chat budget) to the group
+     * for the command center. With the command protocol on it rides every third heartbeat, so no
+     * extra chat lines; off, one low-priority line every 30 s, only while the send queue is empty.
+     * Older bots ignore it.
+     */
+    public final Setting<Boolean> swarmStatusSample = new Setting<>(true);
 
     /**
      * Swarm: only accept messages signed by a pinned member signet (S2S), and sign what we send. Needs

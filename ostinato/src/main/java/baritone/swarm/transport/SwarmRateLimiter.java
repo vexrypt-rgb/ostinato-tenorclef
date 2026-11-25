@@ -19,10 +19,16 @@
 package baritone.swarm.transport;
 
 import java.util.ArrayDeque;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * Outgoing chat limiter: a token bucket ({@code swarmSendRatePerSec}, {@code swarmSendBurst})
- * in front of a priority queue ({@link SwarmPriority#HIGH} first, FIFO within a priority).
+ * in front of a priority queue ({@link SwarmPriority#URGENT} first, FIFO within a priority).
  *
  * <p>Vanilla 1.16.1 {@code ServerGamePacketListenerImpl} (verified from the 1.16.1 server jar
  * with Mojang's mappings): every chat packet, commands included, does
@@ -42,16 +48,57 @@ public final class SwarmRateLimiter {
     public static final double SAFE_MAX_RATE = 0.9;
     public static final int SAFE_MAX_BURST = 8;
     public static final double MIN_RATE = 0.05;
+    /** Ostinato: window the link monitor counts chat lines over. */
+    public static final long CHAT_WINDOW_MS = 60_000L;
 
     private final double rate;
     private final int burst;
     private final int queueMax;
     @SuppressWarnings("unchecked")
-    private final ArrayDeque<String>[] queues = new ArrayDeque[SwarmPriority.values().length];
+    private final ArrayDeque<Entry>[] queues = new ArrayDeque[SwarmPriority.values().length];
     private double tokens;
     private long lastMs;
     private long dropped;
     private long sent;
+    private final WindowCounter window = new WindowCounter(CHAT_WINDOW_MS, 4096); // Ostinato:
+    // Ostinato: when a line last left for each recipient ("*" = a line every member reads), on this clock.
+    private final Map<String, Long> lastSentTo = new HashMap<>();
+    private long withdrawn; // Ostinato: TELEMETRY lines taken back because real traffic needed the link
+    private long expiredQueued; // Ostinato: lines whose sender gave up while they still waited here
+    private Consumer<String> log = s -> {}; // Ostinato:
+
+    /**
+     * Ostinato: what the sender knows about a line's useful life. If the line is still queued {@code expiresInMs}
+     * after it was offered, the limiter logs {@code label} once: the sender gave up before the line ever left.
+     *
+     * <p>With {@code onWithdrawn} set, the limiter instead takes every line offered with this deadline back out of
+     * the queue at that moment, provided none of them has left yet, logs it, and calls {@code onWithdrawn} (on the
+     * thread that polls; it must only record the fact). Observation frames use this: their entry ages are read when
+     * the frame is built, so one that waited longer would look newer than it is (p2ch run 7: 22 s).
+     */
+    public record Deadline(long expiresInMs, String label, Runnable onWithdrawn) {
+        public Deadline(long expiresInMs, String label) {
+            this(expiresInMs, label, null);
+        }
+    }
+
+    // Ostinato: one queued line, with whom it goes to and an optional deadline on this limiter's clock.
+    private static final class Entry {
+        final String line;
+        final String to;
+        final long expiresAtMs;
+        final String label;
+        final Deadline deadline; // Ostinato: identity of the offer this line belongs to (null: none)
+        boolean expiryLogged;
+
+        Entry(String line, String to, long expiresAtMs, String label, Deadline deadline) {
+            this.line = line;
+            this.to = to;
+            this.expiresAtMs = expiresAtMs;
+            this.label = label;
+            this.deadline = deadline;
+        }
+    }
 
     public SwarmRateLimiter(double ratePerSec, int burst, boolean allowUnsafe, int queueMax, long nowMs) {
         double r = Double.isNaN(ratePerSec) ? MIN_RATE : Math.max(MIN_RATE, ratePerSec);
@@ -73,16 +120,36 @@ public final class SwarmRateLimiter {
     public double rate() { return rate; }
     public int burst() { return burst; }
 
+    /** Ostinato: where the one-off "expired while still queued" lines go. */
+    public synchronized void setLog(Consumer<String> log) {
+        this.log = log == null ? s -> {} : log;
+    }
+
     /**
      * Queue a line. When the queue is full, the newest line of the lowest priority below
      * {@code p} is dropped to make room; if there is none, this line is dropped.
      *
      * @return whether the line was queued
      */
-    public synchronized boolean offer(SwarmPriority p, String line) {
+    public boolean offer(SwarmPriority p, String line) {
+        return offer(p, line, null, null);
+    }
+
+    /**
+     * Ostinato: {@link #offer(SwarmPriority, String)} for a line going to {@code to} (a member, {@code *} for a line
+     * every member reads, or null when unknown). A TELEMETRY line is refused while {@link #telemetryRoom(long)} is
+     * false.
+     */
+    public synchronized boolean offer(SwarmPriority p, String line, String to, Deadline deadline) {
         // Ostinato: an identical pending line is already accepted, even when the queue is full.
-        if (queues[p.ordinal()].contains(line)) {
-            return true;
+        for (Entry e : queues[p.ordinal()]) {
+            if (e.line.equals(line)) {
+                return true;
+            }
+        }
+        if (p == SwarmPriority.TELEMETRY && !telemetryRoom(lastMs)) {
+            withdrawn++;
+            return false;
         }
         if (queued() >= queueMax) {
             boolean made = false;
@@ -98,7 +165,9 @@ public final class SwarmRateLimiter {
                 return false;
             }
         }
-        queues[p.ordinal()].addLast(line);
+        long expires = deadline == null ? Long.MAX_VALUE : lastMs + Math.max(0L, deadline.expiresInMs());
+        queues[p.ordinal()].addLast(new Entry(line, key(to), expires, deadline == null ? null : deadline.label(),
+                deadline));
         return true;
     }
 
@@ -108,28 +177,217 @@ public final class SwarmRateLimiter {
             tokens = Math.min(burst, tokens + (nowMs - lastMs) * rate / 1000.0);
             lastMs = nowMs;
         }
+        withdrawTelemetry(nowMs); // Ostinato:
+        withdrawExpired(nowMs); // Ostinato:
+        logExpired(nowMs); // Ostinato:
         if (tokens < 1.0) {
             return null;
         }
-        for (ArrayDeque<String> q : queues) {
-            String line = q.pollFirst();
-            if (line != null) {
+        for (ArrayDeque<Entry> q : queues) {
+            Entry e = q.pollFirst();
+            if (e != null) {
                 tokens -= 1.0;
                 sent++;
-                return line;
+                if (e.deadline != null && e.deadline.onWithdrawn() != null) {
+                    // Ostinato: part of this offer has left; the rest is never withdrawn (no half frames).
+                    if (holds(e.deadline)) {
+                        leaving.add(e.deadline);
+                    } else {
+                        leaving.remove(e.deadline);
+                    }
+                }
+                window.add(nowMs); // Ostinato: link monitor budget.
+                if (e.to != null) {
+                    lastSentTo.put(e.to, nowMs); // Ostinato: liveness for the heartbeat skip
+                }
+                return e.line;
             }
         }
         return null;
     }
 
+    /**
+     * Ostinato: whether TELEMETRY may use the link now: nothing URGENT or HIGH waits and the last minute used under
+     * half of {@link #windowCap()}.
+     */
+    public synchronized boolean telemetryRoom(long nowMs) {
+        return queues[SwarmPriority.URGENT.ordinal()].isEmpty() && queues[SwarmPriority.HIGH.ordinal()].isEmpty()
+                && 2 * window.count(nowMs) < windowCap();
+    }
+
+    // Ostinato: queued samples are stale the moment real traffic needs the link; take them back rather than send.
+    private void withdrawTelemetry(long nowMs) {
+        ArrayDeque<Entry> t = queues[SwarmPriority.TELEMETRY.ordinal()];
+        if (!t.isEmpty() && !telemetryRoom(nowMs)) {
+            withdrawn += t.size();
+            t.clear();
+        }
+    }
+
+    // Ostinato: offers with a withdrawing deadline whose first line has left (identity).
+    private final java.util.Set<Deadline> leaving = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    private long withdrawnExpired;
+
+    public synchronized long withdrawnExpired() {
+        return withdrawnExpired;
+    }
+
+    private boolean holds(Deadline d) {
+        for (ArrayDeque<Entry> q : queues) {
+            for (Entry x : q) {
+                if (x.deadline == d) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Ostinato: take back every offer with a withdrawing deadline that is due and has not started to leave.
+    private void withdrawExpired(long nowMs) {
+        java.util.List<Deadline> due = null;
+        for (ArrayDeque<Entry> q : queues) {
+            for (Entry e : q) {
+                Deadline d = e.deadline;
+                if (d != null && d.onWithdrawn() != null && nowMs >= e.expiresAtMs && !leaving.contains(d)) {
+                    if (due == null) {
+                        due = new java.util.ArrayList<>();
+                    }
+                    boolean seen = false;
+                    for (Deadline x : due) {
+                        seen |= x == d;
+                    }
+                    if (!seen) {
+                        due.add(d);
+                    }
+                }
+            }
+        }
+        if (due == null) {
+            return;
+        }
+        for (Deadline d : due) {
+            int lines = 0;
+            for (ArrayDeque<Entry> q : queues) {
+                for (Iterator<Entry> it = q.iterator(); it.hasNext(); ) {
+                    if (it.next().deadline == d) {
+                        it.remove();
+                        lines++;
+                    }
+                }
+            }
+            withdrawnExpired++;
+            log.accept("swarm: " + d.label() + " withdrawn, still queued after " + d.expiresInMs() + " ms (" + lines
+                    + (lines == 1 ? " line, " : " lines, ") + queued() + " queued)");
+            try {
+                d.onWithdrawn().run();
+            } catch (RuntimeException ignored) {
+                // the sender's bookkeeping must not stop the link
+            }
+        }
+    }
+
+    // Ostinato: one log line per message whose sender gave up on it while it still waited for a token. A message
+    // split over several lines (one deadline, one label) is logged once with its line count; live b12r2 logged
+    // each leased command twice.
+    private void logExpired(long nowMs) {
+        Map<String, int[]> found = null; // label|to -> {lines ahead of its first line, lines of it}
+        int ahead = 0;
+        for (ArrayDeque<Entry> q : queues) {
+            for (Iterator<Entry> it = q.iterator(); it.hasNext(); ahead++) {
+                Entry e = it.next();
+                if (e.expiresAtMs != Long.MAX_VALUE && !e.expiryLogged && nowMs >= e.expiresAtMs) {
+                    e.expiryLogged = true;
+                    String k = e.label + "|" + (e.to == null ? "?" : e.to);
+                    if (found == null) {
+                        found = new LinkedHashMap<>();
+                    }
+                    int[] f = found.get(k);
+                    if (f == null) {
+                        found.put(k, new int[]{ahead, 1});
+                    } else {
+                        f[1]++;
+                    }
+                }
+            }
+        }
+        if (found == null) {
+            return;
+        }
+        for (Map.Entry<String, int[]> f : found.entrySet()) {
+            String k = f.getKey();
+            int bar = k.lastIndexOf('|');
+            if (!loggedExpired.add(k)) {
+                continue; // its other lines expired on an earlier pass and were logged then
+            }
+            if (loggedExpired.size() > 64) {
+                Iterator<String> it = loggedExpired.iterator();
+                it.next();
+                it.remove();
+            }
+            expiredQueued++;
+            int[] v = f.getValue();
+            log.accept("swarm: " + k.substring(0, bar) + " expired still queued for " + k.substring(bar + 1) + " ("
+                    + v[0] + " lines ahead of it, " + queued() + " queued" + (v[1] > 1 ? ", " + v[1] + " lines" : "")
+                    + ")");
+        }
+    }
+
+    /**
+     * Ostinato: whether a line left for {@code peer} (or for every member) less than {@code windowMs} before
+     * {@code nowMs}, on this limiter's clock.
+     */
+    public synchronized boolean sentWithin(String peer, long nowMs, long windowMs) {
+        Long to = lastSentTo.get(key(peer));
+        Long all = lastSentTo.get(SwarmTransport.BROADCAST);
+        long last = Math.max(to == null ? Long.MIN_VALUE : to, all == null ? Long.MIN_VALUE : all);
+        return last != Long.MIN_VALUE && nowMs - last < windowMs;
+    }
+
+    private static String key(String to) {
+        return to == null ? null : to.toLowerCase(Locale.ROOT);
+    }
+
     public synchronized int queued() {
         int n = 0;
-        for (ArrayDeque<String> q : queues) {
+        for (ArrayDeque<Entry> q : queues) {
             n += q.size();
         }
         return n;
     }
 
+    /** Ostinato: lines waiting at {@code p}. */
+    public synchronized int queued(SwarmPriority p) { return queues[p.ordinal()].size(); }
+
+    /**
+     * Ostinato: Phase 2c. Lines a new line at {@code p} would wait behind (that priority and every more urgent one). A
+     * sender whose line carries a measured age (observation reports) offers it only when this is 0, so the age is
+     * read when the line actually leaves, not seconds earlier.
+     */
+    public synchronized int queuedAtOrAbove(SwarmPriority p) {
+        int n = 0;
+        for (int i = 0; i <= p.ordinal(); i++) {
+            n += queues[i].size();
+        }
+        return n;
+    }
+    public synchronized long withdrawn() { return withdrawn; }
+    public synchronized long expiredQueued() { return expiredQueued; }
+    private final java.util.LinkedHashSet<String> loggedExpired = new java.util.LinkedHashSet<>(); // Ostinato:
     public synchronized long dropped() { return dropped; }
     public synchronized long sent() { return sent; }
+
+    /** Ostinato: lines that went out in the last {@link #CHAT_WINDOW_MS}. */
+    public synchronized int sentInWindow(long nowMs) { return window.count(nowMs); }
+
+    /** Ostinato: most lines this bucket lets out in any {@link #CHAT_WINDOW_MS}: {@code rate*window + burst}. */
+    public int windowCap() { return (int) Math.floor(rate * CHAT_WINDOW_MS / 1000.0) + burst; }
+
+    /**
+     * Ostinato: room for telemetry. True only while nothing waits to go out and the last minute used under half
+     * of {@link #windowCap()}, so heartbeat samples back off before real traffic brings the link near its cap.
+     */
+    public synchronized boolean quiet(long nowMs) {
+        return queued() == 0 && 2 * window.count(nowMs) < windowCap();
+    }
 }

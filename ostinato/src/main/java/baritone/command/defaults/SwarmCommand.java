@@ -61,7 +61,7 @@ public class SwarmCommand extends Command {
     // Ostinato: tab-complete, the registry schema, and the command-center buttons share this list.
     public static final List<String> ACTIONS = List.of(
             "ping", "status", "reload", "build", "stop", "spawn", "despawn", "bots");
-    public static final List<String> PROTOCOL_ACTIONS = List.of("send", "outcome", "cancel");
+    public static final List<String> PROTOCOL_ACTIONS = List.of("send", "outcome", "cancel", "lease", "obs", "gather"); // Ostinato: + lease, obs, gather
 
     public SwarmCommand(IBaritone baritone) {
         super(baritone, "swarm");
@@ -219,10 +219,104 @@ public class SwarmCommand extends Command {
                 logDirect(swarm.cancelCommand(args.getString()));
                 return;
             }
+            case "gather": {
+                // Ostinato: Phase 2c part 2 - #swarm gather <ore> <n> assigns different veins to different bots.
+                Settings gs = Baritone.settings();
+                if (!gs.swarmLeases.value && !gs.swarmCoordinator.value) {
+                    throw new CommandInvalidStateException("swarm gather: swarmLeases and swarmCoordinator are both false");
+                }
+                args.requireExactly(2);
+                String ore = args.getString();
+                int n = args.getAs(Integer.class);
+                logDirect(swarm.gather(ore, n));
+                return;
+            }
+            case "lease": {
+                // Ostinato: #swarm lease status | revoke <resource|id> | <bot> <resource> <command...>.
+                Settings ls = Baritone.settings();
+                if (!ls.swarmLeases.value && !ls.swarmCoordinator.value) {
+                    throw new CommandInvalidStateException("swarm lease: swarmLeases and swarmCoordinator are both false");
+                }
+                String sub = args.hasAny() ? args.getString() : "status";
+                if (sub.equalsIgnoreCase("status")) {
+                    args.requireMax(0);
+                    List<String> lines = swarm.leaseStatusLines();
+                    if (lines.isEmpty()) {
+                        logDirect("swarm-lease: no guard or coordinator yet (link not up?)");
+                    }
+                    lines.forEach(this::logDirect);
+                    return;
+                }
+                if (sub.equalsIgnoreCase("revoke")) {
+                    args.requireExactly(1);
+                    logDirect(swarm.leaseRevoke(args.getString()));
+                    return;
+                }
+                args.requireMin(2);
+                String resource = args.getString();
+                StringBuilder line = new StringBuilder();
+                while (args.hasAny()) {
+                    if (line.length() > 0) {
+                        line.append(' ');
+                    }
+                    line.append(args.getString());
+                }
+                logDirect(swarm.leaseOffer(sub, resource, line.toString()));
+                return;
+            }
+            case "obs": {
+                // Ostinato: Phase 2c - #swarm obs status | see <key> <detail> [conf] [ageMs] | gone <key>
+                // | waypoint <name> | structure <type> | world <tag|auto>.
+                Settings os = Baritone.settings();
+                if (!os.swarmLeases.value && !os.swarmCoordinator.value) {
+                    throw new CommandInvalidStateException("swarm obs: swarmLeases and swarmCoordinator are both false");
+                }
+                String sub = args.hasAny() ? args.getString().toLowerCase(Locale.ROOT) : "status";
+                switch (sub) {
+                    case "status":
+                        args.requireMax(0);
+                        swarm.obsStatusLines().forEach(this::logDirect);
+                        return;
+                    case "see": {
+                        args.requireMin(2);
+                        args.requireMax(4);
+                        String key = args.getString();
+                        String detail = args.getString();
+                        int conf = args.hasAny() ? args.getAs(Integer.class) : 90;
+                        long age = args.hasAny() ? args.getAs(Long.class) : 0L;
+                        logDirect(swarm.obsSee(key, detail, conf, age));
+                        return;
+                    }
+                    case "gone": { // Ostinato: Phase 2c - a verified correction for one key
+                        args.requireExactly(1);
+                        logDirect(swarm.obsGone(args.getString()));
+                        return;
+                    }
+                    case "waypoint":
+                    case "structure": {
+                        args.requireExactly(1);
+                        String name = args.getString();
+                        BetterBlockPos at = ctx.playerFeet();
+                        char dim = ctx.world().dimension() == net.minecraft.world.level.Level.NETHER ? 'n'
+                                : ctx.world().dimension() == net.minecraft.world.level.Level.END ? 'e' : 'o';
+                        String key = sub.equals("waypoint") ? "w:" + dim + ":" + name
+                                : "s:" + dim + ":" + at.x + "," + at.y + "," + at.z;
+                        String detail = sub.equals("waypoint") ? at.x + "," + at.y + "," + at.z : name;
+                        logDirect(swarm.obsSee(key, detail, 100, 0L));
+                        return;
+                    }
+                    case "world":
+                        args.requireExactly(1);
+                        logDirect(swarm.obsWorld(args.getString()));
+                        return;
+                    default:
+                        throw new CommandInvalidTypeException(args.consumed(), "status, see, waypoint, structure or world");
+                }
+            }
             default:
                 // Ostinato: the extra words appear only while swarmCommandProtocol is on.
                 String expected = Baritone.settings().swarmCommandProtocol.value
-                        ? "ping, status, reload, build, stop, spawn, despawn, bots, send, outcome or cancel" // Ostinato:
+                        ? "ping, status, reload, build, stop, spawn, despawn, bots, send, outcome, cancel, lease or obs" // Ostinato:
                         : "ping, status, reload, build, stop, spawn, despawn or bots"; // Ostinato:
                 throw new CommandInvalidTypeException(args.consumed(), expected);
         }

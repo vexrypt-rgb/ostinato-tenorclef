@@ -1,0 +1,479 @@
+/*
+ * This file is part of Baritone.
+ *
+ * Baritone is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * Baritone is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with Baritone.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+package baritone.swarm.lease;
+
+import baritone.swarm.protocol.CommandProtocol;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+
+import java.util.List;
+import java.util.UUID;
+
+import static org.junit.Assert.*;
+
+/** Ostinato: Phase 2a bot-side guard. */
+public class BotLeaseGuardTest {
+
+    @Rule
+    public TemporaryFolder tmp = new TemporaryFolder();
+
+    private LeaseSupport active() throws Exception {
+        LeaseSupport s = new LeaseSupport(tmp.newFolder().toPath());
+        s.activate();
+        return s;
+    }
+
+    @Test
+    public void theCoordinatorCanLeaseToItself() throws Exception {
+        LeaseSupport s = active();
+        String r = s.coord.lease("Alice", "ore1", "mine diamond_ore");
+        assertTrue(r, r.startsWith("swarm-lease: offered"));
+    }
+
+    @Test
+    public void commandBeforeGrantIsHeldThenStarts() throws Exception {
+        LeaseSupport s = active();
+        String r = s.coord.lease("Bob", "ore1", "mine diamond_ore");
+        UUID id = LeaseSupport.leaseIdOf(r);
+        // Deliver the OFFER only; the bot sends REQ.
+        List<LeaseSupport.Msg> offers = s.take(LeaseMessage.TYPE, LeaseMessage.Op.OFFER);
+        for (LeaseSupport.Msg m : offers) {
+            s.deliver(m);
+        }
+        List<LeaseSupport.Msg> reqs = s.take(LeaseMessage.TYPE, LeaseMessage.Op.REQ);
+        for (LeaseSupport.Msg m : reqs) {
+            s.deliver(m);
+        }
+        // Coordinator granted and sent SWC. Deliver the SWC before the GRANT.
+        List<LeaseSupport.Msg> grants = s.take(LeaseMessage.TYPE, LeaseMessage.Op.GRANT);
+        assertFalse(grants.isEmpty());
+        s.pump();
+        assertEquals(0, s.bobExec.count("mine"));
+        for (LeaseSupport.Msg m : grants) {
+            s.deliver(m);
+        }
+        s.tick();
+        assertEquals(1, s.bobExec.count("mine"));
+        assertEquals(BotLeaseGuard.Phase.VALID, s.guard.phaseOf(id));
+    }
+
+    @Test
+    public void commandWithoutGrantRejectedNolease() throws Exception {
+        LeaseSupport s = active();
+        s.coord.lease("Bob", "ore1", "mine diamond_ore");
+        s.dropTo.add("Bob");
+        s.pump(); // offer lost
+        s.dropTo.clear();
+        s.aliceP.submit("Bob", "mine diamond_ore");
+        s.pump();
+        assertEquals(0, s.bobExec.count("mine"));
+        s.run(CommandProtocol.HOLD_MS + 500L, 250L);
+        assertEquals(0, s.bobExec.count("mine"));
+        assertTrue(s.acks.toString(), s.ackContains("nolease"));
+    }
+
+    @Test
+    public void unleasedCommandsBypass() throws Exception {
+        LeaseSupport s = active();
+        assertFalse(s.guard.needsLease("goto", null));
+        assertFalse(s.guard.needsLease("bastion", null));
+        assertTrue(s.guard.needsLease("mine", null));
+        assertTrue(s.guard.needsLease("tunnel", null));
+    }
+
+    @Test
+    public void expiredLeaseFencesAndStops() throws Exception {
+        LeaseSupport s = active();
+        String r = s.coord.lease("Bob", "ore1", "mine diamond_ore");
+        s.pump();
+        UUID id = LeaseSupport.leaseIdOf(r);
+        assertFalse(s.guard.invalidActive());
+        s.dropTo.add("Alice"); // renewals unanswered
+        s.dropTo.add("Bob");
+        s.run(31_000L, 1_000L);
+        assertNotEquals(BotLeaseGuard.Phase.VALID, s.guard.phaseOf(id));
+        assertTrue(s.logged("lease-expired"));
+        assertFalse(s.stopCalls.isEmpty());
+        assertTrue(s.logged("stopped lease="));
+    }
+
+    @Test
+    public void invalidActiveWhileStopUnconfirmed() throws Exception {
+        LeaseSupport s = active();
+        s.coord.lease("Bob", "ore1", "mine diamond_ore");
+        s.pump();
+        s.stopOk = false;
+        s.dropTo.add("Alice");
+        s.dropTo.add("Bob");
+        s.run(31_000L, 1_000L);
+        assertTrue(s.guard.invalidActive());
+    }
+
+    @Test
+    public void renewFailureLogsOnceAndBacksOff() throws Exception {
+        LeaseSupport s = active();
+        s.coord.lease("Bob", "ore1", "mine diamond_ore");
+        s.pump();
+        s.dropTo.add("Alice");
+        s.sent.clear();
+        s.run(29_000L, 500L);
+        assertEquals(1, s.loggedCount("renew-unanswered"));
+        long renews = s.sent.stream().filter(m -> m.lease() != null && m.lease().op == LeaseMessage.Op.RENEW).count();
+        assertTrue("renews=" + renews, renews >= 1 && renews <= 3);
+    }
+
+    @Test
+    public void revokeOfUnknownLeaseIsRackedUnknown() throws Exception {
+        LeaseSupport s = active();
+        UUID lease = UUID.randomUUID();
+        s.guard.onMessage("Alice", new LeaseMessage(LeaseMessage.Op.REVOKE, lease, "ore1", 3, UUID.randomUUID(),
+                0, 30_000, "-"));
+        List<LeaseSupport.Msg> racks = s.take(LeaseMessage.TYPE, LeaseMessage.Op.RACK);
+        assertEquals(1, racks.size());
+        assertTrue(racks.get(0).body.contains("unknown"));
+    }
+
+    @Test
+    public void staleOfferIgnored() throws Exception {
+        LeaseSupport s = active();
+        s.coord.lease("Bob", "ore1", "mine diamond_ore");
+        s.pump();
+        s.guard.onMessage("Alice", new LeaseMessage(LeaseMessage.Op.OFFER, UUID.randomUUID(), "ore1", 0,
+                UUID.randomUUID(), 0, 30_000, "-"));
+        assertTrue(s.logged("stale-offer"));
+    }
+
+    @Test
+    public void reconcileRequestReportsEveryLeaseThenEnd() throws Exception {
+        LeaseSupport s = active();
+        s.coord.lease("Bob", "ore1", "mine diamond_ore");
+        s.pump();
+        s.guard.onMessage("Alice", new LeaseMessage(LeaseMessage.Op.RREQ, null, "-", 0, null, 0, 0, "-"));
+        List<LeaseSupport.Msg> reports = s.take(LeaseMessage.TYPE, LeaseMessage.Op.REPORT);
+        assertEquals(2, reports.size());
+        assertEquals("end", reports.get(1).lease().extra);
+    }
+
+    /**
+     * Ostinato: after a coordinator relaunch the RREQ answer carries only leases that still matter. Finished leases
+     * the guard remembers (up to KEEP_DONE) used to be reported too, oldest first, on every RREQ resend; over chat
+     * that queued ~40 lines/min per bot, delayed the live lease's report past the reconcile timeout and starved the
+     * hello replies the relaunched coordinator needs to relearn capabilities.
+     */
+    @Test
+    public void reconcileRequestSkipsFinishedLeases() throws Exception {
+        LeaseSupport s = active();
+        for (int i = 0; i < 6; i++) {
+            String r = s.coord.lease("Bob", "old" + i, "mine iron_ore");
+            s.pump();
+            UUID id = LeaseSupport.leaseIdOf(r);
+            s.coord.revoke("old" + i);
+            s.pump();
+            s.tick();
+            assertEquals(BotLeaseGuard.Phase.DONE, s.guard.phaseOf(id));
+        }
+        s.advance(BotLeaseGuard.RECONCILE_REPORT_MIN_MS + 1_000L); // They ended well before the coordinator went down.
+        UUID live = LeaseSupport.leaseIdOf(s.coord.lease("Bob", "ore1", "mine diamond_ore"));
+        s.pump();
+        s.sent.clear();
+        s.guard.onMessage("Alice", new LeaseMessage(LeaseMessage.Op.RREQ, null, "-", 0, null, 0, 0, "-"));
+        List<LeaseSupport.Msg> reports = s.take(LeaseMessage.TYPE, LeaseMessage.Op.REPORT);
+        assertEquals(2, reports.size());
+        assertEquals(live, reports.get(0).lease().leaseId);
+        assertEquals("end", reports.get(1).lease().extra);
+    }
+
+    /** Ostinato: a recently finished lease's REPORT must parse; the "canceled (confirmed)" label made it unreadable. */
+    @Test
+    public void finishedLeaseReportIsReadable() throws Exception {
+        LeaseSupport s = active();
+        String r = s.coord.lease("Bob", "old0", "mine iron_ore");
+        s.pump();
+        UUID id = LeaseSupport.leaseIdOf(r);
+        s.coord.revoke("old0");
+        s.pump();
+        s.tick();
+        assertEquals(BotLeaseGuard.Phase.DONE, s.guard.phaseOf(id));
+        s.guard.onMessage("Alice", new LeaseMessage(LeaseMessage.Op.RREQ, null, "-", 0, null, 0, 0, "-"));
+        List<LeaseSupport.Msg> reports = s.take(LeaseMessage.TYPE, LeaseMessage.Op.REPORT);
+        assertEquals(2, reports.size());
+        LeaseMessage rep = reports.get(0).lease();
+        assertEquals(id, rep.leaseId);
+        assertTrue(rep.extra, rep.extra.contains("exec=canceled,"));
+        assertTrue(rep.extra, rep.extra.contains("reason=lease-revoked"));
+        assertEquals("end", reports.get(1).lease().extra);
+    }
+
+    @Test
+    public void wireTokenKeepsTheExtraFieldParseable() {
+        assertEquals("stopped_by_Bob_2_", BotLeaseGuard.wireToken("stopped by Bob (2)"));
+        assertEquals("a_b_c", BotLeaseGuard.wireToken("a,b=c"));
+        assertEquals("none", BotLeaseGuard.wireToken(""));
+    }
+
+    /** Chat latency: the OFFER is re-sent several times before the first GRANT arrives, 25 s late. */
+    @Test
+    public void lateGrantAnswersEarlyRequestUnderChatLatency() throws Exception {
+        LeaseSupport s = active();
+        String r = s.coord.lease("Bob", "ore1", "mine diamond_ore");
+        UUID id = LeaseSupport.leaseIdOf(r);
+        List<LeaseSupport.Msg> offers = s.take(LeaseMessage.TYPE, LeaseMessage.Op.OFFER);
+        assertEquals(1, offers.size());
+        s.deliver(offers.get(0));
+        List<LeaseSupport.Msg> firstReq = s.take(LeaseMessage.TYPE, LeaseMessage.Op.REQ);
+        assertEquals(1, firstReq.size());
+        // Repeated offers arrive while the first REQ is still in flight; each may re-send REQ (>= 5 s apart).
+        for (int i = 0; i < 5; i++) {
+            s.advance(5_100L);
+            s.deliver(offers.get(0));
+        }
+        int reqs = s.take(LeaseMessage.TYPE, LeaseMessage.Op.REQ).size();
+        assertTrue("reqs=" + reqs, reqs >= 3);
+        // Now the first REQ reaches the coordinator; its GRANT answers the oldest nonce.
+        s.deliver(firstReq.get(0));
+        List<LeaseSupport.Msg> grants = s.take(LeaseMessage.TYPE, LeaseMessage.Op.GRANT);
+        assertEquals(1, grants.size());
+        s.deliver(grants.get(0));
+        assertEquals(BotLeaseGuard.Phase.VALID, s.guard.phaseOf(id));
+        assertEquals(0, s.guard.grantRejectCount());
+    }
+
+    /**
+     * Ostinato: reproduces the lost GRANT of ore1 gen2. Over chat (D = 60 s) the bot re-sent REQ while the first
+     * one was still in flight; the GRANT answering the first REQ arrived after enough re-sends to evict its
+     * nonce from a count-based ring, so it was dropped as unknown-nonce and the lease fell to offer-lost.
+     */
+    @Test
+    public void grantForFirstRequestSurvivesManyResendsOverChat() throws Exception {
+        LeaseSupport s = active();
+        s.chatLink = true;
+        String r = s.coord.lease("Bob", "ore1", "mine diamond_ore");
+        UUID id = LeaseSupport.leaseIdOf(r);
+        List<LeaseSupport.Msg> offers = s.take(LeaseMessage.TYPE, LeaseMessage.Op.OFFER);
+        assertEquals(1, offers.size());
+        assertEquals(LeaseClock.CHAT_MIN_DURATION_MS, offers.get(0).lease().durationMs);
+        s.deliver(offers.get(0));
+        List<LeaseSupport.Msg> firstReq = s.take(LeaseMessage.TYPE, LeaseMessage.Op.REQ);
+        assertEquals(1, firstReq.size());
+        // The OFFER keeps arriving (re-sent and echoed) for 51 s while the first REQ is stuck in a queue.
+        for (int i = 0; i < 10; i++) {
+            s.advance(5_100L);
+            s.deliver(offers.get(0));
+        }
+        int resends = s.take(LeaseMessage.TYPE, LeaseMessage.Op.REQ).size();
+        assertTrue("resends=" + resends, resends > 8); // more than the old ring held
+        s.deliver(firstReq.get(0));
+        List<LeaseSupport.Msg> grants = s.take(LeaseMessage.TYPE, LeaseMessage.Op.GRANT);
+        assertEquals(1, grants.size());
+        assertEquals(firstReq.get(0).lease().nonce, grants.get(0).lease().nonce);
+        s.deliver(grants.get(0));
+        assertEquals(BotLeaseGuard.Phase.VALID, s.guard.phaseOf(id));
+        assertEquals(0, s.guard.grantRejectCount());
+    }
+
+    // Ostinato: over chat (D = 60 s) a held lease renews every 10 s, D/6: six renews a minute, 12 chat lines.
+    @Test
+    public void chatLeaseRenewsSixTimesAMinute() throws Exception {
+        LeaseSupport s = active();
+        s.chatLink = true;
+        UUID id = LeaseSupport.leaseIdOf(s.coord.lease("Bob", "ore1", "mine diamond_ore"));
+        s.pump();
+        assertEquals(BotLeaseGuard.Phase.VALID, s.guard.phaseOf(id));
+        int since = s.sent.size();
+        s.run(60_000L, 1_000L);
+        int renews = s.sentSince(since, "Bob", LeaseMessage.Op.RENEW).size();
+        assertEquals(6, renews);
+        assertTrue(2 * renews <= 35);
+        assertEquals(BotLeaseGuard.Phase.VALID, s.guard.phaseOf(id));
+        String d = s.guard.describe().get(0);
+        long left = Long.parseLong(d.substring(d.indexOf("left=") + 5, d.indexOf("ms", d.indexOf("left="))));
+        assertTrue("left=" + left, left >= 50_000L); // the last renew was answered at most 10 s ago
+    }
+
+    /** Ostinato: grant the lease but keep the command itself queued (it reaches the bot after its grant). */
+    private static List<LeaseSupport.Msg> grantWithoutCommand(LeaseSupport s) {
+        s.deliver(s.take(LeaseMessage.TYPE, LeaseMessage.Op.OFFER).get(0));
+        s.deliver(s.take(LeaseMessage.TYPE, LeaseMessage.Op.REQ).get(0));
+        List<LeaseSupport.Msg> commands = new java.util.ArrayList<>();
+        for (java.util.Iterator<LeaseSupport.Msg> it = s.queue.iterator(); it.hasNext(); ) {
+            LeaseSupport.Msg m = it.next();
+            if (!LeaseMessage.TYPE.equals(m.type)) {
+                it.remove();
+                commands.add(m);
+            }
+        }
+        assertFalse("the command was sent", commands.isEmpty());
+        s.pump(); // the GRANT
+        return commands;
+    }
+
+    /**
+     * Ostinato: the live b10t1 timeline. Grant at T, command start at T+12 s. The bot renews from the grant on
+     * (at nonce + D/6), not from the start, so a coordinator restart right after the start still finds the lease
+     * renewed on schedule.
+     */
+    @Test
+    public void grantedLeaseRenewsOnScheduleBeforeItsCommandStarts() throws Exception {
+        LeaseSupport s = active();
+        s.chatLink = true;
+        UUID id = LeaseSupport.leaseIdOf(s.coord.lease("Bob", "ore1", "mine diamond_ore"));
+        int since = s.sent.size();
+        long t = s.mono.get();
+        List<LeaseSupport.Msg> commands = grantWithoutCommand(s);
+        assertEquals(BotLeaseGuard.Phase.VALID, s.guard.phaseOf(id));
+        assertEquals(0, s.bobExec.count("mine"));
+        long d = 60_000L; // chat minimum
+        // 12 s before the command arrives: the renew due at nonce + D/6 (10 s) must still go out.
+        for (int i = 0; i < 12; i++) {
+            s.advance(1_000L);
+            s.tick();
+            if (s.sentSince(since, "Bob", LeaseMessage.Op.RENEW).size() > 0) {
+                assertTrue("renew at +" + (s.mono.get() - t) + " ms", s.mono.get() - t <= d / 6 + 1_000L);
+                break;
+            }
+        }
+        assertEquals("renewed before the start", 1, s.sentSince(since, "Bob", LeaseMessage.Op.RENEW).size());
+        s.run(12_000L - (s.mono.get() - t), 1_000L);
+        for (LeaseSupport.Msg m : commands) {
+            s.deliver(m);
+        }
+        s.pump();
+        assertEquals(1, s.bobExec.count("mine"));
+        String desc = s.guard.describe().get(0);
+        long left = Long.parseLong(desc.substring(desc.indexOf("left=") + 5, desc.indexOf("ms", desc.indexOf("left="))));
+        // Without the pre-start renew the deadline would still be the grant's: T + D - 12 s = 48 s.
+        assertTrue("left=" + left, left > d - 12_000L);
+    }
+
+    /** Ostinato: a command that never reaches the bot stops renewing D/2 after the grant, then expires. */
+    @Test
+    public void commandThatNeverArrivesStopsRenewingAfterHalfALease() throws Exception {
+        LeaseSupport s = active();
+        s.chatLink = true;
+        UUID id = LeaseSupport.leaseIdOf(s.coord.lease("Bob", "ore1", "mine diamond_ore"));
+        int since = s.sent.size();
+        grantWithoutCommand(s);
+        s.run(30_000L, 1_000L);
+        int renews = s.sentSince(since, "Bob", LeaseMessage.Op.RENEW).size();
+        assertTrue("renews=" + renews, renews >= 2);
+        s.run(60_000L, 1_000L);
+        assertEquals(renews, s.sentSince(since, "Bob", LeaseMessage.Op.RENEW).size());
+        assertNotEquals(BotLeaseGuard.Phase.VALID, s.guard.phaseOf(id));
+        assertEquals(0, s.bobExec.count("mine"));
+    }
+
+    /** Ostinato: a granted command the bot refused (busy) never starts, so its lease stops renewing at once. */
+    @Test
+    public void refusedCommandDoesNotRenewItsLease() throws Exception {
+        LeaseSupport s = active();
+        s.chatLink = true;
+        s.coord.lease("Bob", "ore1", "mine diamond_ore");
+        s.pump();
+        assertEquals(1, s.bobExec.count("mine")); // Bob is busy mining ore1
+        UUID id2 = LeaseSupport.leaseIdOf(s.coord.lease("Bob", "ore2", "mine coal_ore"));
+        List<LeaseSupport.Msg> commands = grantWithoutCommand(s);
+        assertEquals(BotLeaseGuard.Phase.VALID, s.guard.phaseOf(id2));
+        for (LeaseSupport.Msg m : commands) {
+            s.deliver(m);
+        }
+        s.pump();
+        assertEquals("ore2's command was refused", 1, s.bobExec.count("mine"));
+        int since = s.sent.size();
+        s.run(30_000L, 1_000L);
+        for (LeaseSupport.Msg m : s.sent.subList(since, s.sent.size())) {
+            LeaseMessage lm = m.lease();
+            assertFalse("ore2 renewed: " + m, lm != null && lm.op == LeaseMessage.Op.RENEW && id2.equals(lm.leaseId));
+        }
+    }
+
+    @Test
+    public void repeatedOffersThrottleRequests() throws Exception {
+        LeaseSupport s = active();
+        s.coord.lease("Bob", "ore1", "mine diamond_ore");
+        List<LeaseSupport.Msg> offers = s.take(LeaseMessage.TYPE, LeaseMessage.Op.OFFER);
+        for (int i = 0; i < 4; i++) {
+            s.deliver(offers.get(0));
+            s.advance(1_000L);
+        }
+        assertEquals(1, s.take(LeaseMessage.TYPE, LeaseMessage.Op.REQ).size());
+    }
+
+    @Test
+    public void grantPastItsDeadlineIsRejectedAndLoggedOnce() throws Exception {
+        LeaseSupport s = active();
+        String r = s.coord.lease("Bob", "ore1", "mine diamond_ore");
+        UUID id = LeaseSupport.leaseIdOf(r);
+        s.deliver(s.take(LeaseMessage.TYPE, LeaseMessage.Op.OFFER).get(0));
+        LeaseSupport.Msg req = s.take(LeaseMessage.TYPE, LeaseMessage.Op.REQ).get(0);
+        s.deliver(req);
+        LeaseSupport.Msg grant = s.take(LeaseMessage.TYPE, LeaseMessage.Op.GRANT).get(0);
+        s.advance(31_000L); // the GRANT sat in a queue for longer than D
+        s.deliver(grant);
+        s.deliver(grant);
+        assertEquals(BotLeaseGuard.Phase.PENDING, s.guard.phaseOf(id));
+        assertEquals(2, s.guard.grantRejectCount());
+        assertEquals(1, s.loggedCount("grant-rejected lease=" + id));
+        assertTrue(s.logged("reason=late"));
+    }
+
+    private static int racks(List<LeaseSupport.Msg> q) {
+        int n = 0;
+        for (LeaseSupport.Msg m : q) {
+            LeaseMessage lm = m.lease();
+            if (lm != null && lm.op == LeaseMessage.Op.RACK) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /** Ostinato: REVOKEs that cross our RACK in flight get no second RACK; one after the gap still does. */
+    @Test
+    public void repeatedRevokesGetOneRackPerGap() throws Exception {
+        LeaseSupport s = active();
+        String r = s.coord.lease("Bob", "ore1", "mine diamond_ore");
+        s.pump();
+        UUID id = LeaseSupport.leaseIdOf(r);
+        long gen = s.coord.record(id).gen;
+        UUID cmd = s.coord.record(id).commandId;
+        s.coord.revoke("ore1");
+        s.pump();
+        s.tick();
+        assertEquals(LeaseRecord.State.RELEASED, s.coord.record(id).state);
+        LeaseMessage revoke = new LeaseMessage(LeaseMessage.Op.REVOKE, id, "ore1", gen, cmd, 0, 0, "-");
+        for (int i = 0; i < 4; i++) {
+            s.guard.onMessage("Alice", revoke);
+            s.advance(500L);
+        }
+        assertEquals(0, racks(s.take(LeaseMessage.TYPE, LeaseMessage.Op.RACK)));
+        assertTrue(s.guard.racksSuppressed() >= 4);
+        s.advance(LeaseClock.repeatGap(30_000L));
+        s.guard.onMessage("Alice", revoke);
+        assertEquals(1, racks(s.take(LeaseMessage.TYPE, LeaseMessage.Op.RACK)));
+        // Unknown lease (a relaunch): one RACK per gap as well.
+        LeaseMessage unknown = new LeaseMessage(LeaseMessage.Op.REVOKE, UUID.randomUUID(), "ore1", 3, null, 0, 0, "-");
+        for (int i = 0; i < 3; i++) {
+            s.guard.onMessage("Alice", unknown);
+        }
+        assertEquals(1, racks(s.take(LeaseMessage.TYPE, LeaseMessage.Op.RACK)));
+        s.advance(BotLeaseGuard.UNKNOWN_RACK_GAP_MS);
+        s.guard.onMessage("Alice", unknown);
+        assertEquals(1, racks(s.take(LeaseMessage.TYPE, LeaseMessage.Op.RACK)));
+    }
+}
