@@ -111,7 +111,7 @@ types), so the later 3D Design/Live editor can open and save the same file.
 | blueprint split across several bots (one file, cell ranges per bot) + mid-build erase | live | `swarm-gate-logs/rtsl-r6.out` and `rtsl-r7.out`: 23/23 cells, erased cell air, 0 Grim flags |
 | (d) storage organizer | live | r6/r7: 3 chests sorted by type via open-screen clicks (coal+wheat / cobblestone / oak_log+bone); r7 RESULT SORTED; 0 flags |
 | (e) armorer (copper) | live | r7 (`rtsl-r7.out`): Azalea gathered 24 copper_ingot, crafted and equipped helmet/chestplate/leggings/boots in 8 s; 0 flags |
-| multi-layer blueprint painting (h / Y-step) | unit | `RtsViewTest.layersPaintWallsAndYStepsTheLayer`; live proof next (`rtsl.py <tag> layers`) |
+| multi-layer blueprint painting (h / Y-step) | live | r10 (`swarm-gate-logs/rtsl-r10.out`): window at 2600,40 painted h=2 wall (16 cells, both Y), Y-step erased one top cell to 15; Copper built 15/15 cobblestone, erased cell air; Grim 0. `RtsViewTest.layersPaintWallsAndYStepsTheLayer` |
 
 Live gate: `python scripts/rts-gate.py grim <tag> [steps]` (farmer, miner, window-*). Multi-bot leases, storage, armorer
 and layers: `python swarm-gate-logs/rtsl/rtsl.py <tag> mine,build,storage,armor,layers Copper,Azalea` after
