@@ -30,6 +30,12 @@ try:
               "fill -31 -61 20 -31 -61 23 coal_ore", "setblock -36 -60 26 chest", "fill -36 -60 27 -36 -59 27 air",
               "fill -30 -60 30 -24 -58 33 air", "kill @e[type=item]"]:
         R(c)
+    # Ostinato: the course recarves a 14-wide void trench at x=-58..-45 every run. RTS bots were not
+    # in the HBotAc-only playerdata wipe, so they rejoined at last position (the layers wall, which sat
+    # in that trench) and fell before any teleport (r10: Copper void at -47,-58,41, Azalea high-fall).
+    # client-gate now wipes every player and setworldspawn; this restates the spawn after our fills.
+    R("gamerule spawnRadius 0")
+    R("setworldspawn -65 -60 0")
     for n in BOTS: outs[n] = 0
     for n in BOTS:
         print(ps("-Client", "-Name", n).strip()); time.sleep(4)
@@ -40,7 +46,10 @@ try:
         time.sleep(3)
     log("joined " + ",".join(sorted(joined)))
     if len(joined) < len(BOTS): raise SystemExit("not all joined")
-    # Ostinato: r9 Azalea died at spawn the second she joined; land them on the course immediately
+    txt, _ = read_from(SLOG, slog_off)
+    for n in BOTS:
+        m = re.search(re.escape(n) + r"[^\n]*logged in with entity id \d+ at \(\[.*?\]([^)]+)\)", txt)
+        log("login %s at %s" % (n, m.group(1).strip() if m else "?"))
     for n in BOTS:
         R("gamemode survival " + n)
         R("tp %s -38 -60 18" % n)
@@ -192,10 +201,10 @@ try:
     if "layers" in PARTS:
         # Ostinato: (5) paint a 2-layer wall through the real command-center window (h=2), Y-step + erase one top cell, build live
         import subprocess as _sp
-        for c in ["fill -52 -61 38 -40 -61 44 grass_block", "fill -52 -60 38 -40 -56 44 air"]:
+        # Ostinato: keep this yard east of the course void trench (x=-58..-45). r8-r10 built in the trench.
+        for c in ["fill -42 -61 38 -30 -61 44 grass_block", "fill -42 -60 38 -30 -56 44 air"]:
             R(c)
-        # Ostinato: r8 teleported to z=37, off the pad (z 38-44); Copper fell in the void and had no cobblestone
-        R("tp %s -50 -60 40" % W1); R("tp %s -42 -60 40" % W2)
+        R("tp %s -40 -60 40" % W1); R("tp %s -32 -60 40" % W2)
         time.sleep(2)
         for n in W: R("give %s cobblestone 32" % n)
         jar = r"C:\Users\redfa\Documents\MinecraftDev\rts-wt\ostinato\center-app\build\libs\ostinato-center-app.jar"
@@ -222,13 +231,13 @@ try:
                 time.sleep(1)
             log("window> no " + wait); return None
         auto("@map|rts:on", wait=r"rts=true")
-        cells = [(x, y, z) for y in (-60, -59) for x in range(-48, -44) for z in (40, 41)]  # 4x2 columns x 2 layers = 16
+        cells = [(x, y, z) for y in (-60, -59) for x in range(-40, -36) for z in (40, 41)]  # 4x2 columns x 2 layers = 16
         auto("@set|rts:bp:name|wall", "@set|rts:bp:y|-60", "@set|rts:bp:h|2", "@set|rts:bp:block|cobblestone", "@|rts:bp:clear")
-        auto("@map|rts:paint:-48,40,-45,41", wait=r"blueprint wall 16 blocks")
+        auto("@map|rts:paint:-40,40,-37,41", wait=r"blueprint wall 16 blocks")
         auto("@set|rts:bp:h|1", "@|rts:bp:up")
-        erased = (-45, -59, 41)
+        erased = (-37, -59, 41)
         cells = [c for c in cells if c != erased]
-        auto("@map|rts:erase:-45,41,-45,41", wait=r"blueprint wall 15 blocks")
+        auto("@map|rts:erase:-37,41,-37,41", wait=r"blueprint wall 15 blocks")
         # Ostinato: r9 split left Azalea short 2 upper cells at the strip edge; one bot builds the whole 15 to prove the paint
         auto("@map|select:" + W1, "@|rts:bp:live", wait=r"blueprint live wall")
         t0 = time.time(); last = ""
