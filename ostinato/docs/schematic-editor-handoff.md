@@ -6,7 +6,7 @@ Updated 25 Nov 2026, 5:14 AM America/Phoenix. Assume you can be cut off at any m
 
 - Worktree: `C:\Users\redfa\Documents\MinecraftDev\schematic-editor-wt`
 - Branch: `swarm/schematic-editor` (off `swarm/rts-mode` at `029359b3d`)
-- HEAD: (this commit, after Design/Live/import land)
+- HEAD: e4fff0bcc Schematic editor: Design and Live 3D view in the command center, ost1 save/load, litematic/schem import
 - `rts-wt` (`swarm/rts-mode` at `029359b3d`) is leftover RTS work and must not be edited for this task.
 
 ## What's done and proven
