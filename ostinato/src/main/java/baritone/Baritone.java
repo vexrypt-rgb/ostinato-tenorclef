@@ -82,6 +82,7 @@ public class Baritone implements IBaritone, baritone.pathing.IPathingHost {
     private final InventoryBehavior inventoryBehavior;
     private final SwarmBehavior swarmBehavior;
     private baritone.behavior.RoleBehavior roleBehavior; // Ostinato: RTS mode roles
+    private baritone.behavior.BlueprintBehavior blueprintBehavior; // Ostinato: RTS live build
     private final FreecamBehavior freecamBehavior;
     private final InputOverrideHandler inputOverrideHandler;
     private final InputArbiter inputArbiter = new InputArbiter(); // Ostinato: leases; idle unless inputArbitration
@@ -182,6 +183,7 @@ public class Baritone implements IBaritone, baritone.pathing.IPathingHost {
             this.secondoProcess          = this.registerProcess(SecondoProcess::new); // Ostinato: #secondo, idle unless secondoEnabled
             this.roleBehavior            = this.registerBehavior(baritone.behavior.RoleBehavior::new); // Ostinato: RTS mode roles
             this.pathingControlManager.registerProcess(this.roleBehavior.process()); // Ostinato: the role's chest deposit
+            this.blueprintBehavior       = this.registerBehavior(baritone.behavior.BlueprintBehavior::new); // Ostinato: RTS live build
             baritone.process.SimBench.install(this);
             baritone.utils.Lockstep.install(this); // Ostinato: -Dostinato.lockstep (before the trace, so a traced tick is one the server has answered)
             baritone.utils.ParityTrace.install(this); // Ostinato: -Dostinato.trace
@@ -363,6 +365,11 @@ public class Baritone implements IBaritone, baritone.pathing.IPathingHost {
     /** Ostinato: RTS mode roles ({@code #role}). */
     public baritone.behavior.RoleBehavior getRoleBehavior() {
         return roleBehavior;
+    }
+
+    /** Ostinato: RTS live build ({@code #blueprint}). */
+    public baritone.behavior.BlueprintBehavior getBlueprintBehavior() {
+        return blueprintBehavior;
     }
 
     public SwarmBehavior getSwarmBehavior() {

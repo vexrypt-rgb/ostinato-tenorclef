@@ -332,7 +332,70 @@ public final class CenterApp {
             int[] a = map.area();
             return a == null ? "no area" : "area=" + a[0] + "," + a[1] + "," + a[2] + "," + a[3];
         }
+        if (spec.startsWith("rts:")) {
+            return rtsAuto(map, canvas, shell, spec.substring("rts:".length()));
+        }
         return "bad map spec";
+    }
+
+    /**
+     * Ostinato: RTS live checks. {@code rts:on} shows the panel; {@code rts:paint:x1,z1,x2,z2} and
+     * {@code rts:erase:x1,z1,x2,z2} drag the paint tool over every block of the box (left paints, right erases);
+     * {@code rts:order:x,z} right-clicks open ground. All synthetic events on the canvas, never the real mouse.
+     */
+    static String rtsAuto(MapView map, javax.swing.JComponent canvas, CenterShell shell, String spec) {
+        RtsPanel rts = map.rts();
+        if (spec.equals("on")) {
+            if (!rts.visible() && find(shell.component(), "map:toggle:rts") instanceof AbstractButton b) {
+                b.doClick();
+            }
+            return "rts=" + rts.visible();
+        }
+        boolean erase = spec.startsWith("erase:");
+        if (spec.startsWith("paint:") || erase) {
+            String[] n = spec.substring(spec.indexOf(':') + 1).split(",");
+            int x1 = Integer.parseInt(n[0].trim()), z1 = Integer.parseInt(n[1].trim());
+            int x2 = Integer.parseInt(n[2].trim()), z2 = Integer.parseInt(n[3].trim());
+            map.placeCamera(8, (x1 + x2 + 1) / 2.0, (z1 + z2 + 1) / 2.0);
+            if (find(shell.component(), "rts:bp:paint") instanceof AbstractButton paint && !paint.isSelected()) {
+                paint.doClick();
+            }
+            MapCamera cam = map.camera();
+            int button = erase ? java.awt.event.MouseEvent.BUTTON3 : java.awt.event.MouseEvent.BUTTON1;
+            int downMask = erase ? java.awt.event.InputEvent.BUTTON3_DOWN_MASK : java.awt.event.InputEvent.BUTTON1_DOWN_MASK;
+            long now = System.currentTimeMillis();
+            boolean first = true;
+            int lx = 0, lz = 0;
+            for (int x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
+                for (int z = Math.min(z1, z2); z <= Math.max(z1, z2); z++) {
+                    lx = (int) Math.round(cam.screenX(x + 0.5));
+                    lz = (int) Math.round(cam.screenZ(z + 0.5));
+                    canvas.dispatchEvent(new java.awt.event.MouseEvent(canvas, first ? java.awt.event.MouseEvent.MOUSE_PRESSED
+                            : java.awt.event.MouseEvent.MOUSE_DRAGGED, now, first ? 0 : downMask, lx, lz, first ? 1 : 0, false, button));
+                    first = false;
+                }
+            }
+            canvas.dispatchEvent(new java.awt.event.MouseEvent(canvas, java.awt.event.MouseEvent.MOUSE_RELEASED, now, 0,
+                    lx, lz, 1, false, button));
+            return "blueprint " + rts.blueprint().name() + " " + rts.blueprint().size() + " blocks v" + rts.blueprint().version();
+        }
+        if (spec.startsWith("order:")) {
+            if (find(shell.component(), "rts:bp:paint") instanceof AbstractButton paint && paint.isSelected()) {
+                paint.doClick();
+            }
+            String[] n = spec.substring("order:".length()).split(",");
+            int x = Integer.parseInt(n[0].trim()), z = Integer.parseInt(n[1].trim());
+            MapCamera cam = map.camera();
+            int sx = (int) Math.round(cam.screenX(x + 0.5));
+            int sz = (int) Math.round(cam.screenZ(z + 0.5));
+            long now = System.currentTimeMillis();
+            canvas.dispatchEvent(new java.awt.event.MouseEvent(canvas, java.awt.event.MouseEvent.MOUSE_PRESSED, now, 0,
+                    sx, sz, 1, false, java.awt.event.MouseEvent.BUTTON3));
+            canvas.dispatchEvent(new java.awt.event.MouseEvent(canvas, java.awt.event.MouseEvent.MOUSE_RELEASED, now, 0,
+                    sx, sz, 1, false, java.awt.event.MouseEvent.BUTTON3));
+            return "order " + x + "," + z + " for " + map.selected();
+        }
+        return "bad rts spec";
     }
 
     /** Depth-first search by component name. */

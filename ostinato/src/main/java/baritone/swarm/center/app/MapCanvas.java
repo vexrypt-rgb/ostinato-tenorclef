@@ -45,6 +45,12 @@ final class MapCanvas extends javax.swing.JComponent {
 
         /** A finished area drag, in inclusive block coordinates. */
         void areaDrawn(int x1, int z1, int x2, int z2);
+
+        /** Ostinato: RTS mode. A plain right click on open ground while bots are selected: move them there. */
+        default void order(int blockX, int blockZ) {}
+
+        /** Ostinato: RTS mode. A blueprint paint (left) or erase (right) on one block while painting is armed. */
+        default void paint(int blockX, int blockZ, boolean erase) {}
     }
 
     final MapCamera camera = new MapCamera();
@@ -71,6 +77,11 @@ final class MapCanvas extends javax.swing.JComponent {
     private boolean pointerFocus;
     /** When set, a plain left drag draws an area instead of panning. */
     boolean areaArmed;
+    /** Ostinato: RTS mode. When set, left paints blueprint blocks and right erases; no panning or box select. */
+    boolean paintArmed;
+    private boolean painting;
+    private boolean paintErase;
+    private long lastPaintKey = Long.MIN_VALUE;
     private boolean areaDragging;
     private boolean areaMoved;
     private boolean areaSet;
@@ -96,6 +107,14 @@ final class MapCanvas extends javax.swing.JComponent {
                 areaMoved = false;
                 String hit = hit(e.getX(), e.getY());
                 boolean shift = (e.getModifiersEx() & InputEvent.SHIFT_DOWN_MASK) != 0;
+                if (paintArmed && (e.getButton() == MouseEvent.BUTTON1 || e.getButton() == MouseEvent.BUTTON3)) {
+                    painting = true;
+                    paintErase = e.getButton() == MouseEvent.BUTTON3;
+                    panning = false;
+                    lastPaintKey = Long.MIN_VALUE;
+                    paintAt(e.getX(), e.getY());
+                    return;
+                }
                 if (e.getButton() == MouseEvent.BUTTON1 && areaArmed && !shift) {
                     areaDragging = true;
                     panning = false;
@@ -134,6 +153,10 @@ final class MapCanvas extends javax.swing.JComponent {
             public void mouseDragged(MouseEvent e) {
                 currentX = e.getX();
                 currentY = e.getY();
+                if (painting) {
+                    paintAt(e.getX(), e.getY());
+                    return;
+                }
                 if (areaDragging) {
                     if (Math.abs(e.getX() - originX) + Math.abs(e.getY() - originY) >= 4) {
                         areaMoved = true;
@@ -162,6 +185,17 @@ final class MapCanvas extends javax.swing.JComponent {
             public void mouseReleased(MouseEvent e) {
                 currentX = e.getX();
                 currentY = e.getY();
+                if (painting) {
+                    painting = false;
+                    return;
+                }
+                if (boxing && !boxMoved && boxButton == MouseEvent.BUTTON3 && hit(e.getX(), e.getY()) == null
+                        && !selection.names().isEmpty()) {
+                    // Ostinato: RTS right-click order on open ground.
+                    syncSize();
+                    double[] w = camera.screenToWorld(e.getX(), e.getY());
+                    listener.order((int) Math.floor(w[0]), (int) Math.floor(w[1]));
+                }
                 if (areaDragging) {
                     if (areaMoved) {
                         commitArea();
@@ -284,6 +318,51 @@ final class MapCanvas extends javax.swing.JComponent {
 
     int ghostCount() {
         return ghost.size();
+    }
+
+    private void paintAt(int sx, int sy) {
+        syncSize();
+        double[] w = camera.screenToWorld(sx, sy);
+        int x = (int) Math.floor(w[0]);
+        int z = (int) Math.floor(w[1]);
+        long key = (((long) x) << 32) ^ (z & 0xFFFFFFFFL);
+        if (key == lastPaintKey) {
+            return;
+        }
+        lastPaintKey = key;
+        listener.paint(x, z, paintErase);
+    }
+
+    /** Ostinato: RTS blueprint cells {@code {x, z, rgb, placed}}; placed (1) is drawn solid, pending outlined. */
+    private List<int[]> blueprint = List.of();
+
+    void setBlueprint(List<int[]> cells) {
+        blueprint = cells == null ? List.of() : List.copyOf(cells);
+        repaint();
+    }
+
+    int blueprintCount() {
+        return blueprint.size();
+    }
+
+    private void drawBlueprint(Graphics2D g) {
+        if (blueprint.isEmpty()) {
+            return;
+        }
+        int zoom = Math.max(1, camera.zoom());
+        Color edge = new Color(style.theme.accent());
+        for (int[] cell : blueprint) {
+            int rgb = cell[2] == 0 ? style.theme.accent() : cell[2];
+            boolean placedCell = cell.length > 3 && cell[3] == 1;
+            int sx = (int) Math.floor(camera.screenX(cell[0]));
+            int sy = (int) Math.floor(camera.screenZ(cell[1]));
+            g.setColor(new Color((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, placedCell ? 255 : 110));
+            g.fillRect(sx, sy, zoom, zoom);
+            if (!placedCell && zoom >= 4) {
+                g.setColor(edge);
+                g.drawRect(sx, sy, zoom - 1, zoom - 1);
+            }
+        }
     }
 
     private void drawGhost(Graphics2D g) {
@@ -465,6 +544,7 @@ final class MapCanvas extends javax.swing.JComponent {
         drawSelectionBox(g);
         drawArea(g);
         drawGhost(g);
+        drawBlueprint(g);
         drawMinimap(g, w, h);
         g.dispose();
         graphics.drawImage(buffer, 0, 0, null);
@@ -597,8 +677,16 @@ final class MapCanvas extends javax.swing.JComponent {
             }
             drawFacing(g, p.yaw(), sx, sy);
             g.setColor(new Color(style.theme.text()));
-            g.drawString(status.level().glyph + " " + b.name(), sx + 10, sy - 8);
+            String role = b.feed().role();
+            // Ostinato: RTS mode role letter (F farmer, M miner, S storage, A armorer, B builder).
+            String tag = role == null || "idle".equals(role) ? "" : "[" + roleLetter(role) + "] ";
+            g.drawString(status.level().glyph + " " + tag + b.name(), sx + 10, sy - 8);
         }
+    }
+
+    static char roleLetter(String role) {
+        baritone.swarm.rts.Role r = baritone.swarm.rts.Role.parse(role);
+        return r == null ? '?' : r.letter;
     }
 
     /** Circle, hollow circle, triangle, cross. The shape matches the status glyph, not the color. */
