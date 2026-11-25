@@ -47,7 +47,10 @@ public final class RtsPanel {
     private final Consumer<List<int[]>> ghostOut;
     private final JPanel root;
     private final JComboBox<String> role;
-    private final JTextField chest, ore, radius, batch, bpName, bpBlock, bpY;
+    private final JTextField chest, ore, radius, batch, bpName, bpBlock, bpY, bpH;
+    private final JToggleButton inArea;
+    private final Supplier<AreaOrders.Box> area;
+    private final Supplier<Character> dim;
     private final JLabel preview, bpStatus, economy, reply;
     private final JToggleButton paint;
     private final Timer writeLater;
@@ -60,6 +63,17 @@ public final class RtsPanel {
 
     public RtsPanel(AppStyle style, Commands commands, Supplier<List<String>> selection, Consumer<Boolean> paintArmed,
                     Consumer<List<int[]>> ghostOut) {
+        this(style, commands, selection, paintArmed, ghostOut, () -> null, () -> 'o');
+    }
+
+    /**
+     * Ostinato: {@code area} is the map's drawn area with the area bar's Y range (null when none), {@code dim} the
+     * map's dimension letter; "In area" splits it into one region lease per selected bot.
+     */
+    public RtsPanel(AppStyle style, Commands commands, Supplier<List<String>> selection, Consumer<Boolean> paintArmed,
+                    Consumer<List<int[]>> ghostOut, Supplier<AreaOrders.Box> area, Supplier<Character> dim) {
+        this.area = area;
+        this.dim = dim;
         this.style = style;
         this.commands = commands;
         this.selection = selection;
@@ -79,6 +93,11 @@ public final class RtsPanel {
         ore = field(roles, "rts:ore", 12, "ore a,b", "Miner: blocks to mine, e.g. iron_ore,coal_ore");
         radius = field(roles, "rts:radius", 3, "r", "Farmer: radius around the bot's post");
         batch = field(roles, "rts:batch", 4, "batch", "Items before a deposit (default 64)");
+        inArea = style.toggle("In area");
+        inArea.setName("rts:inarea");
+        inArea.setToolTipText("Farmers/miners: split the drawn area, one region lease per selected bot (no overlap)");
+        inArea.addActionListener(e -> refreshPreview());
+        roles.add(inArea);
         JButton assign = style.button("Assign to selected");
         assign.setName("rts:assign");
         assign.addActionListener(e -> assign(false));
@@ -99,6 +118,15 @@ public final class RtsPanel {
         bpBlock = field(bp, "rts:bp:block", 12, "block", "Block to paint, e.g. oak_planks");
         bpBlock.setText("oak_planks");
         bpY = field(bp, "rts:bp:y", 4, "y", "Layer height in world Y");
+        bpH = field(bp, "rts:bp:h", 2, "h", "Layers painted at once, from y up (walls); default 1");
+        JButton up = style.button("Y+");
+        up.setName("rts:bp:up");
+        up.addActionListener(e -> bpY.setText(String.valueOf(layerY() + 1)));
+        bp.add(up);
+        JButton down = style.button("Y-");
+        down.setName("rts:bp:down");
+        down.addActionListener(e -> bpY.setText(String.valueOf(layerY() - 1)));
+        bp.add(down);
         paint = style.toggle("Paint");
         paint.setName("rts:bp:paint");
         paint.setToolTipText("Left click/drag paints, right click erases");
@@ -235,6 +263,20 @@ public final class RtsPanel {
             reply.setText(e.getMessage());
             return;
         }
+        if (inArea.isSelected() && !idle) {
+            AreaOrders.Box box = area.get();
+            if (box == null) {
+                reply.setText("In area: drag a rectangle and set its Y range first");
+                return;
+            }
+            RtsOrders.Plan plan = RtsOrders.leasedRoles(sel, dim.get(), box, order);
+            if (plan.reason() != null) {
+                reply.setText(plan.reason());
+                return;
+            }
+            send(plan.orders()); // one region lease per bot, sent to the host (the lease coordinator)
+            return;
+        }
         send(RtsOrders.role(sel, host(), order));
     }
 
@@ -277,6 +319,14 @@ public final class RtsPanel {
         }
     }
 
+    int layers() {
+        try {
+            return Math.max(1, Math.min(64, Integer.parseInt(bpH.getText().trim())));
+        } catch (NumberFormatException e) {
+            return 1;
+        }
+    }
+
     /** From the map while Paint is on. */
     public void paint(int x, int z, boolean erase) {
         try {
@@ -284,7 +334,10 @@ public final class RtsPanel {
                     : new Blueprint(bpName.getText());
             blueprint = target;
             int y = layerY();
-            boolean changed = erase ? blueprint.erase(x, y, z) : blueprint.paint(x, y, z, bpBlock.getText());
+            boolean changed = false;
+            for (int dy = 0; dy < layers(); dy++) { // Ostinato: multi-layer painting (walls) from y up
+                changed |= erase ? blueprint.erase(x, y + dy, z) : blueprint.paint(x, y + dy, z, bpBlock.getText());
+            }
             if (changed) {
                 changed();
             }
@@ -324,6 +377,16 @@ public final class RtsPanel {
             reply.setText("no bot to build with");
             return;
         }
+        if (bots.size() >= 2) {
+            // Ostinato: split across the selection: one column strip and one region lease per bot, no shared cells
+            RtsOrders.Plan plan = RtsOrders.splitBlueprint(bots, dim.get(), blueprint);
+            if (plan.reason() != null) {
+                reply.setText(plan.reason());
+                return;
+            }
+            send(plan.orders());
+            return;
+        }
         List<RtsOrders.Order> orders = new ArrayList<>();
         for (String b : bots) {
             orders.add(RtsOrders.blueprint(b, host(), blueprint.name()));
@@ -332,25 +395,41 @@ public final class RtsPanel {
     }
 
     void readStatus() {
-        if (dir == null) {
+        if (dir == null || !Files.isDirectory(dir)) {
             return;
         }
-        try {
-            Path f = dir.resolve(Blueprint.statusName(blueprint.name()));
-            if (!Files.isRegularFile(f)) {
-                return;
+        // Ostinato: one status file per building bot (<name>.status alone, <name>@<bot>.status for a split build)
+        List<Blueprint.Status> all = new ArrayList<>();
+        try (java.util.stream.Stream<Path> files = Files.list(dir)) {
+            for (Path f : (Iterable<Path>) files::iterator) {
+                if (Blueprint.isStatusOf(blueprint.name(), f.getFileName().toString())) {
+                    try {
+                        all.add(Blueprint.readStatus(Files.readString(f)));
+                    } catch (Exception ignored) {
+                        // that bot is mid-rename; next second
+                    }
+                }
             }
-            Blueprint.Status s = Blueprint.readStatus(Files.readString(f));
-            Set<Long> p = new HashSet<>();
+        } catch (Exception e) {
+            return;
+        }
+        if (all.isEmpty()) {
+            return;
+        }
+        Set<Long> p = new HashSet<>();
+        long version = Long.MAX_VALUE;
+        List<String> notes = new ArrayList<>();
+        for (Blueprint.Status s : all) {
             for (int[] c : s.cells()) {
                 p.add(key(c[0], c[1], c[2]));
             }
-            status = s;
-            placed = p;
-            publish();
-        } catch (Exception ignored) {
-            // the bot is mid-rename; next second
+            version = Math.min(version, s.version());
+            notes.add(s.note());
         }
+        status = new Blueprint.Status(version, p.size(), blueprint.size(),
+                all.size() == 1 ? notes.get(0) : all.size() + " bots: " + String.join(", ", notes), List.of());
+        placed = p;
+        publish();
     }
 
     private static long key(int x, int y, int z) {

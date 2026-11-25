@@ -17,6 +17,8 @@
 
 package baritone.behavior;
 
+import baritone.swarm.lease.BotLeaseGuard;
+import baritone.swarm.rts.RoleOrder;
 import baritone.Baritone;
 import baritone.api.event.events.TickEvent;
 import baritone.api.utils.Helper;
@@ -48,6 +50,10 @@ public final class BlueprintBehavior extends Behavior implements Helper {
     private static final int CHECK_TICKS = 20;
 
     private volatile String watching;
+    private volatile int[] part; // Ostinato: this bot's share of a split live build (x/z columns), or null
+    private volatile long generation;
+    private boolean leased;
+    private long leaseMissingSince = -1;
     private volatile boolean stopRequested;
     private String lastText;
     private Blueprint current;
@@ -65,8 +71,40 @@ public final class BlueprintBehavior extends Behavior implements Helper {
     }
 
     public void live(String name) {
+        live(name, null);
+    }
+
+    /**
+     * Ostinato: build {@code name} live; with {@code part} (x1,y1,z1,x2,y2,z2) only the cells in those columns. A
+     * split build runs under a region lease on {@code part}; once held, losing it stops this bot's share.
+     */
+    public void live(String name, int[] part) {
         watching = Blueprint.safeName(name);
+        this.part = part == null ? null : part.clone();
+        lastText = null;
+        current = null;
+        leased = false;
+        leaseMissingSince = -1;
+        generation++;
         stopRequested = false;
+    }
+
+    public long generation() {
+        return generation;
+    }
+
+    public String watchingName() {
+        return watching;
+    }
+
+    private String partKey() {
+        int[] p = part;
+        return p == null ? null : "r:" + baritone.getSwarmBehavior().dimLetter() + ":" + RoleOrder.boxText(p);
+    }
+
+    private String statusFile(String name) {
+        return part == null ? Blueprint.statusName(name)
+                : Blueprint.partStatusName(name, ctx.player() == null ? "bot" : ctx.player().getName().getString());
     }
 
     public void stop() {
@@ -79,7 +117,8 @@ public final class BlueprintBehavior extends Behavior implements Helper {
             return "no live blueprint";
         }
         Blueprint b = current;
-        return "live " + w + (b == null ? " (waiting for " + dir().resolve(Blueprint.fileName(w)) + ")"
+        int[] p = part;
+        return "live " + w + (p == null ? "" : " part " + RoleOrder.boxText(p)) + (b == null ? " (waiting for " + dir().resolve(Blueprint.fileName(w)) + ")"
                 : " v" + b.version() + " " + placed + "/" + b.size() + " placed" + (note.isEmpty() ? "" : ", " + note));
     }
 
@@ -95,6 +134,8 @@ public final class BlueprintBehavior extends Behavior implements Helper {
             }
             logDirect("blueprint: stopped " + watching);
             watching = null;
+            part = null;
+            generation++;
             current = null;
             lastText = null;
             return;
@@ -102,6 +143,27 @@ public final class BlueprintBehavior extends Behavior implements Helper {
         String name = watching;
         if (name == null || ctx.player() == null || ++tick % CHECK_TICKS != 0) {
             return;
+        }
+        // Ostinato: a split share keeps building only while its region lease is valid.
+        String key = partKey();
+        if (key != null && Baritone.settings().swarmLeases.value) {
+            BotLeaseGuard g = baritone.getSwarmBehavior().leaseGuard();
+            if (g != null && g.holds(key)) {
+                if (!leased) {
+                    logDirect("blueprint: region lease " + key + " held");
+                }
+                leased = true;
+                leaseMissingSince = -1;
+            } else if (leased) {
+                long now = System.currentTimeMillis();
+                if (leaseMissingSince < 0) {
+                    leaseMissingSince = now;
+                } else if (now - leaseMissingSince > RoleBehavior.LEASE_GRACE_MS) {
+                    logDirect("blueprint: region lease " + key + " ended; stopping this share");
+                    stopRequested = true;
+                    return;
+                }
+            }
         }
         Path file = dir().resolve(Blueprint.fileName(name));
         String text;
@@ -118,6 +180,9 @@ public final class BlueprintBehavior extends Behavior implements Helper {
             lastText = text;
             try {
                 current = Blueprint.read(name, text);
+                if (part != null) {
+                    current = current.part(part);
+                }
             } catch (RuntimeException e) {
                 note = "bad blueprint: " + e.getMessage();
                 logDirect("blueprint: " + note);
@@ -151,7 +216,7 @@ public final class BlueprintBehavior extends Behavior implements Helper {
         }
         if (placed != before || note.equals("done")) {
             try {
-                CenterFeed.writeAtomic(dir().resolve(Blueprint.statusName(name)),
+                CenterFeed.writeAtomic(dir().resolve(statusFile(name)),
                         Blueprint.writeStatus(b.version(), done, b.size(), note));
             } catch (java.io.IOException ignored) {
                 // next second

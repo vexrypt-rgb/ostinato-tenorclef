@@ -99,7 +99,8 @@ public final class MapView implements LayoutView {
         });
         inspector = new SelectInspector(style, commands);
         areaBar = new AreaBar(style, commands, armed -> canvas.areaArmed = armed, canvas::setGhost);
-        rts = new RtsPanel(style, commands, canvas.selection::names, armed -> canvas.paintArmed = armed, canvas::setBlueprint);
+        rts = new RtsPanel(style, commands, canvas.selection::names, armed -> canvas.paintArmed = armed, canvas::setBlueprint,
+                areaBar::box, canvas::dim); // Ostinato: "In area" region leases use the drawn area and its Y range
 
         JPanel header = style.panel(new BorderLayout(), style.surface());
         header.setBorder(style.box(style.line(), 0, 6));

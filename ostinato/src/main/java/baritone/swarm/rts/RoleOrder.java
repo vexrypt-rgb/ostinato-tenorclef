@@ -31,9 +31,11 @@ public final class RoleOrder {
     public final int batch;
     public final int keep;
     public final String set;
+    /** Ostinato: x1,y1,z1,x2,y2,z2 (min then max): the farm or mine is confined to this box; null = none. */
+    public final int[] region;
 
     private RoleOrder(Role role, int[] at, int radius, int[] chest, List<int[]> chests, List<String> ores, int batch,
-                      int keep, String set) {
+                      int keep, String set, int[] region) {
         this.role = role;
         this.at = at;
         this.radius = radius;
@@ -43,10 +45,11 @@ public final class RoleOrder {
         this.batch = batch;
         this.keep = keep;
         this.set = set;
+        this.region = region;
     }
 
     public static RoleOrder idle() {
-        return new RoleOrder(Role.IDLE, null, 0, null, List.of(), List.of(), 0, 0, "");
+        return new RoleOrder(Role.IDLE, null, 0, null, List.of(), List.of(), 0, 0, "", null);
     }
 
     /** {@code tokens[0]} is the role name. Throws {@link IllegalArgumentException} with a short reason. */
@@ -102,6 +105,10 @@ public final class RoleOrder {
         int batch = kv.containsKey("batch") ? bounded(kv.remove("batch"), "batch", 1, 36 * 64) : DEFAULT_BATCH;
         int keep = kv.containsKey("keep") ? bounded(kv.remove("keep"), "keep", 0, 36 * 64) : 0;
         String set = kv.containsKey("set") ? kv.remove("set").toLowerCase(Locale.ROOT) : "";
+        int[] region = kv.containsKey("region") ? box(kv.remove("region")) : null;
+        if (region != null && role != Role.FARMER && role != Role.MINER) {
+            throw new IllegalArgumentException("region is for farmers and miners");
+        }
         if (!kv.isEmpty()) {
             throw new IllegalArgumentException("unknown option " + kv.keySet().iterator().next());
         }
@@ -133,7 +140,7 @@ public final class RoleOrder {
         if (!ores.isEmpty() && role != Role.MINER) {
             throw new IllegalArgumentException("ore is for miners");
         }
-        return new RoleOrder(role, at, radius, chest, chests, ores, batch, keep, set);
+        return new RoleOrder(role, at, radius, chest, chests, ores, batch, keep, set, region);
     }
 
     public static RoleOrder parse(String line) {
@@ -183,6 +190,9 @@ public final class RoleOrder {
         if (role == Role.ARMORER) {
             sb.append(" set=").append(set);
         }
+        if (region != null) {
+            sb.append(" region=").append(boxText(region));
+        }
         return sb.toString();
     }
 
@@ -205,6 +215,43 @@ public final class RoleOrder {
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException(key + " wants whole numbers x,y,z");
         }
+    }
+
+    /** Largest region edge: the same 64 as a region lease key. */
+    public static final int MAX_REGION_EDGE = 64;
+
+    /** {@code x1,y1,z1:x2,y2,z2}, corners in any order, returned min then max. */
+    public static int[] box(String raw) {
+        String[] c = raw.split(":");
+        if (c.length != 2) {
+            throw new IllegalArgumentException("region wants x1,y1,z1:x2,y2,z2");
+        }
+        int[] a = pos(c[0], "region"), b = pos(c[1], "region");
+        int[] r = {Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.min(a[2], b[2]),
+                Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.max(a[2], b[2])};
+        if (r[3] - r[0] >= MAX_REGION_EDGE || r[4] - r[1] >= MAX_REGION_EDGE || r[5] - r[2] >= MAX_REGION_EDGE) {
+            throw new IllegalArgumentException("region edge over " + MAX_REGION_EDGE);
+        }
+        return r;
+    }
+
+    public static String boxText(int[] r) {
+        return r[0] + "," + r[1] + "," + r[2] + ":" + r[3] + "," + r[4] + "," + r[5];
+    }
+
+    /** The region lease key for this order's box in dimension {@code dim} ({@code r:o:x1,y1,z1:x2,y2,z2}), or null. */
+    public String regionKey(char dim) {
+        return region == null ? null : "r:" + dim + ":" + boxText(region);
+    }
+
+    /** The chest lease key for this order's chest ({@code c:o:x,y,z}), or null. */
+    public String chestKey(char dim) {
+        return chest == null ? null : "c:" + dim + ":" + xyz(chest);
+    }
+
+    public boolean inRegion(int x, int y, int z) {
+        return region == null || (x >= region[0] && x <= region[3] && y >= region[1] && y <= region[4]
+                && z >= region[2] && z <= region[5]);
     }
 
     static int bounded(String raw, String key, int min, int max) {

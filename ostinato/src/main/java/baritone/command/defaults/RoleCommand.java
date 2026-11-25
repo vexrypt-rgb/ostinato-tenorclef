@@ -56,6 +56,12 @@ public class RoleCommand extends Command {
             logDirect("role: " + b.getRoleBehavior().describe());
             return;
         }
+        if (tokens.get(0).equalsIgnoreCase("deposit")) {
+            // Ostinato: the coordinator's chest-lease scheduler binds its chest lease to this line; holding the
+            // lease is what lets the waiting deposit go (RoleBehavior), and the deposit's end ends this command.
+            logDirect("role deposit: " + (b.getRoleBehavior().depositPending() ? "chest lease bound" : "nothing waiting"));
+            return;
+        }
         RoleOrder order;
         try {
             order = RoleOrder.parse(tokens);
@@ -89,6 +95,8 @@ public class RoleCommand extends Command {
                 "> role miner ore=iron_ore,coal_ore [chest=x,y,z] [batch=64] [keep=32]",
                 "> role storage chests=x,y,z;x,y,z",
                 "> role armorer [chest=x,y,z] [set=copper|iron|leather]",
+                "> role farmer|miner ... region=x1,y1,z1:x2,y2,z2 - work only inside that box (a region lease)",
+                "> role deposit - (sent by the lease coordinator) the chest lease for a waiting deposit",
                 "> role idle - stop the loop",
                 "> role status"
         );

@@ -2,6 +2,7 @@ package baritone.swarm.center.app;
 
 import baritone.swarm.center.feed.BotFeed;
 import baritone.swarm.center.feed.SwarmView;
+import baritone.swarm.rts.Blueprint;
 import baritone.swarm.rts.Role;
 import baritone.swarm.rts.RoleItems;
 import baritone.swarm.rts.RoleOrder;
@@ -44,6 +45,64 @@ public final class RtsOrders {
             out.add(new Order(b, route(b, host, "goto " + x + " " + z)));
         }
         return out;
+    }
+
+    /** Ostinato: lease-bound orders, or why none can go. */
+    public record Plan(List<Order> orders, String reason) {
+        static Plan refuse(String why) {
+            return new Plan(List.of(), why);
+        }
+    }
+
+    static String key(char dim, AreaOrders.Box b) {
+        return "r:" + dim + ":" + b.x1() + "," + b.y1() + "," + b.z1() + ":" + b.x2() + "," + b.y2() + "," + b.z2();
+    }
+
+    static String boxText(AreaOrders.Box b) {
+        return b.x1() + "," + b.y1() + "," + b.z1() + ":" + b.x2() + "," + b.y2() + "," + b.z2();
+    }
+
+    /**
+     * Ostinato: "In area" role assignment. The area is cut into one strip per bot (the Mine-area split), and each bot
+     * gets {@code swarm lease <bot> r:<dim>:<strip> role ... region=<strip>}: the coordinator refuses overlapping
+     * regions, so two farmers or miners never share blocks, and the bot stops if its lease ends.
+     */
+    public static Plan leasedRoles(List<String> bots, char dim, AreaOrders.Box area, RoleOrder order) {
+        if (order.role != Role.FARMER && order.role != Role.MINER) {
+            return Plan.refuse("In area is for farmers and miners");
+        }
+        AreaOrders.Mine split = AreaOrders.strips(area, bots);
+        if (split.refusal() != null) {
+            return Plan.refuse(split.refusal());
+        }
+        List<Order> out = new ArrayList<>();
+        for (AreaOrders.Strip st : split.strips()) {
+            String line = order.line().replaceAll(" region=\\S+", "") + " region=" + boxText(st.box());
+            RoleOrder.parse(line); // throws with the reason if the strip is not a valid region
+            out.add(new Order(st.bot(), "swarm lease " + st.bot() + " " + key(dim, st.box()) + " " + line));
+        }
+        return new Plan(out, null);
+    }
+
+    /**
+     * Ostinato: a live blueprint split over the selection: one column strip of the blueprint's bounds per bot, each
+     * built as {@code blueprint live <name> part=<strip>} under a region lease on that strip (no cell built twice).
+     */
+    public static Plan splitBlueprint(List<String> bots, char dim, Blueprint bp) {
+        int[] b = bp.bounds();
+        if (b == null) {
+            return Plan.refuse("paint some blocks first");
+        }
+        AreaOrders.Mine split = AreaOrders.strips(new AreaOrders.Box(b[0], b[1], b[2], b[3], b[4], b[5]), bots);
+        if (split.refusal() != null) {
+            return Plan.refuse(split.refusal());
+        }
+        List<Order> out = new ArrayList<>();
+        for (AreaOrders.Strip st : split.strips()) {
+            out.add(new Order(st.bot(), "swarm lease " + st.bot() + " " + key(dim, st.box()) + " blueprint live "
+                    + bp.name() + " part=" + boxText(st.box())));
+        }
+        return new Plan(out, null);
     }
 
     public static Order blueprint(String bot, String host, String name) {

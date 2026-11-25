@@ -17,6 +17,8 @@
 
 package baritone.swarm.protocol;
 
+import baritone.Baritone;
+import baritone.swarm.rts.Role;
 import baritone.api.IBaritone;
 import baritone.api.command.CommandPermission;
 import baritone.api.command.ICommand;
@@ -53,6 +55,9 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
     private final Map<UUID, Map<IBaritoneProcess, Long>> requestBefore = new ConcurrentHashMap<>();
     private final Set<UUID> unverifiedIdle = ConcurrentHashMap.newKeySet();
     private final Map<String, CommandCatalog.Entry> atCommands;
+    // Ostinato: RTS role and blueprint commands return at once and run as loops; their execution (and so the lease
+    // bound to them) lasts as long as the loop they started: the generation or deposit count at start.
+    private final Map<UUID, long[]> rts = new ConcurrentHashMap<>();
 
     public RegistryExecutor(IBaritone baritone, Supplier<ExternalCommandHook> hook) {
         this(baritone, hook, null);
@@ -107,9 +112,13 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
         ICommand command = commands().getCommand(name);
         if (command != null) {
             requestBefore.put(id, outcomeRequests()); // Ostinato: before execute() can start a new request
+            long[] mark = rtsMark(name, args); // Ostinato: before execute() changes it
             boolean ok = commands().execute(line);
             if (ok) {
                 started.put(id, name);
+                if (mark != null) {
+                    rts.put(id, mark);
+                }
                 captureGoal(id, name); // Ostinato: record the goal if execute() already activated pathing.
                 if (baritone.getCustomGoalProcess() != null && baritone.getCustomGoalProcess().isActive()) { // Ostinato:
                     seenActivity.add(id); // Ostinato:
@@ -175,6 +184,10 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
         if (CommandProtocol.completesInline(name)) {
             return null;
         }
+        long[] mark = rts.get(id);
+        if (mark != null) {
+            return rtsPoll(mark);
+        }
         try {
             IPathingControlManager mgr = baritone.getPathingControlManager();
             if (mgr == null) {
@@ -221,6 +234,61 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
                     ? ExecutionState.SUCCEEDED : ExecutionState.FAILED; // Ostinato: idle away from the captured goal is failure, not a hang.
         } catch (Throwable ignored) {
             return null;
+        }
+    }
+
+    // Ostinato: mark = {kind, value at start}. kind 0 role loop (generation), 1 role deposit (deposit count),
+    // 2 live blueprint (generation), 3 an inline role/blueprint subcommand (status, idle, stop).
+    private long[] rtsMark(String name, String args) {
+        if (!(baritone instanceof Baritone b)) {
+            return null;
+        }
+        String n = name.toLowerCase(java.util.Locale.ROOT);
+        String first = args == null ? "" : args.trim().split("\\s+")[0].toLowerCase(java.util.Locale.ROOT);
+        if (n.equals("role")) {
+            if (first.equals("deposit")) {
+                return new long[]{1, b.getRoleBehavior().depositSerial()};
+            }
+            if (first.isEmpty() || first.equals("status") || first.equals("idle")) {
+                return new long[]{3, 0};
+            }
+            return new long[]{0, b.getRoleBehavior().generation()};
+        }
+        if (n.equals("blueprint")) {
+            return first.equals("live") ? new long[]{2, b.getBlueprintBehavior().generation()} : new long[]{3, 0};
+        }
+        return null;
+    }
+
+    private ExecutionState rtsPoll(long[] mark) {
+        Baritone b = (Baritone) baritone;
+        switch ((int) mark[0]) {
+            case 0 -> {
+                long g = b.getRoleBehavior().generation();
+                // the assignment lands on the next tick (g == start + 1); a later one, or idle, ends this command
+                if (g == mark[1]) {
+                    return null;
+                }
+                return g == mark[1] + 1 && b.getRoleBehavior().role() != Role.IDLE
+                        ? null : ExecutionState.SUCCEEDED;
+            }
+            case 1 -> {
+                if (b.getRoleBehavior().depositSerial() > mark[1]) {
+                    return b.getRoleBehavior().lastDepositOk() ? ExecutionState.SUCCEEDED : ExecutionState.FAILED;
+                }
+                // nothing waiting for this chest lease (role idle, or the bot was not depositing): end it, free the chest
+                return b.getRoleBehavior().depositPending() ? null : ExecutionState.FAILED;
+            }
+            case 2 -> {
+                long g = b.getBlueprintBehavior().generation();
+                if (g == mark[1]) {
+                    return null;
+                }
+                return g == mark[1] + 1 && b.getBlueprintBehavior().watchingName() != null ? null : ExecutionState.SUCCEEDED;
+            }
+            default -> {
+                return ExecutionState.SUCCEEDED;
+            }
         }
     }
 

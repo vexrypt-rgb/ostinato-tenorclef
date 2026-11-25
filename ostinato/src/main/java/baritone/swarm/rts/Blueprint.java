@@ -203,6 +203,51 @@ public final class Blueprint {
         return safeName(name) + ".status";
     }
 
+    /** Ostinato: status file of one bot building one part ({@code <name>@<bot>.status}); the map merges them all. */
+    public static String partStatusName(String name, String bot) {
+        String b = bot == null ? "" : bot.replaceAll("[^A-Za-z0-9_]", "");
+        return safeName(name) + "@" + (b.isEmpty() ? "bot" : b) + ".status";
+    }
+
+    /** Ostinato: true for {@code <name>.status} and every {@code <name>@<bot>.status}. */
+    public static boolean isStatusOf(String name, String fileName) {
+        String n = safeName(name);
+        return fileName.equals(n + ".status") || (fileName.startsWith(n + "@") && fileName.endsWith(".status"));
+    }
+
+    /**
+     * Ostinato: the cells inside the columns of {@code box} (x1,y1,z1,x2,y2,z2; only x and z are compared), same name
+     * and version. One bot's share of a split live build.
+     */
+    public Blueprint part(int[] box) {
+        Blueprint b = new Blueprint(name);
+        for (Map.Entry<Long, Cell> e : cells.entrySet()) {
+            Cell c = e.getValue();
+            if (c.x >= box[0] && c.x <= box[3] && c.z >= box[2] && c.z <= box[5]) {
+                b.cells.put(e.getKey(), c);
+            }
+        }
+        b.version = version;
+        return b;
+    }
+
+    /** Ostinato: x1,y1,z1,x2,y2,z2 around every cell, or null when empty. */
+    public int[] bounds() {
+        if (cells.isEmpty()) {
+            return null;
+        }
+        int[] r = {Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE};
+        for (Cell c : cells.values()) {
+            r[0] = Math.min(r[0], c.x);
+            r[1] = Math.min(r[1], c.y);
+            r[2] = Math.min(r[2], c.z);
+            r[3] = Math.max(r[3], c.x);
+            r[4] = Math.max(r[4], c.y);
+            r[5] = Math.max(r[5], c.z);
+        }
+        return r;
+    }
+
     /** {@code version placed total} then one {@code x y z} line per placed cell. */
     public static String writeStatus(long version, List<int[]> placed, int total, String note) {
         StringBuilder sb = new StringBuilder();

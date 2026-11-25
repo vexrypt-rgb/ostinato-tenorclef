@@ -1,0 +1,142 @@
+# Ostinato: RTS live check on 3 headless bots under Grim (server-ac-client). Usage: rtsl.py <tag> [mine,build]
+import os, re, sys, time, subprocess, hashlib, uuid as _uuid, glob, json
+P = r"C:\Users\redfa\Documents\MinecraftDev\swarm-gate-logs\rtsl"
+CG = r"C:\Users\redfa\Documents\MinecraftDev\headless-bot-logs\phase3\gate\client-gate.py"
+TAG = sys.argv[1]
+PARTS = sys.argv[2].split(",") if len(sys.argv) > 2 else ["mine", "build"]
+BOTS = ["Copper", "Azalea", "Spelunker"]
+PROG = r"C:\Users\redfa\Documents\MinecraftDev\headless-bot-logs\phase3\rts-progress.txt"
+def prog(m):
+    with open(PROG, "a", encoding="utf-8") as f: f.write(time.strftime("%Y-%m-%d %H:%M MST ") + m + "\n")
+# server half of client-gate (plugins = grim only, course, rcon helpers); stop before its own bot launch
+src = open(CG, encoding="utf-8").read(); src = src[:src.index("BOUT = os.path.join")]
+src = src.replace('OUT = os.path.join(P3, "gate", "client-audit", tag)', 'OUT = os.path.join(r"%s", "run", tag)' % P)
+sys.argv = ["rtsl", "grim", TAG]
+for n in BOTS:
+    assert n not in open(r"C:\Users\redfa\Documents\MinecraftDev\headless-bot-logs\phase3\server-ac-client\ops.json").read(), n + " is op"
+exec(compile(src, CG, "exec"))
+def offline(n):
+    h = bytearray(hashlib.md5(("OfflinePlayer:" + n).encode()).digest()); h[6] = (h[6] & 0x0f) | 0x30; h[8] = (h[8] & 0x3f) | 0x80
+    return str(_uuid.UUID(bytes=bytes(h)))
+GATE = os.path.join(P, "gate.ps1")
+def ps(*a): return subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", GATE, *a], capture_output=True, text=True, creationflags=NO_WIN).stdout
+slog_off = size(SLOG)
+outs = {}
+try:
+    # world: two ore patches with a decoy band between them, a shared chest, a blueprint yard
+    for c in ["fill -40 -61 20 -37 -61 23 coal_ore", "fill -36 -61 20 -36 -61 23 coal_ore", "fill -35 -61 20 -32 -61 23 coal_ore",
+              "fill -31 -61 20 -31 -61 23 coal_ore", "setblock -36 -60 26 chest", "fill -36 -60 27 -36 -59 27 air",
+              "fill -30 -60 30 -24 -58 33 air", "kill @e[type=item]"]:
+        R(c)
+    for n in BOTS: outs[n] = 0
+    for n in BOTS:
+        print(ps("-Client", "-Name", n).strip()); time.sleep(4)
+    t0 = time.time(); joined = set()
+    while len(joined) < 3 and time.time() - t0 < 300:
+        txt, _ = read_from(SLOG, slog_off)
+        joined = {n for n in BOTS if re.search(n + r" (joined the game|\[.*\] logged in)", txt)}
+        time.sleep(3)
+    log("joined " + ",".join(sorted(joined)))
+    if len(joined) < 3: raise SystemExit("not all joined")
+    time.sleep(10)
+    for n in BOTS: R("gamemode survival " + n); R("clear " + n); R("effect clear " + n)
+    R("tp Copper -65 -60 0"); R("tp Azalea -38 -60 18"); R("tp Spelunker -33 -60 18")
+    for n in ("Azalea", "Spelunker"): R("give %s copper_pickaxe" % n); R("give %s bread 8" % n)
+    feeds = os.path.join(P, "center", "bots")
+    t0 = time.time()
+    while time.time() - t0 < 120:
+        fresh = [n for n in BOTS if os.path.exists(os.path.join(feeds, n + ".json")) and time.time() - os.path.getmtime(os.path.join(feeds, n + ".json")) < 5]
+        if len(fresh) == 3: break
+        time.sleep(2)
+    log("fresh feeds " + ",".join(fresh))
+    def send(bot, cmd, wait=8):
+        inst = os.path.join(P, "inst", bot); ob = os.path.join(inst, "command-outbox.txt"); b0 = size(ob)
+        tmp = os.path.join(inst, "command-inbox.tmp")
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f: f.write(cmd + "\n")
+        os.replace(tmp, os.path.join(inst, "command-inbox.txt"))
+        t = time.time()
+        while time.time() - t < wait:
+            time.sleep(0.4)
+            if size(ob) > b0: break
+        r, _ = read_from(ob, b0); log("send %s< %s => %s" % (bot, cmd, r.strip()[:300])); return r
+    def clog(bot):
+        fs = sorted(glob.glob(os.path.join(P, "run", "client-%s-*.log" % bot)), key=os.path.getmtime)
+        return read_from(fs[-1], 0)[0] if fs else ""
+    def block(x, y, z, b): return "passed" in rcon("execute if block %d %d %d %s" % (x, y, z, b)).lower()
+    send("Copper", "swarm lease status"); time.sleep(2)
+    if "mine" in PARTS:
+        A = "-40,-61,20:-37,-59,23"; B = "-35,-61,20:-32,-59,23"; OV = "-38,-61,20:-35,-59,23"
+        ch = "chest=-36,-60,26"
+        send("Copper", "swarm lease Azalea r:o:%s role miner ore=coal_ore %s batch=4 region=%s" % (A, ch, A))
+        time.sleep(3)
+        send("Copper", "swarm lease Spelunker r:o:%s role miner ore=coal_ore %s batch=4 region=%s" % (OV, ch, OV))
+        time.sleep(3)
+        send("Copper", "swarm lease Spelunker r:o:%s role miner ore=coal_ore %s batch=4 region=%s" % (B, ch, B))
+        t0 = time.time(); last = ""
+        while time.time() - t0 < 300:
+            coal = sum(1 for x in list(range(-40, -36)) + list(range(-35, -31)) for z in range(20, 24) if block(x, -61, z, "coal_ore"))
+            st = rcon("data get block -36 -60 26 Items")
+            s = "coal_ore left %d chest %s" % (coal, re.sub(r"\s+", " ", st)[-160:])
+            if s != last: log(s); last = s
+            if coal == 0 and time.time() - t0 > 30:
+                time.sleep(25); break
+            time.sleep(5)
+        decoy = sum(1 for z in range(20, 24) if block(-31, -61, z, "coal_ore")); dia = sum(1 for z in range(20, 24) if block(-36, -61, z, "coal_ore"))
+        log("RESULT mine: decoy band intact %d/4, gap band (x -36, between the regions) intact %d/4" % (decoy, dia))
+        log("chest " + rcon("data get block -36 -60 26 Items")[:600])
+        send("Copper", "swarm lease status", 4)
+        send("Azalea", "role idle"); send("Spelunker", "role idle"); time.sleep(4)
+    if "build" in PARTS:
+        bp = os.path.join(P, "center", "blueprints"); os.makedirs(bp, exist_ok=True)
+        cells = [(x, y, z) for y in (-60, -59) for x in range(-30, -24) for z in (30, 31)]
+        def write_bp(cs, ver):
+            o = (-30, -60, 30)
+            t = "ost1\n6 2 2\n# blueprint rtsl origin %d %d %d version %d\n" % (o + (ver,)) + "".join("%d %d %d cobblestone\n" % (x - o[0], y - o[1], z - o[2]) for x, y, z in cs)
+            tmp = os.path.join(bp, "rtsl.ost.tmp"); open(tmp, "w", newline="\n").write(t); os.replace(tmp, os.path.join(bp, "rtsl.ost"))
+        write_bp(cells, 1)
+        R("tp Azalea -29 -60 28"); R("tp Spelunker -26 -60 28")
+        for n in ("Azalea", "Spelunker"): R("give %s cobblestone 32" % n)
+        time.sleep(3)
+        # the window's split for [Azalea, Spelunker] over bounds -30..-25 (x is the longer edge): -30..-28 and -27..-25
+        SA = "-30,-60,30:-28,-59,31"; SB = "-27,-60,30:-25,-59,31"
+        send("Copper", "swarm lease Azalea r:o:%s blueprint live rtsl part=%s" % (SA, SA))
+        send("Copper", "swarm lease Spelunker r:o:%s blueprint live rtsl part=%s" % (SB, SB))
+        erased = None; t0 = time.time(); last = ""
+        while time.time() - t0 < 300:
+            sts = {}
+            for f in glob.glob(os.path.join(bp, "rtsl@*.status")):
+                try: sts[os.path.basename(f)] = open(f).read().splitlines()
+                except OSError: pass
+            placed = {tuple(map(int, l.split())) for v in sts.values() for l in v[1:] if len(l.split()) == 3}
+            heads = " | ".join("%s %s" % (k, v[0] if v else "") for k, v in sorted(sts.items()))
+            if heads != last: log("status " + heads); last = heads
+            if erased is None and placed:
+                left = [c for c in cells if c not in placed and c[1] == -59]
+                if left:
+                    erased = left[-1]; cells = [c for c in cells if c != erased]; write_bp(cells, 2); log("ERASE mid-build %s (placed so far %d)" % (erased, len(placed)))
+            if erased and len(sts) == 2 and all(v and v[0].split()[0] == "2" and v[0].split()[1] == v[0].split()[2] for v in sts.values()):
+                time.sleep(5); break
+            time.sleep(3)
+        got = [c for c in cells if block(*c, "cobblestone")]
+        dup = []
+        log("RESULT build: %d/%d cells cobblestone, erased cell %s is %s" % (len(got), len(cells), erased, "air" if erased and block(*erased, "air") else "NOT air"))
+        for n in ("Azalea", "Spelunker"):
+            lines = [l for l in clog(n).splitlines() if "blueprint" in l.lower() or "lease" in l.lower()]
+            log("%s blueprint/lease lines:\n  " % n + "\n  ".join(lines[-25:]))
+        send("Azalea", "blueprint stop"); send("Spelunker", "blueprint stop")
+    for n in ("Azalea", "Spelunker", "Copper"):
+        lines = [l for l in clog(n).splitlines() if re.search(r"role|lease|scheduler|chest", l, re.I)]
+        log("%s role/lease lines (%d):\n  " % (n, len(lines)) + "\n  ".join(lines[-60:]))
+finally:
+    txt, _ = read_from(SLOG, slog_off)
+    flags = [l for l in txt.splitlines() if re.search(r"(Copper|Azalea|Spelunker) failed|Grim.*(Copper|Azalea|Spelunker)", l)]
+    deaths = [l for l in txt.splitlines() if re.search(r"(Copper|Azalea|Spelunker) (died|was|fell|drowned|suffocated)", l)]
+    log("GRIM FLAGS %d" % len(flags)); [log("  " + l) for l in flags[:40]]
+    log("DEATHS %d" % len(deaths)); [log("  " + l) for l in deaths[:10]]
+    print(ps("-StopAll").strip()[-400:])
+    try: R("stop")
+    except Exception as e: log("rcon stop: %s" % e)
+    try: srv.wait(60)
+    except Exception: srv.kill()
+    log("server relay exit %s" % srv.poll())
+    prog("rtsl %s parts=%s grim flags=%d deaths=%d" % (TAG, ",".join(PARTS), len(flags), len(deaths)))

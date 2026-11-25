@@ -17,6 +17,12 @@
 
 package baritone.behavior;
 
+import baritone.swarm.center.feed.FeedReader;
+import baritone.swarm.center.feed.SwarmView;
+import baritone.swarm.lease.BotLeaseGuard;
+import baritone.swarm.lease.LeaseCoordinator;
+import baritone.swarm.lease.LeaseFence;
+import baritone.swarm.rts.ChestScheduler;
 import baritone.Baritone;
 import baritone.api.event.events.TickEvent;
 import baritone.api.pathing.goals.GoalGetToBlock;
@@ -62,6 +68,17 @@ public final class RoleBehavior extends Behavior implements Helper {
     private int lastFreeSlots = -1;
     private int lastOutput;
     private int deposited;
+    // Ostinato: RTS leases (docs/rts-mode.md section 2). A role given region= runs under that region lease once the
+    // bot has held it; its deposits then wait for a chest lease the coordinator's scheduler grants one bot at a time.
+    private boolean leased;
+    private long regionMissingSince = -1;
+    private String awaitChest;
+    private long awaitSince;
+    private volatile long generation;
+    private volatile int depositSerial;
+    private volatile boolean lastDepositOk;
+    public static final long CHEST_WAIT_MS = 120_000;
+    public static final long LEASE_GRACE_MS = 3_000;
 
     public RoleBehavior(Baritone baritone) {
         super(baritone);
@@ -89,13 +106,48 @@ public final class RoleBehavior extends Behavior implements Helper {
         if (l == null || l.order().role == Role.IDLE) {
             return "idle";
         }
+        String chestWait = awaitChest == null ? "" : " wait-chest=" + awaitChest;
         return l.order().role.id + " " + l.phase().name().toLowerCase() + (l.note().isEmpty() ? "" : " (" + l.note() + ")")
+                + chestWait + (leased ? " leased" : "")
                 + " deposits=" + l.deposits() + " stored=" + deposited + " free=" + lastFreeSlots + " output=" + lastOutput;
     }
 
     public String phase() {
         RoleLoop l = loop;
         return l == null ? "idle" : l.phase().name().toLowerCase();
+    }
+
+    /** Ostinato: bumped on every assignment; the swarm executor ties a {@code role} command to one generation. */
+    public long generation() {
+        return generation;
+    }
+
+    /** Ostinato: deposits finished (done or failed) so far, and whether the last one stored its items. */
+    public int depositSerial() {
+        return depositSerial;
+    }
+
+    public boolean lastDepositOk() {
+        return lastDepositOk;
+    }
+
+    /** Ostinato: true while a deposit is walking/clicking or waiting for its chest lease. */
+    public boolean depositPending() {
+        return deposit.isActive() || awaitChest != null;
+    }
+
+    /** Ostinato: an authorised lease on exactly this reservation key, from the swarm lease guard. */
+    private boolean holds(String key) {
+        try {
+            BotLeaseGuard g = baritone.getSwarmBehavior().leaseGuard();
+            return key != null && g != null && g.holds(key);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private char dim() {
+        return baritone.getSwarmBehavior().dimLetter();
     }
 
     public String orderLine() {
@@ -108,6 +160,9 @@ public final class RoleBehavior extends Behavior implements Helper {
         if (event.getType() != TickEvent.Type.IN) {
             return;
         }
+        if (++schedTick % 20 == 0) {
+            scheduleChests();
+        }
         RoleOrder next = pending;
         if (next != null) {
             pending = null;
@@ -115,6 +170,10 @@ public final class RoleBehavior extends Behavior implements Helper {
             deposit.cancel();
             loop = next.role == Role.IDLE ? null : new RoleLoop(next);
             deposited = 0; // Ostinato: "stored so far" counts this assignment only
+            leased = false;
+            regionMissingSince = -1;
+            awaitChest = null;
+            generation++;
             logDirect("role: " + next.line());
         }
         RoleLoop l = loop;
@@ -123,6 +182,41 @@ public final class RoleBehavior extends Behavior implements Helper {
             return;
         }
         RoleOrder o = l.order();
+        // Ostinato: a region role keeps working only while its region lease is valid (revoked or expired: idle).
+        if (o.region != null && Baritone.settings().swarmLeases.value) {
+            if (holds(o.regionKey(dim()))) {
+                if (!leased) {
+                    logDirect("role " + o.role.id + ": region lease " + o.regionKey(dim()) + " held");
+                }
+                leased = true;
+                regionMissingSince = -1;
+            } else if (leased) {
+                long now = System.currentTimeMillis();
+                if (regionMissingSince < 0) {
+                    regionMissingSince = now;
+                } else if (now - regionMissingSince > LEASE_GRACE_MS) {
+                    logDirect("role " + o.role.id + ": region lease ended; idle");
+                    stopWork();
+                    deposit.cancel();
+                    awaitChest = null;
+                    loop = null;
+                    generation++;
+                    return;
+                }
+            }
+        }
+        // Ostinato: a leased deposit starts only once this bot holds the chest lease.
+        if (awaitChest != null) {
+            if (holds(awaitChest)) {
+                logDirect("role deposit: chest lease " + awaitChest + " held; depositing");
+                awaitChest = null;
+                deposit.start(new BlockPos(o.chest[0], o.chest[1], o.chest[2]), o);
+            } else if (System.currentTimeMillis() - awaitSince > CHEST_WAIT_MS) {
+                logDirect("role deposit: no chest lease for " + awaitChest + " in " + CHEST_WAIT_MS / 1000 + " s");
+                awaitChest = null;
+                deposit.failLater("no chest lease");
+            }
+        }
         int free = 0;
         java.util.List<ItemStack> stacks = new java.util.ArrayList<>();
         for (ItemStack st : p.getInventory().getNonEquipmentItems()) {
@@ -144,8 +238,14 @@ public final class RoleBehavior extends Behavior implements Helper {
         ProcessOutcome wo = work == null ? ProcessOutcome.NONE : work.outcome();
         boolean workFailed = !workActive && wo.state() == ProcessOutcome.State.FAILED && workRequest >= 0
                 && wo.request() == workRequest;
+        boolean depDone = deposit.takeDone();
+        String depFail = deposit.takeFailure();
+        if (depDone || depFail != null) {
+            lastDepositOk = depDone && depFail == null;
+            depositSerial++;
+        }
         RoleLoop.Step step = l.step(new RoleLoop.Inputs(System.currentTimeMillis(), free, output, workActive,
-                workFailed, deposit.isActive(), deposit.takeDone(), deposit.takeFailure()));
+                workFailed, depositPending(), depDone, depFail));
         if (!step.start()) {
             return;
         }
@@ -154,7 +254,14 @@ public final class RoleBehavior extends Behavior implements Helper {
             case WORK -> startWork(o);
             case DEPOSIT -> {
                 stopWork();
-                deposit.start(new BlockPos(o.chest[0], o.chest[1], o.chest[2]), o);
+                if (leased && o.chest != null) {
+                    // Ostinato: one bot per chest: ask the coordinator's scheduler (it reads this feed) and wait.
+                    awaitChest = o.chestKey(dim());
+                    awaitSince = System.currentTimeMillis();
+                    logDirect("role deposit: waiting for chest lease " + awaitChest);
+                } else {
+                    deposit.start(new BlockPos(o.chest[0], o.chest[1], o.chest[2]), o);
+                }
             }
             case WAIT -> stopWork();
             default -> {
@@ -163,6 +270,46 @@ public final class RoleBehavior extends Behavior implements Helper {
     }
 
     private long workRequest = -1;
+    private int schedTick;
+    private final ChestScheduler chests = new ChestScheduler();
+
+    /**
+     * Ostinato: on the active lease coordinator only, once a second: read the same-PC feeds, and lease each waited-for
+     * chest to one waiting bot, bound to {@code role deposit}. The coordinator refuses a chest that is still leased.
+     */
+    private void scheduleChests() {
+        LeaseCoordinator c;
+        try {
+            c = baritone.getSwarmBehavior().leaseCoordinatorOrNull();
+        } catch (RuntimeException e) {
+            return;
+        }
+        if (c == null || c.mode() != LeaseCoordinator.Mode.ACTIVE) {
+            return;
+        }
+        java.nio.file.Path feeds = BlueprintBehavior.dir().getParent();
+        java.util.List<ChestScheduler.Want> wants = new java.util.ArrayList<>();
+        try {
+            SwarmView v =
+                    new FeedReader(feeds, System::currentTimeMillis).snapshot();
+            for (SwarmView.BotState b : v.bots()) {
+                String chest = ChestScheduler.waitingFor(b.feed().roleState());
+                if (chest != null && b.freshness() == SwarmView.Freshness.FRESH) {
+                    wants.add(new ChestScheduler.Want(b.name(), chest));
+                }
+            }
+        } catch (RuntimeException e) {
+            return;
+        }
+        if (wants.isEmpty()) {
+            return;
+        }
+        for (ChestScheduler.Grant g : chests.next(wants, k -> c.busyReason(k) != null,
+                System.currentTimeMillis())) {
+            String r = c.lease(g.bot(), g.chestKey(), "role deposit");
+            logDirect("role scheduler: chest " + g.chestKey() + " -> " + g.bot() + ": " + r);
+        }
+    }
 
     private IBaritoneProcess workProcess(Role role) {
         return switch (role) {
@@ -176,7 +323,16 @@ public final class RoleBehavior extends Behavior implements Helper {
         switch (o.role) {
             case FARMER -> {
                 BlockPos at = o.at == null ? null : new BlockPos(o.at[0], o.at[1], o.at[2]);
-                baritone.getFarmProcess().farm(o.radius, at);
+                int radius = o.radius;
+                if (o.region != null) { // Ostinato: a region farmer works its box, centred on it
+                    int[] r = o.region;
+                    at = new BlockPos((r[0] + r[3]) / 2, (r[1] + r[4]) / 2, (r[2] + r[5]) / 2);
+                    radius = Math.max(r[3] - r[0], Math.max(r[4] - r[1], r[5] - r[2])) + 1;
+                }
+                baritone.getFarmProcess().farm(radius, at);
+                if (o.region != null) {
+                    baritone.getFarmProcess().farmBox(o.region);
+                }
                 workRequest = baritone.getFarmProcess().outcome().request();
             }
             case MINER -> {
@@ -281,6 +437,11 @@ public final class RoleBehavior extends Behavior implements Helper {
             return d;
         }
 
+        /** Ostinato: report a failure without having started (no chest lease). */
+        void failLater(String why) {
+            failure = why;
+        }
+
         String takeFailure() {
             String f = failure;
             failure = null;
@@ -335,7 +496,11 @@ public final class RoleBehavior extends Behavior implements Helper {
                         return pause;
                     }
                     if (++ticks > OPEN_TICKS) {
-                        return fail("chest did not open");
+                        // Ostinato: say what the crosshair saw, so a miss can be told from a fenced use
+                        return fail("chest did not open (crosshair " + ctx.getSelectedBlock().map(BlockPos::toShortString).orElse("none")
+                                + ", menu " + p.containerMenu.getClass().getSimpleName() + ", dist "
+                                + String.format(java.util.Locale.ROOT, "%.1f", Math.sqrt(p.distanceToSqr(chest.getX() + 0.5, chest.getY() + 0.5, chest.getZ() + 0.5)))
+                                + ", fence denials " + LeaseFence.denials() + ")");
                     }
                     Optional<Rotation> rot = RotationUtils.reachable(ctx, chest, ctx.playerController().getBlockReachDistance());
                     if (rot.isEmpty()) {

@@ -1643,7 +1643,8 @@ public final class CommandProtocol {
         }
         // A verified inline command (eta, help, echo) may run beside an in-flight path.
         // A second path or world action may not: that would be a second active task.
-        if (!entry.ownerEmergency && !completesInline(p.name) && (busy() || approachingOther(p.id))) {
+        if (!entry.ownerEmergency && !completesInline(p.name) && !runsBeside(p.name, p.args) // Ostinato: RTS
+                && (busy() || approachingOther(p.id))) {
             return Decision.ack(from, rememberReject(p, "busy"));
         }
         if (!reserve(p, true, null, ExecutionState.ACCEPTED, ObservationState.CONFIRMED, entry)) {
@@ -2111,6 +2112,14 @@ public final class CommandProtocol {
     }
 
     /** Commands that finish inside {@code ICommand.execute} and can be marked verified immediately. */
+    /**
+     * Ostinato: RTS mode. {@code role deposit} is the chest-lease half of a running role loop: it only marks the
+     * bot's own waiting deposit as leased (the loop does the walking and clicking), so it may start beside that loop.
+     */
+    public static boolean runsBeside(String name, String args) {
+        return "role".equalsIgnoreCase(name) && args != null && args.trim().toLowerCase(Locale.ROOT).equals("deposit");
+    }
+
     public static boolean completesInline(String name) {
         if (name == null) {
             return false;

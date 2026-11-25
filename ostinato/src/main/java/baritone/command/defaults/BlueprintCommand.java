@@ -17,6 +17,7 @@
 
 package baritone.command.defaults;
 
+import baritone.swarm.rts.RoleOrder;
 import baritone.Baritone;
 import baritone.api.IBaritone;
 import baritone.api.command.Command;
@@ -49,9 +50,19 @@ public class BlueprintCommand extends Command {
         String sub = args.hasAny() ? args.getString() : "status";
         switch (sub) {
             case "live" -> {
-                args.requireExactly(1);
+                args.requireMin(1);
+                args.requireMax(2);
                 try {
-                    b.getBlueprintBehavior().live(args.getString());
+                    String name = args.getString();
+                    int[] part = null;
+                    if (args.hasAny()) {
+                        String p = args.getString();
+                        if (!p.startsWith("part=")) {
+                            throw new IllegalArgumentException("blueprint live <name> [part=x1,y1,z1:x2,y2,z2]");
+                        }
+                        part = RoleOrder.box(p.substring(5));
+                    }
+                    b.getBlueprintBehavior().live(name, part); // Ostinato: part = this bot's share of a split build
                 } catch (IllegalArgumentException e) {
                     throw new CommandInvalidStateException(e.getMessage());
                 }
@@ -63,7 +74,7 @@ public class BlueprintCommand extends Command {
                 logDirect("blueprint: stopping");
             }
             case "status" -> logDirect("blueprint: " + b.getBlueprintBehavior().describe());
-            default -> throw new CommandInvalidStateException("blueprint live <name> | stop | status");
+            default -> throw new CommandInvalidStateException("blueprint live <name> [part=x1,y1,z1:x2,y2,z2] | stop | status");
         }
     }
 
@@ -84,7 +95,7 @@ public class BlueprintCommand extends Command {
                 "rebuilds whenever it changes. Cells already right in the world are skipped.",
                 "",
                 "Usage:",
-                "> blueprint live <name>",
+                "> blueprint live <name> [part=x1,y1,z1:x2,y2,z2] - with part, only those columns (a split build)",
                 "> blueprint stop",
                 "> blueprint status"
         );

@@ -90,7 +90,8 @@ public class RtsViewTest {
         assertEquals(64, back.origin()[1]);
         assertNotNull(back.at(10, 64, 10));
         assertNull(back.at(12, 64, 11));
-        assertEquals(List.of("swarm send Azalea blueprint live base", "swarm send Spelunker blueprint live base"), lines(ui));
+        assertEquals(List.of("swarm lease Azalea r:o:10,64,10:11,64,11 blueprint live base part=10,64,10:11,64,11",
+                "swarm lease Spelunker r:o:12,64,10:12,64,11 blueprint live base part=12,64,10:12,64,11"), lines(ui));
         // the bot's status turns placed cells solid
         Files.writeString(dir.resolve("blueprints").resolve("base.status"),
                 Blueprint.writeStatus(back.version(), List.of(new int[]{10, 64, 10}, new int[]{11, 64, 10}), 5, "building"));
@@ -100,6 +101,49 @@ public class RtsViewTest {
         ui.refresh();
         assertTrue(map(ui).rts().component().getHeight() > 0);
         ui.screenshot("rts-dark");
+    }
+
+    @Test public void layersPaintWallsAndYStepsTheLayer() throws Exception {
+        UiHarness ui = ready(Files.createTempDirectory("rts"));
+        ui.type("rts:bp:y", "64").type("rts:bp:h", "3").type("rts:bp:block", "stone_bricks");
+        CenterApp.mapAuto(ui.shell, "rts:paint:0,0,1,0");
+        Blueprint b = map(ui).rts().blueprint();
+        assertEquals(6, b.size());
+        assertNotNull(b.at(1, 66, 0));
+        ui.type("rts:bp:h", "1");
+        ui.click("rts:bp:up");
+        assertEquals("65", ui.text("rts:bp:y"));
+        CenterApp.mapAuto(ui.shell, "rts:erase:0,0,0,0");
+        assertNull(b.at(0, 65, 0));
+        assertNotNull(map(ui).rts().blueprint().at(0, 64, 0));
+        ui.click("rts:bp:down");
+        assertEquals("64", ui.text("rts:bp:y"));
+    }
+
+    @Test public void buildLiveWithTwoBotsSplitsUnderRegionLeases() throws Exception {
+        UiHarness ui = ready(Files.createTempDirectory("rts"));
+        ui.type("rts:bp:y", "64").type("rts:bp:block", "cobblestone");
+        CenterApp.mapAuto(ui.shell, "rts:paint:10,10,13,10");
+        CenterApp.mapAuto(ui.shell, "select:Azalea+Spelunker");
+        ui.click("rts:bp:live");
+        assertEquals(List.of("swarm lease Azalea r:o:10,64,10:11,64,10 blueprint live base part=10,64,10:11,64,10",
+                "swarm lease Spelunker r:o:12,64,10:13,64,10 blueprint live base part=12,64,10:13,64,10"), lines(ui));
+    }
+
+    @Test public void inAreaAssignNeedsAnAreaThenLeasesStrips() throws Exception {
+        UiHarness ui = ready(Files.createTempDirectory("rts"));
+        @SuppressWarnings("unchecked") JComboBox<String> role = (JComboBox<String>) ui.find("rts:role");
+        role.setSelectedItem("farmer");
+        ui.type("rts:chest", "0,64,0");
+        ui.click("rts:inarea");
+        ui.click("rts:assign");
+        assertTrue(lines(ui).isEmpty());
+        assertTrue(ui.text("rts:reply"), ui.text("rts:reply").contains("drag a rectangle"));
+        CenterApp.mapAuto(ui.shell, "area:0,0,7,3");
+        ui.type("area:y1", "63").type("area:y2", "64");
+        ui.click("rts:assign");
+        assertEquals(List.of("swarm lease Azalea r:o:0,63,0:3,64,3 role farmer chest=0,64,0 region=0,63,0:3,64,3",
+                "swarm lease Spelunker r:o:4,63,0:7,64,3 role farmer chest=0,64,0 region=4,63,0:7,64,3"), lines(ui));
     }
 
     @Test public void economyLineCountsRolesAndDepositing() throws Exception {

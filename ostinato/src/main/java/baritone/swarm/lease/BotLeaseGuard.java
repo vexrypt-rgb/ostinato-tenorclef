@@ -1468,6 +1468,26 @@ public final class BotLeaseGuard implements CommandProtocol.LeaseHooks {
     }
 
     /**
+     * Ostinato: RTS mode. True while this bot holds an authorised lease on exactly {@code resource} (compared as
+     * canonical reservation keys, so corner order does not matter). Roles and live blueprints check their own lease.
+     */
+    public synchronized boolean holds(String resource) {
+        ReservationKey want = ReservationKey.parse(resource);
+        String wanted = want == null ? resource : want.toString();
+        long now = mono.getAsLong();
+        for (Lease l : leases.values()) {
+            if (l.phase == Phase.DONE || !l.authorized(now)) {
+                continue;
+            }
+            ReservationKey k = ReservationKey.parse(l.resource);
+            if (wanted.equals(k == null ? l.resource : k.toString())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Ostinato: the box a started, authorised vein or region lease confines the mine to, or null. The mine drops ore
      * targets outside it: the fence denies those breaks (a region fences every break), so heading for them only loops.
      */
