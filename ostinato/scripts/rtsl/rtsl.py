@@ -190,7 +190,9 @@ try:
         import subprocess as _sp
         for c in ["fill -52 -61 38 -40 -61 44 grass_block", "fill -52 -60 38 -40 -56 44 air"]:
             R(c)
-        R("tp %s -50 -60 37" % W1); R("tp %s -42 -60 37" % W2)
+        # Ostinato: r8 teleported to z=37, off the pad (z 38-44); Copper fell in the void and had no cobblestone
+        R("tp %s -50 -60 40" % W1); R("tp %s -42 -60 40" % W2)
+        time.sleep(2)
         for n in W: R("give %s cobblestone 32" % n)
         jar = r"C:\Users\redfa\Documents\MinecraftDev\rts-wt\ostinato\center-app\build\libs\ostinato-center-app.jar"
         java = r"C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot\bin\java.exe"
