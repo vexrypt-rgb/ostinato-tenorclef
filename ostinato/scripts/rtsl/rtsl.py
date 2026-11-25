@@ -1,4 +1,4 @@
-# Ostinato: RTS live check on 3 headless bots under Grim (server-ac-client). Usage: rtsl.py <tag> [mine,build]
+# Ostinato: RTS live check under Grim (server-ac-client). Usage: rtsl.py <tag> [mine,build,storage,armor,layers] [W1,W2]
 import os, re, sys, time, subprocess, hashlib, uuid as _uuid, glob, json
 P = r"C:\Users\redfa\Documents\MinecraftDev\swarm-gate-logs\rtsl"
 CG = r"C:\Users\redfa\Documents\MinecraftDev\headless-bot-logs\phase3\gate\client-gate.py"
@@ -185,6 +185,62 @@ try:
         lines = [l for l in clog(AB).splitlines() if "role armorer" in l or "role deposit" in l]
         log("%s armorer lines:\n  " % AB + "\n  ".join(lines[-30:]))
         send(AB, "role idle")
+    if "layers" in PARTS:
+        # Ostinato: (5) paint a 2-layer wall through the real command-center window (h=2), Y-step + erase one top cell, build live
+        import subprocess as _sp
+        for c in ["fill -52 -61 38 -40 -61 44 grass_block", "fill -52 -60 38 -40 -56 44 air"]:
+            R(c)
+        R("tp %s -50 -60 37" % W1); R("tp %s -42 -60 37" % W2)
+        for n in W: R("give %s cobblestone 32" % n)
+        jar = r"C:\Users\redfa\Documents\MinecraftDev\rts-wt\ostinato\center-app\build\libs\ostinato-center-app.jar"
+        java = r"C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot\bin\java.exe"
+        wdir = os.path.join(P, "run", TAG); os.makedirs(wdir, exist_ok=True)
+        wlog, auto_f = os.path.join(wdir, "window.log"), os.path.join(wdir, "window-auto.txt")
+        open(auto_f, "w").close()
+        win = _sp.Popen([java, "-Xmx256m", "-cp", jar, "baritone.swarm.center.app.CenterApp",
+                         "--dir", os.path.join(P, "center"), "--layout", "map", "--pos", "2600,40",
+                         "--log", wlog, "--auto-file", auto_f])
+        log("window pid %d over %s" % (win.pid, os.path.join(P, "center"))); time.sleep(8)
+        def wtext():
+            return open(wlog, encoding="utf-8", errors="replace").read() if os.path.exists(wlog) else ""
+        def auto(*lines, wait=None, timeout=20):
+            with open(auto_f, "a", encoding="utf-8") as f: f.write("\n".join(lines) + "\n")
+            log("window< " + " ; ".join(lines))
+            if not wait:
+                time.sleep(2); return None
+            t0 = time.time()
+            while time.time() - t0 < timeout:
+                m = re.search(wait, wtext())
+                if m:
+                    log("window> " + m.group(0)); return m.group(0)
+                time.sleep(1)
+            log("window> no " + wait); return None
+        auto("@map|rts:on", wait=r"rts=true")
+        cells = [(x, y, z) for y in (-60, -59) for x in range(-48, -44) for z in (40, 41)]  # 4x2 columns x 2 layers = 16
+        auto("@set|rts:bp:name|wall", "@set|rts:bp:y|-60", "@set|rts:bp:h|2", "@set|rts:bp:block|cobblestone", "@|rts:bp:clear")
+        auto("@map|rts:paint:-48,40,-45,41", wait=r"blueprint wall 16 blocks")
+        auto("@set|rts:bp:h|1", "@|rts:bp:up")
+        erased = (-45, -59, 41)
+        cells = [c for c in cells if c != erased]
+        auto("@map|rts:erase:-45,41,-45,41", wait=r"blueprint wall 15 blocks")
+        auto("@map|select:" + "+".join(W), "@|rts:bp:live", wait=r"blueprint live wall")
+        t0 = time.time(); last = ""
+        while time.time() - t0 < 180:
+            got = sum(1 for c in cells if block(*c, "cobblestone"))
+            s = "layers placed %d/15 (erased %s air=%s)" % (got, erased, block(*erased, "air"))
+            if s != last: log(s); last = s
+            if got == 15 and block(*erased, "air"):
+                time.sleep(4); break
+            time.sleep(4)
+        got = [c for c in cells if block(*c, "cobblestone")]
+        log("RESULT layers: %d/15 cobblestone from window paint h=2, erased cell %s is %s" % (len(got), erased, "air" if block(*erased, "air") else "NOT air"))
+        log("window log tail:\n  " + "\n  ".join(wtext().splitlines()[-40:]))
+        for n in W: send(n, "blueprint stop")
+        try:
+            win.terminate(); win.wait(8)
+        except Exception:
+            win.kill()
+        log("window closed")
     for n in BOTS:
         lines = [l for l in clog(n).splitlines() if re.search(r"role|lease|scheduler|chest", l, re.I)]
         log("%s role/lease lines (%d):\n  " % (n, len(lines)) + "\n  ".join(lines[-60:]))

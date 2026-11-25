@@ -108,9 +108,12 @@ types), so the later 3D Design/Live editor can open and save the same file.
 | (a) roles: farmer, miner, chest deposit | live | `gate/rts/rts2` (Paper 26.3 + Grim): farmer stored 28 wheat in 25 s and replanted; miner stored 6 coal in 16 s; 0 flags |
 | (b) RTS panel on the map: role assign, idle, right-click move, economy line, role letters | live | `gate/rts/rts3` window-farmer: Assign from the window, chest held 25 wheat in 20 s; `gate/rts/rts4` window-move: right-click order, bot at -50,31 in 13 s; 0 flags. `RtsViewTest` + `build/screens/rts-dark.png` |
 | (c) live blueprint: paint on the map → `blueprints/<name>.ost` → `#blueprint live` → builder; edits restart it; status back to the map | live | `gate/rts/rts4`: 9/9 cobblestone in 10 s, then a painted extra row → v12, 12/12 in 3 s more, status file `12 12 12 done`; 0 flags |
-| blueprint split across several bots (one file, cell ranges per bot) | not yet | each selected bot runs `#blueprint live` on the same file today; Baritone's builder skips placed cells |
-| (d) storage organizer, (e) armorer | designed, not built | sections 1 and 5 |
+| blueprint split across several bots (one file, cell ranges per bot) + mid-build erase | live | `swarm-gate-logs/rtsl-r6.out` and `rtsl-r7.out`: 23/23 cells, erased cell air, 0 Grim flags |
+| (d) storage organizer | live | r6/r7: 3 chests sorted by type via open-screen clicks (coal+wheat / cobblestone / oak_log+bone); r7 RESULT SORTED; 0 flags |
+| (e) armorer (copper) | live | r7 (`rtsl-r7.out`): Azalea gathered 24 copper_ingot, crafted and equipped helmet/chestplate/leggings/boots in 8 s; 0 flags |
+| multi-layer blueprint painting (h / Y-step) | unit | `RtsViewTest.layersPaintWallsAndYStepsTheLayer`; live proof next (`rtsl.py <tag> layers`) |
 
-Live gate: `python scripts/rts-gate.py grim <tag> [steps]` (steps: farmer, miner, window, window-farmer, window-move,
-window-blueprint, window-blueprint-edit). The client is muted (every `soundCategory_*` 0.0, asserted before launch);
-the window runs at 2600,40 without taking focus and is closed at the end.
+Live gate: `python scripts/rts-gate.py grim <tag> [steps]` (farmer, miner, window-*). Multi-bot leases, storage, armorer
+and layers: `python swarm-gate-logs/rtsl/rtsl.py <tag> mine,build,storage,armor,layers Copper,Azalea` after
+`rtsl-setup.ps1`. Clients are muted (every `soundCategory_*` 0.0); the window runs at 2600,40 without taking focus
+and is closed at the end.
