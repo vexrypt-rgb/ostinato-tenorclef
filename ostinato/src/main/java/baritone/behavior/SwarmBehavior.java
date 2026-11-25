@@ -1,5 +1,7 @@
 package baritone.behavior;
 
+import net.minecraft.world.entity.player.Player;
+
 import baritone.Baritone;
 import baritone.api.utils.input.Input;
 import baritone.api.Settings;
@@ -289,7 +291,7 @@ public final class SwarmBehavior extends Behavior implements Helper {
     private SwarmSample baseSample() {
         int ping = -1;
         try {
-            LocalPlayer p = ctx.player();
+            LocalPlayer p = ctx.localPlayer();
             if (p != null && p.connection != null) {
                 net.minecraft.client.multiplayer.PlayerInfo info = p.connection.getPlayerInfo(p.getUUID());
                 ping = info == null ? -1 : info.getLatency();
@@ -334,7 +336,7 @@ public final class SwarmBehavior extends Behavior implements Helper {
             }
             return;
         }
-        String self = ctx.player().getName().getString();
+        String self = ctx.entity().getName().getString();
         String settings = settingsKey(s);
         if (startedWith != null && !startedWith.equals(settings)) {
             stop(true); // Ostinato: planned settings restart.
@@ -1171,7 +1173,7 @@ public final class SwarmBehavior extends Behavior implements Helper {
     private Set<String> onlinePlayerNames() {
         Set<String> online = new HashSet<>();
         try {
-            var connection = ctx.player().connection;
+            var connection = ctx.localPlayer().connection;
             if (connection == null) {
                 return online;
             }
@@ -2091,12 +2093,12 @@ public final class SwarmBehavior extends Behavior implements Helper {
 
         @Override
         public String name() {
-            return ctx.player() == null ? "?" : ctx.player().getName().getString();
+            return ctx.entity() == null ? "?" : ctx.entity().getName().getString();
         }
 
         @Override
         public String position() {
-            if (ctx.player() == null) {
+            if (ctx.entity() == null) {
                 return "?";
             }
             BetterBlockPos p = ctx.playerFeet();

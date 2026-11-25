@@ -1,5 +1,7 @@
 package baritone.pathing.kinematic;
 
+import baritone.pathing.IPathingHost;
+
 import baritone.Baritone;
 import baritone.api.pathing.calc.IPath;
 import baritone.api.utils.BetterBlockPos;
@@ -54,7 +56,7 @@ public final class SimTravel {
     private boolean pressed;
 
     /** @return the path position to continue from, or -1 when this layer does not take the tick */
-    public int tick(Baritone baritone, IPath path, int pathPosition) {
+    public int tick(IPathingHost baritone, IPath path, int pathPosition) {
         boolean held = pressed;
         pressed = false;
         int r = tick0(baritone, path, pathPosition);
@@ -75,9 +77,9 @@ public final class SimTravel {
         return heldBefore && !pressedNow;
     }
 
-    private int tick0(Baritone baritone, IPath path, int pathPosition) {
-        if (!Baritone.settings().simTravel.value || ctx.player().isInWater() || ctx.player().isInLava()
-                || ctx.player().onClimbable() || ctx.player().isFallFlying() || ctx.player().isPassenger()) {
+    private int tick0(IPathingHost baritone, IPath path, int pathPosition) {
+        if (!Baritone.settings().simTravel.value || ctx.entity().isInWater() || ctx.entity().isInLava()
+                || ctx.entity().onClimbable() || ctx.entity().isFallFlying() || ctx.entity().isPassenger()) {
             return drop();
         }
         if (pathPosition < 0 || pathPosition >= path.movements().size()) {
@@ -104,7 +106,7 @@ public final class SimTravel {
             // Jump that had never seen its own take-off; it walked back to its run-up and into the gap (0 of 16 laps)
             return landed(path, pathPosition);
         }
-        int now = ctx.player().tickCount;
+        int now = ctx.entity().tickCount;
         if (plan != null && stale(pressedAt, now, planDest, dest)) {
             // Ostinato Presto v4.1: another driver had the ticks in between, or this is a different jump. The plan's
             // yaw and jump timing were for where the player stood then; solve again from here.
@@ -120,12 +122,13 @@ public final class SimTravel {
             return press(baritone, path, pathPosition, body);
         }
         yaw = SimProbe.yawToward(body.x, body.z, dest.x, dest.z);
-        if (body.onGround && PhysicsTravel.offPlan(ctx.player().getYRot(), yaw)) {
+        if (body.onGround && PhysicsTravel.offPlan(ctx.entity().getYRot(), yaw)) {
             // Ostinato Presto v4.1: the move this tick goes the way the look has turned to (32° a tick), not the plan's.
             // presto-v4.1 final1 laps 21, 22: after a jolt Baritone's Jump had turned back west toward its run-up; this
             // driver then pressed W and sprint east at once and the walk swung through south (north), off the one-wide
             // walkway at x 33. Turn in place first, as PhysicsTravel does, and solve once facing the plan's way.
-            // Ostinato: updateTarget below queues the visible mouse turn.
+            // Ostinato: a client queues the visible mouse turn (updateTarget below); only a headless sim turns directly.
+            if (ctx.localPlayer() == null) ctx.entity().setYRot(yaw);
             baritone.getLookBehavior().updateTarget(new Rotation(yaw, 0), false);
             baritone.getInputOverrideHandler().clearAllKeys();
             plan = null;
@@ -163,9 +166,9 @@ public final class SimTravel {
         return press(baritone, path, pathPosition, body);
     }
 
-    private int press(Baritone baritone, IPath path, int pathPosition, PlayerSim body) {
+    private int press(IPathingHost baritone, IPath path, int pathPosition, PlayerSim body) {
         pressed = true;
-        pressedAt = ctx.player().tickCount;
+        pressedAt = ctx.entity().tickCount;
         traceStep = step;
         boolean jump = plan[step++];
         PlayerSim predicted = new PlayerSim(world).copyFrom(body);
@@ -174,7 +177,8 @@ public final class SimTravel {
         predY = predicted.y;
         predZ = predicted.z;
         havePred = true;
-        // Ostinato: updateTarget below queues the visible mouse turn.
+        // Ostinato: a client queues the visible mouse turn (updateTarget below); only a headless sim turns directly.
+        if (ctx.localPlayer() == null) ctx.entity().setYRot(yaw);
         baritone.getLookBehavior().updateTarget(new Rotation(yaw, 0), false);
         baritone.getInputOverrideHandler().clearAllKeys();
         baritone.getInputOverrideHandler().setInputForceState(Input.MOVE_FORWARD, true);

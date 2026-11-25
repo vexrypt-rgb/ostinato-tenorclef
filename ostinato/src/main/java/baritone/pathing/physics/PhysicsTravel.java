@@ -8,6 +8,8 @@
  */
 package baritone.pathing.physics;
 
+import baritone.pathing.IPathingHost;
+
 import baritone.Baritone;
 import baritone.api.pathing.calc.IPath;
 import baritone.api.utils.BetterBlockPos;
@@ -82,7 +84,7 @@ public final class PhysicsTravel {
     }
 
     /** @return the path position to continue from if this drove the tick, or -1 to let the next layer run it */
-    public int tick(Baritone baritone, IPath path, int pathPosition) {
+    public int tick(IPathingHost baritone, IPath path, int pathPosition) {
         return tick(baritone, path, pathPosition, false);
     }
 
@@ -90,11 +92,11 @@ public final class PhysicsTravel {
      * Ostinato: {@code stackAsked} means the travel stack already chose physics, so {@code physicsTravel} is not
      * required. The stack tries this only after the kinematic family declines the spot.
      */
-    public int tick(Baritone baritone, IPath path, int pathPosition, boolean stackAsked) {
+    public int tick(IPathingHost baritone, IPath path, int pathPosition, boolean stackAsked) {
         // Ostinato 2.0 Phase 06: null while unifiedExecutor is off, and every use below is behind that null.
         UnifiedExecutor ux = Baritone.settings().unifiedExecutor.value ? baritone.getUnifiedExecutor() : null;
-        if (ctx.player().isInWater() || ctx.player().isInLava()
-                || ctx.player().onClimbable() || ctx.player().isFallFlying() || ctx.player().isPassenger()) {
+        if (ctx.entity().isInWater() || ctx.entity().isInLava()
+                || ctx.entity().onClimbable() || ctx.entity().isFallFlying() || ctx.entity().isPassenger()) {
             return drop(ux, pathPosition);
         }
         // Ostinato: the old switch still forces physics when the stack did not ask. Auto asks on its own.
@@ -178,9 +180,10 @@ public final class PhysicsTravel {
         }
         PhysicsPathfinder.Action a = plan.get(step);
         // Set yaw now: the look behaviour applies a tick late, and the plan assumes this tick's yaw.
-        // Ostinato: the plan waits for the visible mouse step below.
+        // Ostinato: a client waits for the visible mouse step below; only a headless sim turns directly.
+        if (ctx.localPlayer() == null) ctx.entity().setYRot(a.yaw);
         baritone.getLookBehavior().updateTarget(new Rotation(a.yaw, 0), false);
-        if (real.onGround && offPlan(ctx.player().getYRot(), a.yaw)) {
+        if (real.onGround && offPlan(ctx.entity().getYRot(), a.yaw)) {
             // Ostinato Presto v4: the move this tick goes the aim processor's way, at most 32° a tick from the last
             // sent yaw, not the plan's. Turn in place first: with the keys down the walk went out sideways
             // (presto-v4-fix4 laps 2, 5: a lap started facing back, the yaw swung through south, z 0.5 to 1.15 in four

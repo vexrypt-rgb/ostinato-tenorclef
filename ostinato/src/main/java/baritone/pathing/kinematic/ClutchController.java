@@ -1,5 +1,7 @@
 package baritone.pathing.kinematic;
 
+import baritone.pathing.IPathingHost;
+
 import baritone.Baritone;
 import baritone.api.pathing.calc.IPath;
 import baritone.api.pathing.movement.IMovement;
@@ -59,7 +61,7 @@ public final class ClutchController {
     }
 
     /** @return the path position to continue from if the controller drove this tick, or -1 to let the next driver run */
-    public int tick(Baritone baritone, IPath path, int pathPosition) {
+    public int tick(IPathingHost baritone, IPath path, int pathPosition) {
         int r = drive(baritone, path, pathPosition);
         if (r >= 0) {
             drivenTicks++;
@@ -67,8 +69,8 @@ public final class ClutchController {
         return r;
     }
 
-    private int drive(Baritone baritone, IPath path, int pathPosition) {
-        Player player = ctx.player();
+    private int drive(IPathingHost baritone, IPath path, int pathPosition) {
+        Player player = ctx.entity();
         if (!Baritone.settings().slowKinematic.value || !Baritone.settings().allowPlace.value
                 || player.isInWater() || player.isInLava() || player.isFallFlying() || player.isPassenger()
                 || player.getAbilities().flying || !ClientWorld.plainGravity(ctx)) {
@@ -86,7 +88,7 @@ public final class ClutchController {
             return -1;
         }
         BlockPos first0 = needs.get(0);
-        if (!baritone.getInventoryBehavior().selectThrowawayForLocation(true, first0.getX(), first0.getY(), first0.getZ())) {
+        if (!baritone.selectThrowawayForLocation(true, first0.getX(), first0.getY(), first0.getZ())) {
             return -1; // nothing to place (a pick in hand, no blocks): Baritone reports it instead of the bot aiming forever
         }
         double px = player.getX(), py = player.getY(), pz = player.getZ();
@@ -149,7 +151,7 @@ public final class ClutchController {
         if (aim != null) {
             lookYaw = aim.rot.getYaw();
             lookPitch = aim.rot.getPitch();
-            baritone.getInventoryBehavior().selectThrowawayForLocation(true, aim.target.getX(), aim.target.getY(), aim.target.getZ());
+            baritone.selectThrowawayForLocation(true, aim.target.getX(), aim.target.getY(), aim.target.getZ());
             HitResult over = ctx.objectMouseOver();
             if (placeCooldown == 0 && over instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK
                     && hit.getBlockPos().equals(aim.against) && hit.getBlockPos().relative(hit.getDirection()).equals(aim.target)) {
@@ -226,7 +228,7 @@ public final class ClutchController {
         useOverlay = false;
         try {
             prime(travel);
-            Player p = ctx.player();
+            Player p = ctx.entity();
             for (int t = 0; t < 40; t++) {
                 sim.tick(travel, true, true, false);
                 if (sim.onGround || sim.y < p.getY() - 6) {
@@ -240,7 +242,7 @@ public final class ClutchController {
     }
 
     private void prime(float travel) {
-        Player p = ctx.player();
+        Player p = ctx.entity();
         if (sim == null) {
             sprintJumpLands(travel, p.getX(), p.getZ()); // builds the sim
         }
@@ -260,7 +262,7 @@ public final class ClutchController {
         simX = px;
         simZ = pz;
         // from a standstill nothing is there yet to count on: only a run that already has speed may land on a block still to be laid
-        useOverlay = Math.hypot(ctx.player().getDeltaMovement().x, ctx.player().getDeltaMovement().z) > 0.1;
+        useOverlay = Math.hypot(ctx.entity().getDeltaMovement().x, ctx.entity().getDeltaMovement().z) > 0.1;
         if (sim == null) {
             client = new ClientWorld(ctx);
             sim = new PlayerSim(new PlayerSim.World() {
@@ -329,7 +331,7 @@ public final class ClutchController {
             });
         }
         client.reset();
-        Player p = ctx.player();
+        Player p = ctx.entity();
         sim.x = p.getX(); sim.y = p.getY(); sim.z = p.getZ();
         sim.vx = p.getDeltaMovement().x; sim.vy = p.getDeltaMovement().y; sim.vz = p.getDeltaMovement().z;
         sim.onGround = p.onGround();
@@ -440,8 +442,8 @@ public final class ClutchController {
      * The nearest unplaced landing block, with the look that hits a face of one of its neighbours from here, picking
      * the look closest to the travel direction so the player can keep sprinting.
      */
-    private Aim findAim(Baritone baritone, double px, double py, double pz, double travel, double tx, double tz) {
-        Player player = ctx.player();
+    private Aim findAim(IPathingHost baritone, double px, double py, double pz, double travel, double tx, double tz) {
+        Player player = ctx.entity();
         Vec3 eye = ctx.playerHead();
         // the body this tick and the next: a block cannot be laid where the player is or is about to be
         Vec3 mv = player.getDeltaMovement();

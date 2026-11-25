@@ -141,6 +141,22 @@ public final class PacketLog {
     }
 
     private static String describe(Packet<?> p) {
+        // Ostinato: container traffic (open, click, close, slot sync), to read inventory stalls. Log only.
+        String cn = p.getClass().getSimpleName();
+        if (p instanceof net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket ss) {
+            return cn + " id=" + ss.getContainerId() + " state=" + ss.getStateId() + " slot=" + ss.getSlot() + " item=" + ss.getItem();
+        }
+        if (cn.contains("Container") || cn.contains("OpenScreen") || cn.contains("SetCursorItem") || cn.contains("SetPlayerInventory")) {
+            String s = String.valueOf(p);
+            return cn + " " + (s.length() > 300 ? s.substring(0, 300) : s);
+        }
+        // Ostinato: transaction ids, to read Grim TransactionOrder (skipped=N) against what was answered.
+        if (p instanceof net.minecraft.network.protocol.common.ClientboundPingPacket ping) {
+            return "Ping id=" + ping.getId();
+        }
+        if (p instanceof net.minecraft.network.protocol.common.ServerboundPongPacket pong) {
+            return "Pong id=" + pong.getId();
+        }
         if (p instanceof ServerboundMovePlayerPacket.PosRot m) {
             return String.format(Locale.ROOT, "PosRot x=%.6f y=%.6f z=%.6f yaw=%.3f pitch=%.3f onGround=%s hz=%s",
                     m.getX(0), m.getY(0), m.getZ(0), m.getYRot(0), m.getXRot(0), m.isOnGround(), m.horizontalCollision());

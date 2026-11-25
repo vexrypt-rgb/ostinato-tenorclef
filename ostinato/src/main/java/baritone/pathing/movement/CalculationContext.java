@@ -33,7 +33,7 @@ import baritone.utils.MountUtil;
 import baritone.utils.ToolSet;
 import baritone.utils.pathing.BetterWorldBorder;
 import baritone.utils.pathing.SearchCache;
-import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.world.entity.EquipmentSlot;
@@ -239,15 +239,44 @@ public class CalculationContext {
     }
 
     /**
+     * Ostinato: the context a driver re-costs a movement with. On the client this is the player-derived context, exactly
+     * as before. A headless host has no client world or inventory to derive from, so it answers with the context its own
+     * search was planned with.
+     */
+    public static CalculationContext of(IBaritone baritone) {
+        if (baritone instanceof baritone.pathing.IPathingHost host && baritone.getPlayerContext().minecraft() == null) {
+            CalculationContext context = host.secretInternalGetCalculationContext();
+            if (context != null) {
+                return context;
+            }
+        }
+        return new CalculationContext(baritone);
+    }
+
+    /**
      * Ostinato: a headless context over a synthetic or snapshot {@link BlockStateInterface}, with no player, inventory or
      * client world, for the pathfinding benchmark and cost-equality tests. Player-derived inputs take the values of a
      * fresh full-health player with an empty hotbar (bare hands via {@code toolSet}); everything else is read from
      * settings exactly as the normal constructor does. New, replaces nothing.
      */
     public CalculationContext(BlockStateInterface bsi, ToolSet toolSet, boolean hasThrowaway, int minY, int height) {
+        this(null, bsi, toolSet, hasThrowaway, minY, height, true);
+    }
+
+    /**
+     * Ostinato: the same context over a caller-supplied {@link BlockStateInterface}, carrying the {@link IBaritone} the
+     * movements are built against. A headless bot plans through this: it has no client world, player or inventory to
+     * derive from, but its movements still need their host when they execute. New, replaces nothing.
+     */
+    public CalculationContext(IBaritone baritone, BlockStateInterface bsi, ToolSet toolSet, boolean hasThrowaway, int minY, int height) {
+        this(baritone, bsi, toolSet, hasThrowaway, minY, height, false);
+    }
+
+    private CalculationContext(IBaritone baritone, BlockStateInterface bsi, ToolSet toolSet, boolean hasThrowaway,
+                               int minY, int height, boolean safeForThreadedUse) {
         this.precomputedData = new PrecomputedData();
-        this.safeForThreadedUse = true;
-        this.baritone = null;
+        this.safeForThreadedUse = safeForThreadedUse;
+        this.baritone = baritone;
         this.world = null;
         this.worldData = null;
         this.bsi = bsi;
@@ -324,13 +353,14 @@ public class CalculationContext {
         this.precomputedData = new PrecomputedData();
         this.safeForThreadedUse = forUseOnAnotherThread;
         this.baritone = baritone;
-        LocalPlayer player = baritone.getPlayerContext().player();
+        Player player = baritone.getPlayerContext().entity();
         this.world = baritone.getPlayerContext().world();
         this.worldData = (WorldData) baritone.getPlayerContext().worldData();
         this.bsi = new BlockStateInterface(baritone.getPlayerContext(), forUseOnAnotherThread);
         this.toolSet = new ToolSet(player);
         this.aquaAffinity = player.getAttributeValue(net.minecraft.world.entity.ai.attributes.Attributes.SUBMERGED_MINING_SPEED) > 0.5;
-        this.hasThrowaway = !AltoClefSettings.getInstance().isInteractionPaused() && Baritone.settings().allowPlace.value && ((Baritone) baritone).getInventoryBehavior().hasGenericThrowaway();
+        this.hasThrowaway = !AltoClefSettings.getInstance().isInteractionPaused() && Baritone.settings().allowPlace.value
+                && baritone instanceof baritone.pathing.IPathingHost host && host.hasGenericThrowaway();
         this.hasWaterBucket = Baritone.settings().allowWaterBucketFall.value && Inventory.isHotbarSlot(player.getInventory().findSlotMatchingItem(BucketHolder.STACK_BUCKET_WATER)) && world.dimension() != Level.NETHER;
         // Ostinato: fastMode behaves as if allowBoats were on. Off, this is allowBoats.
         boolean boats = FastMode.allowBoats() && Baritone.settings().allowBoatFall.value && !AltoClefSettings.getInstance().isInteractionPaused();
@@ -363,7 +393,8 @@ public class CalculationContext {
         this.allowTasJumps = ExperimentalMovement.allowTasJumps() && fullPace;
         this.allowMomentumJumps = ExperimentalMovement.allowMomentumJumps() && fullPace;
         boolean ladderClutch = FastMode.allowLadderClutch(); // Ostinato
-        net.minecraft.world.item.Item clutchItem = ladderClutch ? ((Baritone) baritone).getInventoryBehavior().pickClutchItem(false) : null;
+        net.minecraft.world.item.Item clutchItem = ladderClutch && baritone instanceof baritone.pathing.IPathingHost host
+                ? host.pickClutchItem(false) : null;
         this.hasClutchItem = clutchItem != null;
         this.ladderGrab = ladderClutch;
         this.allowGodBridge = Baritone.settings().allowGodBridge.value && !Baritone.settings().assumeSafeWalk.value;
@@ -383,7 +414,7 @@ public class CalculationContext {
         int frostWalkerLevel = 0;
         for (EquipmentSlot slot : EquipmentSlot.values()) {
             ItemEnchantments itemEnchantments = baritone.getPlayerContext()
-                .player()
+                .entity()
                 .getItemBySlot(slot)
                 .getEnchantments();
             for (Holder<Enchantment> enchant : itemEnchantments.keySet()) {
@@ -402,7 +433,7 @@ public class CalculationContext {
         float waterSpeedMultiplier = 1.0f;
         OUTER: for (EquipmentSlot slot : EquipmentSlot.values()) {
             ItemEnchantments itemEnchantments = baritone.getPlayerContext()
-                .player()
+                .entity()
                 .getItemBySlot(slot)
                 .getEnchantments();
             for (Holder<Enchantment> enchant : itemEnchantments.keySet()) {

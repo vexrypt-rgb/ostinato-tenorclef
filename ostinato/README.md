@@ -282,7 +282,23 @@ deterministic so every member computes the same plan locally. Tokens on the
 wire are SIGIL S2 (including S2S when a sender must be proven).
 
 - [Region builds](docs/REGION_BUILD.md)
+- [Swarm and region builds guide](docs/guides/swarm-and-region-builds.md)
+- [Command center](docs/command-center.md) and [bot accounts](docs/bot-accounts.md) (Microsoft sign-in waits on
+  Mojang's approval of the app id)
 - [SIGIL](https://github.com/vexrypt-rgb/sigil)
+
+## Controls-only input
+
+The bot acts only through vanilla key presses and visible mouse look. It never sends gameplay packets itself or
+changes player state between input and vanilla's packet send. On Paper 26.3 it ran the full course with 0 flags
+under Grim, NoCheatPlus Updated and LightAntiCheat+. Spartan's gravity check also flags plain vanilla, so its flags
+are a false positive. See [the audit](docs/CONTROLS_ONLY_AUDIT.md).
+
+## True headless bot (experimental)
+
+`gradlew runHeadlessBot -PbotArgs="<host> <port> <name> <seconds>"` starts a plain-JVM 26.3 protocol bot with no
+Minecraft client. It moves with PlayerSim, plans with Ostinato's A*, and sends only what vanilla would for the same
+inputs. It works on offline-mode servers only. See [HEADLESS_BOT_NOTES.md](HEADLESS_BOT_NOTES.md).
 
 ## Development documentation
 

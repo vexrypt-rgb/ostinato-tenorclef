@@ -7,19 +7,67 @@ One set of jars per Minecraft version (`ostinato-mc<version>-*`). For a normal i
 `ostinato-mc<version>-unoptimized-fabric-*.jar` with Fabric Loader; `standalone` is obfuscated and
 `api` keeps the public API for other mods.
 
-v1.28.0-beta.2 is a **beta** for 26.3 (`main`, Java 25): the swarm command protocol, hidden and headless bots, legit
-mode and the command center window. Everything in "New in v1.28.0-beta.2" and "New in v1.28.0-beta.1" is 26.3 only; the other lines are rebuilt
-from the same branches as v1.27.0 and have no changes.
-
-New 26.3 work now happens in the monorepo [vexrypt-rgb/ostinato-tenorclef](https://github.com/vexrypt-rgb/ostinato-tenorclef).
-This repository keeps the release workflow and the older Minecraft lines.
+v1.28.0 is a 26.3 release (Java 25). It finishes the v1.28.0 betas and adds controls-only input, the true headless
+bot and Microsoft sign-in. Everything in "New in v1.28.0" and the two beta sections is 26.3 only. Source and releases
+for 26.3 now live in the monorepo [vexrypt-rgb/ostinato-tenorclef](https://github.com/vexrypt-rgb/ostinato-tenorclef)
+(tag `ostinato-v1.28.0`). The older Minecraft lines have no changes since v1.27.0.
 
 | Minecraft | Branch | Java | This tag |
 | --- | --- | --- | --- |
-| 26.3 | `main` | 25 | Beta. `ostinato-mc26.3-*` |
+| 26.3 | monorepo `main` | 25 | `ostinato-mc26.3-*` |
 | 1.21.11 | `1.21.11` | 21 | Unchanged since v1.27.0 |
 | 1.21.4 | `1.21.4` | 21 | Unchanged since v1.27.0 |
 | 1.16.1 | `1.16.1` | 8 | Unchanged since v1.27.0 |
+## New in v1.28.0
+
+26.3 only.
+
+### Behaviour changes (on by default)
+
+- **Controls-only input.** The bot now plays only through vanilla key presses and one visible mouse step per tick,
+  the same inputs a person uses. Baritone no longer turns the player server-side only, swaps movement or jump yaw,
+  writes sprint or flight state, hurries position packets, or calls attack, use, break and hotbar actions directly.
+  Vanilla sends every gameplay packet itself. Container clicks still happen, but only in the matching open screen with
+  movement released. Clicks wait until the view has settled, and a bridge holds sneak until the server keeps the
+  block. Because silent look is gone, `freeLook`, `blockFreeLook` and `antiCheatCompatibility` no longer change how
+  the bot looks. Audit: `docs/CONTROLS_ONLY_AUDIT.md`.
+- **Anticheat results** (Paper 26.3, free anticheats, default configs, full course: ladder, stairs, parkour, walk,
+  long goto, 14-block bridge, 5-block pillar, mining, melee): Grim 2.3.75, NoCheatPlus Updated b286 and
+  LightAntiCheat+ 2.0.2 (with PacketEvents 2.14.0) gave **0 flags**. Spartan 4.0.9.0's gravity check flags plain
+  vanilla 26.3 (no mods) the same way it flags the bot, so those flags are a Spartan false positive.
+- No sprint on or just above a ladder or vine. A parkour jump is no longer taken as a sprint-jump.
+- **Swarm Phase 2 and 3** (all behind the existing default-off swarm settings): coordinator leases and resource
+  reservations, shared world observations (walk to a far report, verify it, then act), crash-safe retries that check
+  the world first, chest and container leases, region-leased mining and tunnels, `#swarm` build from a schematic
+  across the roster, and automatic reports of veins, structures and nearby entities.
+- **Command center**: a read API and authenticated loopback command path, plus a standalone window
+  (`center-app/`). It has a war room map with bot markers and terrain, leases and observations, bot selection and
+  control groups, area orders, tile details and focus mode, core themes, and the layout remembered per user
+  (`docs/command-center.md`).
+- **Microsoft sign-in** for bot accounts uses Ostinato's own Azure app id
+  (`f941c94f-04b8-41d2-ba08-5a0318811df1`, personal accounts, device code). It can still be overridden with
+  `-Dostinato.azureClientId` or `azure-client-id.txt`. **This app id is waiting for Mojang's approval.** Until Mojang
+  approves it, sign-in gets through Microsoft and Xbox, then stops at the Minecraft step with "app ID awaiting
+  Mojang approval". Offline accounts and launcher token import still work (`docs/bot-accounts.md`).
+- `#stop` and `#cancel` release forced clicks even with no path segment. A process going idle no longer counts as
+  success.
+
+### New, experimental
+
+- **True headless bot** (`src/headless`, `gradlew runHeadlessBot -PbotArgs="<host> <port> <name> <seconds>"`): a
+  plain-JVM 26.3 protocol client with no Minecraft client JVM (about 330 to 385 MB per bot). It moves with PlayerSim,
+  plans with Ostinato's A*, and can goto, mine, place, bridge, pillar, fight, craft, smelt, use chests, pick up items
+  and equip armor. It sends only the packets vanilla `LocalPlayer` would send for the same inputs, and passed the
+  same Grim and NoCheatPlus course with 0 flags. It joins **offline-mode servers only** and runs from source, not
+  from the mod jar. Notes: `HEADLESS_BOT_NOTES.md`.
+- `-Dostinato.packetLog` and the Phase 0 fidelity sampler (`-Dostinato.phase0=<file>`), both flag-gated diagnostics.
+
+### Known limits
+
+- Microsoft sign-in needs Mojang's approval of the app id (see above).
+- The headless bot can't join online-mode servers yet.
+- Hidden or headless client modes and `#swarm spawn` are tested on Windows only.
+
 ## New in v1.28.0-beta.2
 
 Beta, 26.3 only. A small API follow-up to beta.1; no behaviour changes.

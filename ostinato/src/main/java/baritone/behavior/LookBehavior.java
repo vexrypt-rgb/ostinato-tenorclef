@@ -17,6 +17,8 @@
 
 package baritone.behavior;
 
+import net.minecraft.world.entity.player.Player;
+
 import baritone.utils.HumanInputCaps;
 import baritone.utils.OstinatoRandom;
 import baritone.utils.PhysicalInput;
@@ -68,7 +70,7 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
 
     @Override
     public void updateTarget(Rotation rotation, boolean blockInteract) {
-        if (Baritone.settings().humanLookEverywhere.value && !ctx.player().isFallFlying()) this.human = true;
+        if (Baritone.settings().humanLookEverywhere.value && !ctx.entity().isFallFlying()) this.human = true;
         // a humanized look is the player's own mouse: the camera turns, never a silent server-only rotation
         this.target = new Target(rotation, Target.Mode.CLIENT);
         this.traceTarget = rotation; // Ostinato
@@ -161,7 +163,7 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
             return physicalBuf;
         }
         float step = 0f;
-        if (ctx.player() != null && ctx.minecraft() != null) step = mouseStep();
+        if (ctx.entity() != null && ctx.minecraft() != null) step = mouseStep();
         return physical.emit(true, lookSerial, fromYaw, fromPitch, toYaw, toPitch, step);
     }
 
@@ -192,7 +194,7 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
     }
 
     /** Ostinato: from the current view, this tick's step toward the goal: 60% of the gap in whole mouse counts. */
-    private void planFrameStep(net.minecraft.client.player.LocalPlayer p) {
+    private void planFrameStep(net.minecraft.world.entity.player.Player p) {
         float cy = p.getYRot(), cp = p.getXRot();
         float dy = net.minecraft.util.Mth.wrapDegrees(frameGoal.getYaw() - cy), dp = frameGoal.getPitch() - cp;
         float step = mouseStep();
@@ -285,7 +287,7 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
             if (reactLeft > 0 && --reactLeft > 0) want = heldWant; // 3 ticks on the old point, then the new one
             else heldWant = want;
         }
-        float cy = ctx.player().getYRot(), cp = ctx.player().getXRot();
+        float cy = ctx.entity().getYRot(), cp = ctx.entity().getXRot();
         float dy = net.minecraft.util.Mth.wrapDegrees(want.getYaw() - cy), dp = want.getPitch() - cp;
         float wantY = Math.abs(dy) > 1.5f ? net.minecraft.util.Mth.clamp(dy * 0.6f, -HAND_MAX_YAW, HAND_MAX_YAW) : dy;
         float wantP = Math.abs(dp) > 1.5f ? net.minecraft.util.Mth.clamp(dp * 0.6f, -HAND_MAX_PITCH, HAND_MAX_PITCH) : dp;

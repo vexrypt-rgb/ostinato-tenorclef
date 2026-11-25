@@ -26,7 +26,7 @@ import baritone.api.pathing.movement.MovementStatus;
 import baritone.api.pathing.path.IPathExecutor;
 import baritone.api.utils.*;
 import baritone.api.utils.input.Input;
-import baritone.behavior.PathingBehavior;
+import baritone.pathing.IPathingHost;
 import baritone.pathing.CostCalibration;
 import baritone.pathing.calc.AbstractNodeCostSearch;
 import baritone.pathing.kinematic.BoatFallController;
@@ -89,7 +89,7 @@ public class PathExecutor implements IPathExecutor, Helper {
     private HashSet<BlockPos> toPlace = new HashSet<>();
     private HashSet<BlockPos> toWalkInto = new HashSet<>();
 
-    private final PathingBehavior behavior;
+    private final IPathingHost host;
     private final IPlayerContext ctx;
     private final KinematicController kinematic;
     private final FallController fall;
@@ -111,9 +111,9 @@ public class PathExecutor implements IPathExecutor, Helper {
 
     private boolean sprintNextTick;
 
-    public PathExecutor(PathingBehavior behavior, IPath path) {
-        this.behavior = behavior;
-        this.ctx = behavior.ctx;
+    public PathExecutor(IPathingHost host, IPath path) {
+        this.host = host;
+        this.ctx = host.getPlayerContext();
         this.kinematic = new KinematicController(ctx);
         this.fall = new FallController(ctx);
         this.swim = new SwimController(ctx);
@@ -136,9 +136,9 @@ public class PathExecutor implements IPathExecutor, Helper {
      * segment came in while a jump off a brewing stand was landing, and the new takeoff walked back to the run-up spot
      * off the chest it had just landed on (cubed level 1).
      */
-    private PathExecutor(PathingBehavior behavior, IPath path, PathExecutor from) {
-        this.behavior = behavior;
-        this.ctx = behavior.ctx;
+    private PathExecutor(IPathingHost host, IPath path, PathExecutor from) {
+        this.host = host;
+        this.ctx = host.getPlayerContext();
         this.kinematic = from.kinematic;
         this.fall = from.fall;
         this.swim = from.swim;
@@ -169,7 +169,7 @@ public class PathExecutor implements IPathExecutor, Helper {
      * 4: walls laid one block a tick along seven blocks of sprint-jumping).
      */
     public boolean pausableNow() {
-        return (lastDriver == Driver.KINEMATIC || lastDriver == Driver.PHYSICS || lastDriver == Driver.SIM) && ctx.player().onGround();
+        return (lastDriver == Driver.KINEMATIC || lastDriver == Driver.PHYSICS || lastDriver == Driver.SIM) && ctx.entity().onGround();
     }
 
     public boolean onTick() {
@@ -201,10 +201,12 @@ public class PathExecutor implements IPathExecutor, Helper {
      * jump, a pillar): the path is dead. Cancelling replans it, and the planner then sees there are no blocks.
      */
     private boolean outOfBlocks() {
-        if (!Baritone.settings().allowPlace.value || behavior.baritone.getInventoryBehavior().hasGenericThrowaway()) {
+        if (!Baritone.settings().allowPlace.value || host.hasGenericThrowaway()) {
             return false;
         }
-        BlockStateInterface bsi = new BlockStateInterface(ctx);
+        // Ostinato: the host's world view. The client's is its cache; a headless bot's is its decoded chunk store,
+        // and constructing the client's from a context with no Minecraft would throw.
+        BlockStateInterface bsi = host.bsi();
         for (int i = pathPosition; i < Math.min(path.length() - 1, pathPosition + 4); i++) {
             Movement m = (Movement) path.movements().get(i);
             m.resetBlockCache();
@@ -231,7 +233,7 @@ public class PathExecutor implements IPathExecutor, Helper {
             return false;
         }
         // Ostinato 2.0 Phase 06: null while unifiedExecutor is off. A pass closes the gate until physics opens it again.
-        UnifiedExecutor ux = Baritone.settings().unifiedExecutor.value ? behavior.baritone.getUnifiedExecutor() : null;
+        UnifiedExecutor ux = Baritone.settings().unifiedExecutor.value ? host.getUnifiedExecutor() : null;
         if (ux != null) {
             ux.beginPass();
         }
@@ -244,7 +246,7 @@ public class PathExecutor implements IPathExecutor, Helper {
                 Baritone.settings().simTravel.value);
         boolean skipLookAhead = false;
         if (takeoff.engaged()) {
-            driven = takeoff.tick(behavior.baritone, path, pathPosition);
+            driven = takeoff.tick(host, path, pathPosition);
             if (driven >= 0) {
                 lastDriver = Driver.EXTEND;
             }
@@ -258,7 +260,7 @@ public class PathExecutor implements IPathExecutor, Helper {
         }
         if (!skipLookAhead && driven < 0 && stack.contains(TravelStack.Layer.KINEMATIC)) {
             long t1 = System.nanoTime();
-            driven = kinematic.tick(behavior.baritone, path, pathPosition);
+            driven = kinematic.tick(host, path, pathPosition);
             baritone.utils.PlanStats.kinNs.addAndGet(System.nanoTime() - t1);
             if (driven >= 0) {
                 lastDriver = Driver.KINEMATIC;
@@ -269,7 +271,7 @@ public class PathExecutor implements IPathExecutor, Helper {
         }
         if (!skipLookAhead && driven < 0 && stack.contains(TravelStack.Layer.PHYSICS)) {
             long t0 = System.nanoTime();
-            driven = physics.tick(behavior.baritone, path, pathPosition, true);
+            driven = physics.tick(host, path, pathPosition, true);
             baritone.utils.PlanStats.physNs.addAndGet(System.nanoTime() - t0);
             if (driven >= 0) {
                 lastDriver = Driver.PHYSICS;
@@ -277,7 +279,7 @@ public class PathExecutor implements IPathExecutor, Helper {
         }
         if (!skipLookAhead && driven < 0 && stack.contains(TravelStack.Layer.SIM)) {
             long t0 = System.nanoTime();
-            driven = sim.tick(behavior.baritone, path, pathPosition);
+            driven = sim.tick(host, path, pathPosition);
             baritone.utils.PlanStats.simNs.addAndGet(System.nanoTime() - t0);
             if (driven >= 0) {
                 lastDriver = Driver.SIM;
@@ -300,7 +302,7 @@ public class PathExecutor implements IPathExecutor, Helper {
                 // moving, yet not along the path: none of the timeouts below run while a mover drives, so it steps aside.
                 // Only the look-ahead movers: the others (mining, a long fall) hold a position for as long as the work takes.
                 Baritone.settings().movementFault.value.accept("M01", lastDriver + " held " + movement.getClass().getSimpleName() + " " + movement.getSrc() + "->" + movement.getDest() + " for " + drivenOnCurrent + " ticks, handing back to Baritone");
-                PathViz.get().stuck(ctx.player().getX(), ctx.player().getY(), ctx.player().getZ(), "M01 " + lastDriver + " held a movement"); // Ostinato path viz
+                PathViz.get().stuck(ctx.entity().getX(), ctx.entity().getY(), ctx.entity().getZ(), "M01 " + lastDriver + " held a movement"); // Ostinato path viz
                 legatoFailed(movement);
                 drivenOnCurrent = 0;
                 driverRest = DRIVER_REST;
@@ -320,7 +322,7 @@ public class PathExecutor implements IPathExecutor, Helper {
             // 123 asked to stop and tower, and was carried nine blocks first. On its feet the kinematic driver is no
             // worse a place to stop than a Traverse. Ostinato 2.0 Phase 06: nor is physics on the tick it stopped, keys up and
             // on its feet, for a cancel it had refused twice.
-            return (lastDriver == Driver.KINEMATIC || lastDriver == Driver.SIM) && ctx.player().onGround()
+            return (lastDriver == Driver.KINEMATIC || lastDriver == Driver.SIM) && ctx.entity().onGround()
                     || lastDriver == Driver.PHYSICS && ux != null && ux.stoppedForCancel();
         }
         BetterBlockPos whereAmI = ctx.playerFeet();
@@ -373,7 +375,9 @@ public class PathExecutor implements IPathExecutor, Helper {
             return false;
         }
         //long start = System.nanoTime() / 1000000L;
-        BlockStateInterface bsi = new BlockStateInterface(ctx);
+        // Ostinato: the host's world view. The client's is its cache; a headless bot's is its decoded chunk store,
+        // and constructing the client's from a context with no Minecraft would throw.
+        BlockStateInterface bsi = host.bsi();
         for (int i = pathPosition - 10; i < pathPosition + 10; i++) {
             if (i < 0 || i >= path.movements().size()) {
                 continue;
@@ -414,7 +418,7 @@ public class PathExecutor implements IPathExecutor, Helper {
         }*/
         if (pathPosition < path.movements().size() - 1) {
             IMovement next = path.movements().get(pathPosition + 1);
-            if (!behavior.baritone.bsi.worldContainsLoadedChunk(next.getDest().x, next.getDest().z)) {
+            if (!host.bsi().worldContainsLoadedChunk(next.getDest().x, next.getDest().z)) {
                 logDebug("Pausing since destination is at edge of loaded chunks");
                 clearKeys();
                 return true;
@@ -427,8 +431,17 @@ public class PathExecutor implements IPathExecutor, Helper {
             currentMovementOriginalCostEstimate = movement.getCost();
             for (int i = 1; i < Baritone.settings().costVerificationLookahead.value && pathPosition + i < path.length() - 1; i++) {
                 Movement future = (Movement) path.movements().get(pathPosition + i);
-                if (future.calculateCost(behavior.secretInternalGetCalculationContext()) >= ActionCosts.COST_INF && canCancel) {
-                    logDebug("Something has changed in the world and a future movement has become impossible. Cancelling. " + future.getClass().getSimpleName() + " " + future.getSrc() + " -> " + future.getDest() + " srcState=" + ctx.world().getBlockState(future.getSrc()) + " destState=" + ctx.world().getBlockState(future.getDest()) + " destUp=" + ctx.world().getBlockState(future.getDest().above()) + " player=" + ctx.playerFeet());
+                if (future.calculateCost(host.secretInternalGetCalculationContext()) >= ActionCosts.COST_INF && canCancel) {
+                    // Ostinato: headless has no debug chat; print the silent cost-verification cancel.
+                    String why = "future COST_INF " + future.getClass().getSimpleName() + " " + future.getSrc() + " -> " + future.getDest()
+                            + " srcState=" + ctx.world().getBlockState(future.getSrc())
+                            + " destState=" + ctx.world().getBlockState(future.getDest())
+                            + " destUp=" + ctx.world().getBlockState(future.getDest().above())
+                            + " destBelow=" + ctx.world().getBlockState(future.getDest().below())
+                            + " srcBelow=" + ctx.world().getBlockState(future.getSrc().below())
+                            + " player=" + ctx.playerFeet();
+                    System.out.println("[PathExecutor] " + why);
+                    logDebug("Something has changed in the world and a future movement has become impossible. Cancelling. " + why);
                     // Ostinato: a stored route through it is replayed by the next search as is, and cancelled again, forever
                     baritone.pathing.RouteReuse.forget(future.getSrc(), future.getDest());
                     cancel();
@@ -436,8 +449,13 @@ public class PathExecutor implements IPathExecutor, Helper {
                 }
             }
         }
-        double currentCost = movement.recalculateCost(behavior.secretInternalGetCalculationContext());
+        double currentCost = movement.recalculateCost(host.secretInternalGetCalculationContext());
         if (currentCost >= ActionCosts.COST_INF && canCancel) {
+            System.out.println("[PathExecutor] current COST_INF " + movement.getClass().getSimpleName()
+                    + " " + movement.getSrc() + " -> " + movement.getDest()
+                    + " srcBelow=" + ctx.world().getBlockState(movement.getSrc().below())
+                    + " destBelow=" + ctx.world().getBlockState(movement.getDest().below())
+                    + " player=" + ctx.playerFeet() + " cost=" + currentCost);
             logDebug("Something has changed in the world and this movement has become impossible. Cancelling.");
             baritone.pathing.RouteReuse.forget(movement.getSrc(), movement.getDest());
             cancel();
@@ -446,6 +464,7 @@ public class PathExecutor implements IPathExecutor, Helper {
         if (!movement.calculatedWhileLoaded() && currentCost - currentMovementOriginalCostEstimate > Baritone.settings().maxCostIncrease.value && canCancel) {
             // don't do this if the movement was calculated while loaded
             // that means that this isn't a cache error, it's just part of the path interfering with a later part
+            System.out.println("[PathExecutor] maxCostIncrease orig=" + currentMovementOriginalCostEstimate + " current=" + currentCost);
             logDebug("Original cost " + currentMovementOriginalCostEstimate + " current cost " + currentCost + ". Cancelling.");
             cancel();
             return true;
@@ -460,13 +479,15 @@ public class PathExecutor implements IPathExecutor, Helper {
         if (movementStatus == RUNNING && FastMode.on()) {
             FastTravel.Steer steer = fastSteer();
             if (steer.aim) {
-                behavior.baritone.getLookBehavior().updateTarget(
-                        RotationUtils.calcRotationFromVec3d(ctx.playerHead(), new Vec3(steer.x, ctx.player().getY(), steer.z), ctx.playerRotations())
+                host.getLookBehavior().updateTarget(
+                        RotationUtils.calcRotationFromVec3d(ctx.playerHead(), new Vec3(steer.x, ctx.entity().getY(), steer.z), ctx.playerRotations())
                                 .withPitch(ctx.playerRotations().getPitch()),
                         false);
             }
         }
         if (movementStatus == UNREACHABLE || movementStatus == FAILED) {
+            System.out.println("[PathExecutor] movement status " + movementStatus + " " + movement.getClass().getSimpleName()
+                    + " " + movement.getSrc() + "->" + movement.getDest() + " player=" + ctx.playerFeet());
             logDebug("Movement returns status " + movementStatus);
             Baritone.settings().movementFault.value.accept("M04", movement.getClass().getSimpleName() + " " + movementStatus + " at " + ctx.playerFeet());
             baritone.pathing.RouteReuse.forget(movement.getSrc(), movement.getDest());
@@ -489,14 +510,22 @@ public class PathExecutor implements IPathExecutor, Helper {
             return true;
         } else {
             sprintNextTick = shouldSprintNextTick();
-            // Ostinato: sprint through the input key, never direct player state.
-            behavior.baritone.getInputOverrideHandler().setInputForceState(Input.SPRINT, sprintNextTick);
+            // Ostinato: on a client, sprint through the input key, never direct player state. A headless host has no
+            // keys; its driver carries a stopped sprint back to the PlayerSim (HeadlessLiveDriver).
+            if (ctx.localPlayer() != null) {
+                host.getInputOverrideHandler().setInputForceState(Input.SPRINT, sprintNextTick);
+            } else if (!sprintNextTick) {
+                ctx.entity().setSprinting(false); // letting go of control doesn't make you stop sprinting actually
+            }
             ticksOnCurrent++;
             if (ticksOnCurrent > currentMovementOriginalCostEstimate + Baritone.settings().movementTimeoutTicks.value) {
                 // only cancel if the total time has exceeded the initial estimate
                 // as you break the blocks required, the remaining cost goes down, to the point where
                 // ticksOnCurrent is greater than recalculateCost + 100
                 // this is why we cache cost at the beginning, and don't recalculate for this comparison every tick
+                System.out.println("[PathExecutor] movement timeout ticksOnCurrent=" + ticksOnCurrent
+                        + " est=" + currentMovementOriginalCostEstimate + " " + movement.getClass().getSimpleName()
+                        + " " + movement.getSrc() + "->" + movement.getDest() + " player=" + ctx.entity().position());
                 logDebug("This movement has taken too long (" + ticksOnCurrent + " ticks, expected " + currentMovementOriginalCostEstimate + ") " + movement.getClass().getSimpleName() + " " + movement.getSrc() + "->" + movement.getDest() + ". Cancelling.");
                 Baritone.settings().movementFault.value.accept("M03", movement.getClass().getSimpleName() + " " + movement.getSrc() + "->" + movement.getDest() + " took " + ticksOnCurrent + " ticks");
                 legatoFailed(movement);
@@ -520,7 +549,7 @@ public class PathExecutor implements IPathExecutor, Helper {
         BlockPos bestPos = null;
         for (IMovement movement : path.movements()) {
             for (BlockPos pos : ((Movement) movement).getValidPositions()) {
-                double dist = VecUtils.entityDistanceToCenter(ctx.player(), pos);
+                double dist = VecUtils.entityDistanceToCenter(ctx.entity(), pos);
                 if (dist < best || best == -1) {
                     best = dist;
                     bestPos = pos;
@@ -531,11 +560,11 @@ public class PathExecutor implements IPathExecutor, Helper {
     }
 
     private boolean shouldPause() {
-        Optional<AbstractNodeCostSearch> current = behavior.getInProgress();
+        Optional<AbstractNodeCostSearch> current = host.getInProgress();
         if (!current.isPresent()) {
             return false;
         }
-        if (!ctx.player().onGround()) {
+        if (!ctx.entity().onGround()) {
             return false;
         }
         if (!MovementHelper.canWalkOn(ctx, ctx.playerFeet().below())) {
@@ -569,7 +598,7 @@ public class PathExecutor implements IPathExecutor, Helper {
             // when we're midair in the middle of a fall, we're very far from both the beginning and the end, but we aren't actually off path
             if (path.movements().get(pathPosition) instanceof MovementFall) {
                 BlockPos fallDest = path.positions().get(pathPosition + 1); // .get(pathPosition) is the block we fell off of
-                return VecUtils.entityFlatDistanceToCenter(ctx.player(), fallDest) >= leniency; // ignore Y by using flat distance
+                return VecUtils.entityFlatDistanceToCenter(ctx.entity(), fallDest) >= leniency; // ignore Y by using flat distance
             } else {
                 return true;
             }
@@ -584,12 +613,12 @@ public class PathExecutor implements IPathExecutor, Helper {
      * @return Whether or not it was possible to snap to the current player feet
      */
     public boolean snipsnapifpossible() {
-        if (!ctx.player().onGround() && ctx.world().getFluidState(ctx.playerFeet()).isEmpty()) {
+        if (!ctx.entity().onGround() && ctx.world().getFluidState(ctx.playerFeet()).isEmpty()) {
             // if we're falling in the air, and not in water, don't splice
             return false;
         } else {
             // we are either onGround or in liquid
-            if (ctx.player().getDeltaMovement().y < -0.1) {
+            if (ctx.entity().getDeltaMovement().y < -0.1) {
                 // if we are strictly moving downwards (not stationary)
                 // we could be falling through water, which could be unsafe to splice
                 return false; // so don't
@@ -606,14 +635,14 @@ public class PathExecutor implements IPathExecutor, Helper {
 
     private boolean shouldSprintNextTick() {
         // Ostinato: no sprint on or immediately above a ladder/vine.
-        if (ctx.player().onClimbable() || ctx.world().getBlockState(ctx.playerFeet().below()).is(net.minecraft.tags.BlockTags.CLIMBABLE)) return false;
-        boolean requested = behavior.baritone.getInputOverrideHandler().isInputForcedDown(Input.SPRINT);
+        if (ctx.entity().onClimbable() || ctx.world().getBlockState(ctx.playerFeet().below()).is(net.minecraft.tags.BlockTags.CLIMBABLE)) return false;
+        boolean requested = host.getInputOverrideHandler().isInputForcedDown(Input.SPRINT);
 
         // we'll take it from here, no need for minecraft to see we're holding down control and sprint for us
-        behavior.baritone.getInputOverrideHandler().setInputForceState(Input.SPRINT, false);
+        host.getInputOverrideHandler().setInputForceState(Input.SPRINT, false);
 
         // first and foremost, if allowSprint is off, or if we don't have enough hunger, don't try and sprint
-        if (!new CalculationContext(behavior.baritone, false).canSprint) {
+        if (!CalculationContext.of(host).canSprint) {
             return false;
         }
         IMovement current = path.movements().get(pathPosition);
@@ -627,7 +656,7 @@ public class PathExecutor implements IPathExecutor, Helper {
                     pathPosition++;
                     onChangeInPathPosition();
                     onTick();
-                    behavior.baritone.getInputOverrideHandler().setInputForceState(Input.JUMP, true);
+                    host.getInputOverrideHandler().setInputForceState(Input.JUMP, true);
                     return true;
                 } else {
                     logDebug("Too far to the side to safely sprint ascend");
@@ -638,7 +667,7 @@ public class PathExecutor implements IPathExecutor, Helper {
         // if the movement requested sprinting, then we're done
         if (requested) {
             if (shouldSprintJump(current)) {
-                behavior.baritone.getInputOverrideHandler().setInputForceState(Input.JUMP, true);
+                host.getInputOverrideHandler().setInputForceState(Input.JUMP, true);
             }
             return true;
         }
@@ -653,7 +682,7 @@ public class PathExecutor implements IPathExecutor, Helper {
                     // frostwalker only works if you cross the edge of the block on ground so in some cases we may not overshoot
                     // Since MovementDescend can't know the next movement we have to tell it
                     if (next instanceof MovementTraverse || next instanceof MovementParkour) {
-                        boolean couldPlaceInstead = Baritone.settings().allowPlace.value && behavior.baritone.getInventoryBehavior().hasGenericThrowaway() && next instanceof MovementParkour; // traverse doesn't react fast enough
+                        boolean couldPlaceInstead = Baritone.settings().allowPlace.value && host.hasGenericThrowaway() && next instanceof MovementParkour; // traverse doesn't react fast enough
                         // this is true if the next movement does not ascend or descends and goes into the same cardinal direction (N-NE-E-SE-S-SW-W-NW) as the descend
                         // in that case current.getDirection() is e.g. (0, -1, 1) and next.getDirection() is e.g. (0, 0, 3) so the cross product of (0, 0, 1) and (0, 0, 3) is taken, which is (0, 0, 0) because the vectors are colinear (don't form a plane)
                         // since movements in exactly the opposite direction (e.g. descend (0, -1, 1) and traverse (0, 0, -1)) would also pass this check we also have to rule out that case
@@ -709,8 +738,8 @@ public class PathExecutor implements IPathExecutor, Helper {
                 // playerFeet adds 0.1251 to account for soul sand
                 // farmland is 0.9375
                 // 0.07 is to account for farmland
-                if (ctx.player().position().y >= center.getY() - 0.07) {
-                    behavior.baritone.getInputOverrideHandler().setInputForceState(Input.JUMP, false);
+                if (ctx.entity().position().y >= center.getY() - 0.07) {
+                    host.getInputOverrideHandler().setInputForceState(Input.JUMP, false);
                     return true;
                 }
             }
@@ -734,8 +763,8 @@ public class PathExecutor implements IPathExecutor, Helper {
                     return true;
                 }
                 clearKeys();
-                behavior.baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(ctx.playerHead(), data.first(), ctx.playerRotations()), false);
-                behavior.baritone.getInputOverrideHandler().setInputForceState(Input.MOVE_FORWARD, true);
+                host.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(ctx.playerHead(), data.first(), ctx.playerRotations()), false);
+                host.getInputOverrideHandler().setInputForceState(Input.MOVE_FORWARD, true);
                 return true;
             }
         }
@@ -751,7 +780,7 @@ public class PathExecutor implements IPathExecutor, Helper {
      * setting is on, so the search and the default executor do no extra work.
      */
     private FastTravel.Steer fastSteer() {
-        if (pathPosition >= path.movements().size() - 1 || !ctx.player().onGround() || ctx.player().isShiftKeyDown()) {
+        if (pathPosition >= path.movements().size() - 1 || !ctx.entity().onGround() || ctx.entity().isShiftKeyDown()) {
             return FastTravel.Steer.NONE;
         }
         IMovement current = path.movements().get(pathPosition);
@@ -769,7 +798,7 @@ public class PathExecutor implements IPathExecutor, Helper {
         boolean busy = placesOrBreaks(current) || placesOrBreaks(next);
         BetterBlockPos corner = current.getDest();
         boolean lava = lavaNear(corner) || lavaNear(next.getDest());
-        boolean safe = FastTravel.sprintCutAllowed(ctx.player().getHealth(), nether, lava, busy);
+        boolean safe = FastTravel.sprintCutAllowed(ctx.entity().getHealth(), nether, lava, busy);
         int dx1 = current.getDirection().getX();
         int dz1 = current.getDirection().getZ();
         int run = 1;
@@ -802,7 +831,9 @@ public class PathExecutor implements IPathExecutor, Helper {
         if (mv.toPlaceCached != null && mv.toBreakCached != null) {
             return !mv.toPlaceCached.isEmpty() || !mv.toBreakCached.isEmpty();
         }
-        BlockStateInterface bsi = new BlockStateInterface(ctx);
+        // Ostinato: the host's world view. The client's is its cache; a headless bot's is its decoded chunk store,
+        // and constructing the client's from a context with no Minecraft would throw.
+        BlockStateInterface bsi = host.bsi();
         return !mv.toPlace(bsi).isEmpty() || !mv.toBreak(bsi).isEmpty();
     }
 
@@ -844,10 +875,10 @@ public class PathExecutor implements IPathExecutor, Helper {
         if (!FastMode.sprintJump() || !(current instanceof MovementTraverse || current instanceof MovementDiagonal)) {
             return false;
         }
-        if (!ctx.player().onGround() || ctx.player().isInWater() || ctx.player().isInLava() || ctx.player().isShiftKeyDown()) {
+        if (!ctx.entity().onGround() || ctx.entity().isInWater() || ctx.entity().isInLava() || ctx.entity().isShiftKeyDown()) {
             return false;
         }
-        Vec3 motion = ctx.player().getDeltaMovement();
+        Vec3 motion = ctx.entity().getDeltaMovement();
         if (motion.x * motion.x + motion.z * motion.z < 0.2 * 0.2) {
             return false; // accelerate first; jumping from a standstill is slower than walking
         }
@@ -855,7 +886,9 @@ public class PathExecutor implements IPathExecutor, Helper {
         if (dir.getY() != 0) {
             return false;
         }
-        BlockStateInterface bsi = new BlockStateInterface(ctx);
+        // Ostinato: the host's world view. The client's is its cache; a headless bot's is its decoded chunk store,
+        // and constructing the client's from a context with no Minecraft would throw.
+        BlockStateInterface bsi = host.bsi();
         int needed = current instanceof MovementDiagonal ? 3 : 4;
         for (int i = pathPosition; i <= pathPosition + needed; i++) {
             if (i >= path.length() - 1) {
@@ -880,7 +913,7 @@ public class PathExecutor implements IPathExecutor, Helper {
             return false;
         }
         // Stay on the line: veering sideways at 0.4 blocks/tick would clip a corner.
-        Vec3 pos = ctx.player().position();
+        Vec3 pos = ctx.entity().position();
         double lx = pos.x - (src.x + 0.5), lz = pos.z - (src.z + 0.5);
         double side = Math.abs(lx * dir.getZ() - lz * dir.getX()) / Math.sqrt(dir.getX() * dir.getX() + dir.getZ() * dir.getZ());
         return side < 0.25;
@@ -926,7 +959,7 @@ public class PathExecutor implements IPathExecutor, Helper {
     }
 
     private static boolean skipNow(IPlayerContext ctx, IMovement current) {
-        double offTarget = Math.abs(current.getDirection().getX() * (current.getSrc().z + 0.5D - ctx.player().position().z)) + Math.abs(current.getDirection().getZ() * (current.getSrc().x + 0.5D - ctx.player().position().x));
+        double offTarget = Math.abs(current.getDirection().getX() * (current.getSrc().z + 0.5D - ctx.entity().position().z)) + Math.abs(current.getDirection().getZ() * (current.getSrc().x + 0.5D - ctx.entity().position().x));
         if (offTarget > 0.1) {
             return false;
         }
@@ -936,7 +969,7 @@ public class PathExecutor implements IPathExecutor, Helper {
             return true;
         }
         // wait 0.3
-        double flatDist = Math.abs(current.getDirection().getX() * (headBonk.getX() + 0.5D - ctx.player().position().x)) + Math.abs(current.getDirection().getZ() * (headBonk.getZ() + 0.5 - ctx.player().position().z));
+        double flatDist = Math.abs(current.getDirection().getX() * (headBonk.getX() + 0.5D - ctx.entity().position().x)) + Math.abs(current.getDirection().getZ() * (headBonk.getZ() + 0.5 - ctx.entity().position().z));
         return flatDist > 0.8;
     }
 
@@ -1014,7 +1047,7 @@ public class PathExecutor implements IPathExecutor, Helper {
         }
         IMovement m = path.movements().get(Math.min(watchBest, path.movements().size() - 1));
         baritone.api.utils.BetterBlockPos d = m.getDest();
-        double dist = ctx.player().position().distanceTo(new Vec3(d.x + 0.5, d.y, d.z + 0.5));
+        double dist = ctx.entity().position().distanceTo(new Vec3(d.x + 0.5, d.y, d.z + 0.5));
         if (dist < watchDist - 0.5) {
             watchDist = dist;
             watchTicks = 0;
@@ -1036,7 +1069,7 @@ public class PathExecutor implements IPathExecutor, Helper {
             }
         }
         String ev = "no path progress for " + watchTicks + " ticks at " + ctx.playerFeet() + " driver=" + lastDriver + " pos=" + pathPosition + "/best=" + watchBest
-                + " move=" + m.getClass().getSimpleName() + " " + m.getSrc() + "->" + m.getDest() + " inWater=" + ctx.player().isInWater();
+                + " move=" + m.getClass().getSimpleName() + " " + m.getSrc() + "->" + m.getDest() + " inWater=" + ctx.entity().isInWater();
         System.out.println("PATH no-progress watchdog: " + ev + ", cancelling for replan");
         Baritone.settings().movementFault.value.accept("M05", ev);
         logDebug("PATH no-progress watchdog: " + ev);
@@ -1050,14 +1083,25 @@ public class PathExecutor implements IPathExecutor, Helper {
 
     private void clearKeys() {
         // i'm just sick and tired of this snippet being everywhere lol
-        behavior.baritone.getInputOverrideHandler().clearAllKeys();
+        host.getInputOverrideHandler().clearAllKeys();
     }
 
+    // Ostinato: headless has no debug chat. Print why a path died so a live sneak-bridge
+    // can be diagnosed instead of just "execution failed".
     private void cancel() {
+        if (!failed) {
+            IMovement m = pathPosition < path.movements().size() ? path.movements().get(pathPosition) : null;
+            System.out.println("[PathExecutor] cancel feet=" + ctx.playerFeet()
+                    + " pos=" + ctx.entity().position()
+                    + " pathPos=" + pathPosition + "/" + path.length()
+                    + " ticksOnCurrent=" + ticksOnCurrent
+                    + " est=" + currentMovementOriginalCostEstimate
+                    + " move=" + (m == null ? "end" : m.getClass().getSimpleName() + " " + m.getSrc() + "->" + m.getDest()));
+        }
         clearKeys();
-        behavior.baritone.getInputOverrideHandler().getBlockBreakHelper().stopBreakingBlock();
+        host.blockBreakHelper().stopBreakingBlock();
         if (Baritone.settings().unifiedExecutor.value) {
-            behavior.baritone.getUnifiedExecutor().fail(UnifiedExecutor.Cause.EXECUTOR_CANCEL); // Ostinato 2.0 Phase 06
+            host.getUnifiedExecutor().fail(UnifiedExecutor.Cause.EXECUTOR_CANCEL); // Ostinato 2.0 Phase 06
         }
         releaseInputLeases();
         pathPosition = path.length() + 3;
@@ -1066,9 +1110,9 @@ public class PathExecutor implements IPathExecutor, Helper {
 
     /** Ostinato: give back any input lease this executor's controllers hold. No-op with inputArbitration and unifiedExecutor off. */
     public void releaseInputLeases() {
-        fall.release(behavior.baritone);
+        fall.release(host);
         if (Baritone.settings().unifiedExecutor.value) {
-            behavior.baritone.getUnifiedExecutor().cancelConfirmed(UnifiedExecutor.Cause.SEGMENT_CANCEL); // Ostinato 2.0 Phase 06
+            host.getUnifiedExecutor().cancelConfirmed(UnifiedExecutor.Cause.SEGMENT_CANCEL); // Ostinato 2.0 Phase 06
         }
     }
 
@@ -1087,7 +1131,7 @@ public class PathExecutor implements IPathExecutor, Helper {
                         "Path has end %s instead of %s after splicing",
                         path.getDest(), next.getPath().getDest()));
             }
-            PathExecutor ret = new PathExecutor(behavior, path, this);
+            PathExecutor ret = new PathExecutor(host, path, this);
             ret.pathPosition = pathPosition;
             ret.currentMovementOriginalCostEstimate = currentMovementOriginalCostEstimate;
             ret.costEstimateIndex = costEstimateIndex;
@@ -1106,7 +1150,7 @@ public class PathExecutor implements IPathExecutor, Helper {
                         newPath.getDest(), path.getDest()));
             }
             logDebug("Discarding earliest segment movements, length cut from " + path.length() + " to " + newPath.length());
-            PathExecutor ret = new PathExecutor(behavior, newPath);
+            PathExecutor ret = new PathExecutor(host, newPath);
             ret.pathPosition = pathPosition - cutoffAmt;
             ret.currentMovementOriginalCostEstimate = currentMovementOriginalCostEstimate;
             if (costEstimateIndex != null) {
@@ -1152,7 +1196,7 @@ public class PathExecutor implements IPathExecutor, Helper {
             vizAir = false;
             return;
         }
-        Vec3 p = ctx.player().position();
+        Vec3 p = ctx.entity().position();
         boolean travel = travelDriving();
         if (vizTravel && !travel) {
             viz.handback(p.x, p.y, p.z, "to " + lastDriver + " at " + movement.getClass().getSimpleName());
@@ -1162,9 +1206,9 @@ public class PathExecutor implements IPathExecutor, Helper {
             vizAir = false;
             return;
         }
-        boolean ground = ctx.player().onGround(), climb = ctx.player().onClimbable();
+        boolean ground = ctx.entity().onGround(), climb = ctx.entity().onClimbable();
         if (!vizAir) {
-            if (!ground && !climb && ctx.player().getDeltaMovement().y > 0.2) {
+            if (!ground && !climb && ctx.entity().getDeltaMovement().y > 0.2) {
                 vizAir = true;
                 String label = travel ? lastDriver.name().toLowerCase(Locale.ROOT) + " hop" : movement.getClass().getSimpleName();
                 viz.jumpTakeoff(this, PathViz.JUMP, label, p.x, p.y, p.z);
@@ -1186,47 +1230,47 @@ public class PathExecutor implements IPathExecutor, Helper {
      * covers the spots the walk look-ahead does not, so they stay in that layer rather than a fourth stack.
      */
     private int kinematicFamily() {
-        int driven = fall.tick(behavior.baritone, path, pathPosition);
+        int driven = fall.tick(host, path, pathPosition);
         if (driven >= 0) {
             lastDriver = Driver.FALL;
             return driven;
         }
-        driven = swim.tick(behavior.baritone, path, pathPosition);
+        driven = swim.tick(host, path, pathPosition);
         if (driven >= 0) {
             lastDriver = Driver.SWIM;
             return driven;
         }
-        driven = clutch.tick(behavior.baritone, path, pathPosition);
+        driven = clutch.tick(host, path, pathPosition);
         if (driven >= 0) {
             lastDriver = Driver.CLUTCH;
             return driven;
         }
-        driven = ladder.tick(behavior.baritone, path, pathPosition);
+        driven = ladder.tick(host, path, pathPosition);
         if (driven >= 0) {
             lastDriver = Driver.LADDER;
             return driven;
         }
-        driven = mine.tick(behavior.baritone, path, pathPosition);
+        driven = mine.tick(host, path, pathPosition);
         if (driven >= 0) {
             lastDriver = Driver.MINE;
             return driven;
         }
-        driven = pillar.tick(behavior.baritone, path, pathPosition);
+        driven = pillar.tick(host, path, pathPosition);
         if (driven >= 0) {
             lastDriver = Driver.PILLAR;
             return driven;
         }
-        driven = extension.tick(behavior.baritone, path, pathPosition);
+        driven = extension.tick(host, path, pathPosition);
         if (driven >= 0) {
             lastDriver = Driver.EXTEND;
             return driven;
         }
-        driven = takeoff.tick(behavior.baritone, path, pathPosition);
+        driven = takeoff.tick(host, path, pathPosition);
         if (driven >= 0) {
             lastDriver = Driver.EXTEND;
             return driven;
         }
-        driven = boatFall.tick(behavior.baritone, path, pathPosition);
+        driven = boatFall.tick(host, path, pathPosition);
         if (driven >= 0) {
             lastDriver = Driver.BOAT;
             return driven;

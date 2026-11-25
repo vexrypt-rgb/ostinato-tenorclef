@@ -735,9 +735,9 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
     public BetterBlockPos pathStart() { // TODO move to a helper or util class
         BetterBlockPos feet = ctx.playerFeet();
         if (!MovementHelper.canWalkOn(ctx, feet.below())) {
-            if (ctx.player().onGround()) {
-                double playerX = ctx.player().position().x;
-                double playerZ = ctx.player().position().z;
+            if (ctx.entity().onGround()) {
+                double playerX = ctx.entity().position().x;
+                double playerZ = ctx.entity().position().z;
                 ArrayList<BetterBlockPos> closest = new ArrayList<>();
                 for (int dx = -1; dx <= 1; dx++) {
                     for (int dz = -1; dz <= 1; dz++) {
@@ -840,7 +840,7 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
 
             PathCalculationResult calcResult = pathfinder.calculate(primary, failure);
             synchronized (pathPlanLock) {
-                Optional<PathExecutor> executor = calcResult.getPath().map(p -> new PathExecutor(PathingBehavior.this, p));
+                Optional<PathExecutor> executor = calcResult.getPath().map(p -> new PathExecutor(baritone, p));
                 // An over-long route is not walked: from here on it is a calculation that found nothing.
                 int cap = Baritone.settings().maxPathLengthBlocks.value;
                 if (cap > 0 && executor.isPresent() && executor.get().getPath().length() > cap) {
@@ -983,7 +983,7 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
 
     /** Ostinato 2.0 Phase 05: the player's body now, as the sim-edge search's start state. */
     public SimEdge.Body playerBody() {
-        var p = ctx.player();
+        var p = ctx.entity();
         var v = p.getDeltaMovement();
         SimEdge.Body b = new SimEdge.Body();
         b.known = true;
@@ -1027,7 +1027,7 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
         }
         if (Baritone.settings().simEdgeSearch.value) { // Ostinato 2.0 Phase 05: opt-in simulated-edge planner (falls back to A* itself)
             SimEdgePathFinder sim = new SimEdgePathFinder(realStart, start.getX(), start.getY(), start.getZ(), transformed, favoring, context, weight);
-            if (feet.equals(start) && ctx.player() != null) {
+            if (feet.equals(start) && ctx.entity() != null) {
                 sim.startBody(playerBody());
             }
             synchronized (dead) {

@@ -1,6 +1,8 @@
 package baritone.pathing.kinematic;
 import baritone.utils.player.ControlInput; // Ostinato: controls-only action mailbox
 
+import baritone.pathing.IPathingHost;
+
 import baritone.Baritone;
 import baritone.api.pathing.calc.IPath;
 import baritone.api.utils.BetterBlockPos;
@@ -45,7 +47,7 @@ public final class FallController {
     }
 
     /** @return the path position to continue from if the controller drove this tick, or -1 to let the next driver run */
-    public int tick(Baritone baritone, IPath path, int pathPosition) {
+    public int tick(IPathingHost baritone, IPath path, int pathPosition) {
         // Ostinato: off, the body below is the previous direct key write. It does not take a lease.
         if (!Baritone.settings().inputArbitration.value) {
             int r = drive(baritone, path, pathPosition);
@@ -72,8 +74,8 @@ public final class FallController {
         }
     }
 
-    private int drive(Baritone baritone, IPath path, int pathPosition) {
-        Player player = ctx.player();
+    private int drive(IPathingHost baritone, IPath path, int pathPosition) {
+        Player player = ctx.entity();
         if (!Baritone.settings().slowKinematic.value || player.isInLava() || player.isFallFlying() || player.isPassenger()
                 || player.getAbilities().flying || pathPosition >= path.movements().size()) {
             placedWater = false;
@@ -114,7 +116,7 @@ public final class FallController {
         if (drop < 2) {
             return -1;
         }
-        CalculationContext cc = new CalculationContext(baritone);
+        CalculationContext cc = CalculationContext.of(baritone);
         boolean destWater = MovementHelper.isWater(ctx.world().getBlockState(dest));
         boolean bucket = drop > cc.maxFallHeightNoWater && !destWater;
         if (bucket && !(cc.hasWaterBucket && drop <= cc.maxFallHeightBucket + 1)) {
@@ -214,7 +216,7 @@ public final class FallController {
      *
      * @return false only when the flag is on and this controller did not get the chord
      */
-    private boolean press(Baritone baritone, boolean forward, boolean back, boolean left, boolean right,
+    private boolean press(IPathingHost baritone, boolean forward, boolean back, boolean left, boolean right,
                           boolean sneak, boolean jump, boolean clickRight) {
         if (!Baritone.settings().inputArbitration.value) {
             var in = baritone.getInputOverrideHandler();
@@ -258,7 +260,7 @@ public final class FallController {
      * discarded. Without it the lease outlives the executor in the per-Baritone arbiter.
      * No-op when no lease is held, which is always the case with the flag off.
      */
-    public void release(Baritone baritone) {
+    public void release(IPathingHost baritone) {
         if (lease != null) {
             ticks = 0;
             endLease(baritone, false);
@@ -266,7 +268,7 @@ public final class FallController {
     }
 
     /** Release a lease taken while the flag was on. A tick that never wrote leaves the keyboard alone. */
-    private void endLease(Baritone baritone, boolean failed) {
+    private void endLease(IPathingHost baritone, boolean failed) {
         Map<Input, Boolean> frame = FallInput.end(baritone.getInputArbiter(), lease, failed);
         lease = null;
         heldEpoch = 0;
@@ -276,7 +278,7 @@ public final class FallController {
         wrote = false;
     }
 
-    private static void writeApplied(Baritone baritone, Map<Input, Boolean> frame) {
+    private static void writeApplied(IPathingHost baritone, Map<Input, Boolean> frame) {
         var in = baritone.getInputOverrideHandler();
         in.clearAllKeys();
         for (Map.Entry<Input, Boolean> entry : frame.entrySet()) {

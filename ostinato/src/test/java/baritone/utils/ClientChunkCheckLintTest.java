@@ -68,6 +68,10 @@ public class ClientChunkCheckLintTest {
                 "plan points: matters only past render distance; chestsExhausted also needs the bot within 40 blocks; needs a bastion live run");
         AUDITED.put("baritone/scherzo/Scherzo.java|!level.hasChunkAt(p)) return Double.NaN",
                 "opponent ground: an unloaded column reads as air and also ends in NaN, the same result");
+        AUDITED.put("baritone/utils/BlockStateInterface.java|return world != null && world.hasChunk(blockX >> 4, blockZ >> 4);",
+                "headless branch only (ctx.minecraft() == null): world is the bot's HeadlessLevel, never a ClientLevel; its hasChunk asks the protocol chunk store");
+        AUDITED.put("baritone/utils/BlockStateInterface.java|return world != null && world.hasChunk(x >> 4, z >> 4);",
+                "headless branch only (ctx.minecraft() == null): same as above");
         AUDITED.put("baritone/structure/PkTest.java|!lv.hasChunk(x >> 4, z >> 4)",
                 "test harness plate scan: unloaded reads as air, so no plates, the same as skipping");
     }

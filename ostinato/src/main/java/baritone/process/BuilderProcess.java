@@ -589,7 +589,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
                         // Ostinato: run116 long_hall stood 19 min aiming at blocks 2 away: the click only fired on-ground/safe-to-cancel
                         // and the ray hit a different block. Retarget to whatever the ray hits (it is in the way) and force the swing.
                         BetterBlockPos aimPos = best;
-                        HitResult hit = RayTraceUtils.rayTraceTowards(ctx.player(), aimRot, reach, false);
+                        HitResult hit = RayTraceUtils.rayTraceTowards(ctx.entity(), aimRot, reach, false);
                         if (hit instanceof BlockHitResult bhr && hit.getType() == HitResult.Type.BLOCK) {
                             BetterBlockPos hp = new BetterBlockPos(bhr.getBlockPos());
                             Block hb = bcc.bsi.get0(hp.x, hp.y, hp.z).getBlock();
@@ -677,7 +677,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
 
     /** Ticks to keep a stall swing going, from the best hotbar tool. Long enough that a bare hand finishes stone. */
     private int breakBudget(BlockState st) {
-        double perTick = st == null ? 0 : new ToolSet(ctx.player()).getStrVsBlock(st);
+        double perTick = st == null ? 0 : new ToolSet(ctx.entity()).getStrVsBlock(st);
         return DigStallMath.budgetTicks(perTick);
     }
 
@@ -952,9 +952,9 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
                 double placeX = placeAgainstPos.x + aabb.minX * placementMultiplier.x + aabb.maxX * (1 - placementMultiplier.x);
                 double placeY = placeAgainstPos.y + aabb.minY * placementMultiplier.y + aabb.maxY * (1 - placementMultiplier.y);
                 double placeZ = placeAgainstPos.z + aabb.minZ * placementMultiplier.z + aabb.maxZ * (1 - placementMultiplier.z);
-                Rotation rot = RotationUtils.calcRotationFromVec3d(RayTraceUtils.inferSneakingEyePosition(ctx.player()), new Vec3(placeX, placeY, placeZ), ctx.playerRotations());
+                Rotation rot = RotationUtils.calcRotationFromVec3d(RayTraceUtils.inferSneakingEyePosition(ctx.entity()), new Vec3(placeX, placeY, placeZ), ctx.playerRotations());
                 Rotation actualRot = baritone.getLookBehavior().getAimProcessor().peekAim(rot); // Ostinato: uncapped settle (IAimProcessor.peekAim)
-                HitResult result = RayTraceUtils.rayTraceTowards(ctx.player(), actualRot, ctx.playerController().getBlockReachDistance(), true);
+                HitResult result = RayTraceUtils.rayTraceTowards(ctx.entity(), actualRot, ctx.playerController().getBlockReachDistance(), true);
                 if (result != null && result.getType() == HitResult.Type.BLOCK && ((BlockHitResult) result).getBlockPos().equals(placeAgainstPos) && ((BlockHitResult) result).getDirection() == against.getOpposite()) {
                     OptionalInt hotbar = hasAnyItemThatWouldPlace(toPlace, result, actualRot);
                     if (hotbar.isPresent()) {
@@ -981,12 +981,12 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
     }
     private OptionalInt hasAnyItemThatWouldPlace(BlockState desired, HitResult result, Rotation rot) {
         for (int i = 0; i < 9; i++) {
-            ItemStack stack = ctx.player().getInventory().getNonEquipmentItems().get(i);
+            ItemStack stack = ctx.entity().getInventory().getNonEquipmentItems().get(i);
             if (stack.isEmpty() || !(stack.getItem() instanceof BlockItem)) {
                 continue;
             }
-            float originalYaw = ctx.player().getYRot();
-            float originalPitch = ctx.player().getXRot();
+            float originalYaw = ctx.entity().getYRot();
+            float originalPitch = ctx.entity().getXRot();
             // the state depends on the facing of the player sometimes
             // Ostinato: placement prediction must not mutate the live player.
             if (Math.abs(net.minecraft.util.Mth.wrapDegrees(rot.getYaw() - originalYaw)) > 1
@@ -996,7 +996,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
             }
             BlockPlaceContext meme = new BlockPlaceContext(new UseOnContext(
                     ctx.world(),
-                    ctx.player(),
+                    ctx.entity(),
                     InteractionHand.MAIN_HAND,
                     stack,
                     (BlockHitResult) result
@@ -1166,7 +1166,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         if (approach != null) return approach;
         Optional<Pair<BetterBlockPos, Rotation>> toBreak = toBreakNearPlayerWithStall(bcc);
         // Shafting is the crawl under the room: the stuck path is why we are here, so drop it and swing even if not onGround.
-        if (toBreak.isPresent() && (shafting || (isSafeToCancel && ctx.player().onGround()))) {
+        if (toBreak.isPresent() && (shafting || (isSafeToCancel && ctx.entity().onGround()))) {
             if (shafting) {
                 baritone.getPathingBehavior().secretInternalSegmentCancel();
             }
@@ -1176,7 +1176,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
             BetterBlockPos pos = toBreak.get().first();
             baritone.getLookBehavior().updateTarget(rot, true);
             MovementHelper.switchToBestToolFor(ctx, bcc.get(pos));
-            if (ctx.player().isCrouching()) {
+            if (ctx.entity().isCrouching()) {
                 // really horrible bug where a block is visible for breaking while sneaking but not otherwise
                 // so you can't see it, it goes to place something else, sneaks, then the next tick it tries to break
                 // and is unable since it's unsneaked in the intermediary tick
@@ -1206,12 +1206,12 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
             lastPlaceYawErr = Math.abs(net.minecraft.util.Mth.wrapDegrees(want.getYaw() - have.getYaw()));
             lastPlacePitchErr = Math.abs(want.getPitch() - have.getPitch());
             lastPlacePhase = PlacePhase.BLOCKED; // until the branch below takes it
-            lastPlaceBlocked = (isSafeToCancel ? 0 : 1) | (ctx.player().onGround() ? 0 : 2) | (ticks <= 0 ? 0 : 4)
+            lastPlaceBlocked = (isSafeToCancel ? 0 : 1) | (ctx.entity().onGround() ? 0 : 2) | (ticks <= 0 ? 0 : 4)
                     | (AltoClefSettings.getInstance().isInteractionPaused() ? 8 : 0);
         } else {
             lastPlacePhase = PlacePhase.NONE;
         }
-        if (!AltoClefSettings.getInstance().isInteractionPaused() && toPlace.isPresent() && isSafeToCancel && ctx.player().onGround() && ticks <= 0) {
+        if (!AltoClefSettings.getInstance().isInteractionPaused() && toPlace.isPresent() && isSafeToCancel && ctx.entity().onGround() && ticks <= 0) {
             lastPlacePhase = PlacePhase.ALIGN;
             if (useCadenza) {
                 cadenza.attempt(toPlace.get().placeAgainst.relative(toPlace.get().side), 40);
@@ -1230,7 +1230,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         }
         if (useCadenza && toPlace.isEmpty() && isSafeToCancel && ticks <= 0) {
             // standing in a planned placement cell with nothing placeable from it: drop the cell after a few ticks
-            cadenza.nothingReachable(ctx.playerFeet(), ctx.player().onGround());
+            cadenza.nothingReachable(ctx.playerFeet(), ctx.entity().onGround());
         }
 
         if (!AltoClefSettings.getInstance().isInteractionPaused() && Baritone.settings().allowInventory.value) {
@@ -1341,7 +1341,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
 
     private void trim() {
         HashSet<BetterBlockPos> copy = new HashSet<>(incorrectPositions);
-        copy.removeIf(pos -> pos.distSqr(ctx.player().blockPosition()) > 200);
+        copy.removeIf(pos -> pos.distSqr(ctx.entity().blockPosition()) > 200);
         if (!copy.isEmpty()) {
             incorrectPositions = copy;
         }
@@ -1496,7 +1496,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
      */
     private Goal cadenzaPlacementGoal(BuilderCalculationContext bcc, List<BetterBlockPos> placeNow, List<BetterBlockPos> sourceLiquids) {
         double reach = ctx.playerController().getBlockReachDistance();
-        double eye = ctx.player().getEyeHeight(Pose.CROUCHING);
+        double eye = ctx.entity().getEyeHeight(Pose.CROUCHING);
         int max = Baritone.settings().cadenzaMaxTargets.value;
         BetterBlockPos feet = ctx.playerFeet();
         List<BetterBlockPos> byDistance = new ArrayList<>(placeNow);
@@ -1638,7 +1638,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         // walk in / stall / wander. The player can step out of the way; only other entities make the cell implausible.
         BlockState desired = bcc.getSchematic(pos.getX(), pos.getY(), pos.getZ(), current);
         boolean plausible = desired != null && (desired.getCollisionShape(ctx.world(), pos).isEmpty()
-                || ctx.world().isUnobstructed(ctx.player(), desired.getCollisionShape(ctx.world(), pos).move(pos.getX(), pos.getY(), pos.getZ())));
+                || ctx.world().isUnobstructed(ctx.entity(), desired.getCollisionShape(ctx.world(), pos).move(pos.getX(), pos.getY(), pos.getZ())));
         for (Direction facing : Movement.HORIZONTALS_BUT_ALSO_DOWN_____SO_EVERY_DIRECTION_EXCEPT_UP) {
             //noinspection ConstantConditions
             if (MovementHelper.canPlaceAgainst(ctx, pos.relative(facing)) && plausible) {
@@ -1804,7 +1804,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
     private List<BlockState> approxPlaceable(int size) {
         List<BlockState> result = new ArrayList<>();
         for (int i = 0; i < size; i++) {
-            ItemStack stack = ctx.player().getInventory().getNonEquipmentItems().get(i);
+            ItemStack stack = ctx.entity().getInventory().getNonEquipmentItems().get(i);
             if (stack.isEmpty() || !(stack.getItem() instanceof BlockItem)) {
                 result.add(Blocks.AIR.defaultBlockState());
                 continue;
@@ -1814,7 +1814,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
                 .getBlock()
                 .getStateForPlacement(
                     new BlockPlaceContext(
-                        new UseOnContext(ctx.world(), ctx.player(), InteractionHand.MAIN_HAND, stack, new BlockHitResult(new Vec3(ctx.player().position().x, ctx.player().position().y, ctx.player().position().z), Direction.UP, ctx.playerFeet(), false)) {}
+                        new UseOnContext(ctx.world(), ctx.entity(), InteractionHand.MAIN_HAND, stack, new BlockHitResult(new Vec3(ctx.entity().position().x, ctx.entity().position().y, ctx.entity().position().z), Direction.UP, ctx.playerFeet(), false)) {}
                     )
                 );
             if (itemState != null) {

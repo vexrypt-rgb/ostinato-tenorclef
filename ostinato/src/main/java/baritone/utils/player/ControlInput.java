@@ -36,6 +36,16 @@ public final class ControlInput {
 
     private ControlInput() {}
 
+    // Ostinato: a headless host (no Minecraft client) has no keys; its driver turns the sim slot into the packet
+    // vanilla sends for a hotbar key. A client always goes through the hotbar key below.
+    public static void selectSlot(baritone.api.utils.IPlayerContext ctx, int value) {
+        if (ctx.minecraft() == null) {
+            if (value >= 0 && value < 9 && ctx.entity() != null) ctx.entity().getInventory().setSelectedSlot(value);
+            return;
+        }
+        selectSlot(value);
+    }
+
     public static void selectSlot(int value) {
         var player = Minecraft.getInstance().player;
         if (value >= 0 && value < 9 && player != null)

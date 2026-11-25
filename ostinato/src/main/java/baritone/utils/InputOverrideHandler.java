@@ -169,12 +169,18 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
         return stick.slew(a[0], a[1]);
     }
 
+    /** Ostinato: headless drivers read the stick through the API instead of the client's movement input. */
+    @Override
+    public float[] pollAnalog() {
+        return takeAnalog();
+    }
+
     /** Standing on magma: sneaking is the only thing that stops it burning us, whatever else is steering. */
     boolean onMagma() {
-        if (ctx.player() == null || ctx.world() == null || !ctx.player().onGround()) {
+        if (ctx.entity() == null || ctx.world() == null || !ctx.entity().onGround()) {
             return false;
         }
-        net.minecraft.core.BlockPos below = net.minecraft.core.BlockPos.containing(ctx.player().position().add(0, -0.2, 0));
+        net.minecraft.core.BlockPos below = net.minecraft.core.BlockPos.containing(ctx.entity().position().add(0, -0.2, 0));
         return ctx.world().getBlockState(below).getBlock() == net.minecraft.world.level.block.Blocks.MAGMA_BLOCK;
     }
 
@@ -200,13 +206,17 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
             // Ostinato: click state is sampled once after all planners.
         }
 
-        if (inControl()) {
-            if (ctx.player().input.getClass() != PlayerMovementInput.class) {
-                ctx.player().input = new PlayerMovementInput(this);
-            }
-        } else {
-            if (ctx.player().input.getClass() == PlayerMovementInput.class) { // allow other movement inputs that aren't this one, e.g. for a freecam
-                ctx.player().input = new KeyboardInput(ctx.minecraft().options);
+        // Ostinato: the keyboard/movement-input swap only exists in the client's LocalPlayer; a headless bot
+        // reads the forced inputs directly and never enters this branch.
+        if (ctx.entity() instanceof net.minecraft.client.player.LocalPlayer local) {
+            if (inControl()) {
+                if (local.input.getClass() != PlayerMovementInput.class) {
+                    local.input = new PlayerMovementInput(this);
+                }
+            } else {
+                if (local.input.getClass() == PlayerMovementInput.class) { // allow other movement inputs that aren't this one, e.g. for a freecam
+                    local.input = new KeyboardInput(ctx.minecraft().options);
+                }
             }
         }
         // only set it if it was previously incorrect

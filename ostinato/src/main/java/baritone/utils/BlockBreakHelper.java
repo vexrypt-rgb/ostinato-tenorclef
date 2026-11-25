@@ -16,13 +16,85 @@
  */
 
 package baritone.utils;
+
+import baritone.api.BaritoneAPI;
 import baritone.api.utils.IPlayerContext;
 import baritone.utils.player.ControlInput;
-// Ostinato: vanilla key handling owns delays, mining state, offhand fallback and swings.
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.item.component.SwingAnimation;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+
+/**
+ * @author Brady
+ * @since 8/25/2018
+ */
+// Ostinato: on a client, vanilla key handling owns delays, mining state, offhand fallback and swings, and this
+// helper only publishes through the controls-only input boundary. The state machine below runs only on a
+// headless host (no Minecraft client), whose controller emits what vanilla would for the same held click.
 public final class BlockBreakHelper {
-    BlockBreakHelper(IPlayerContext ctx) {}
-    // Ostinato: publish through the controls-only input boundary.
-    public void stopBreakingBlock() { ControlInput.releaseAttack(); }
-    // Ostinato: publish through the controls-only input boundary.
-    public void tick(boolean down) { ControlInput.holdAttack(down); }
+    // base ticks between block breaks caused by tick logic
+    private static final int BASE_BREAK_DELAY = 1;
+
+    private final IPlayerContext ctx;
+    private boolean wasHitting;
+    private int breakDelayTimer = 0;
+
+    // Ostinato: public so a headless host (which lives in its own package) can drive the same break state machine.
+    public BlockBreakHelper(IPlayerContext ctx) {
+        this.ctx = ctx;
+    }
+
+    private boolean client() {
+        return ctx.minecraft() != null;
+    }
+
+    public void stopBreakingBlock() {
+        if (client()) {
+            ControlInput.releaseAttack(); // Ostinato: controls-only
+            return;
+        }
+        // The player controller will never be null, but the player can be
+        if (ctx.entity() != null && wasHitting) {
+            ctx.playerController().setHittingBlock(false);
+            ctx.playerController().resetBlockRemoving();
+            wasHitting = false;
+        }
+    }
+
+    public void tick(boolean isLeftClick) {
+        if (client()) {
+            ControlInput.holdAttack(isLeftClick); // Ostinato: controls-only
+            return;
+        }
+        if (breakDelayTimer > 0) {
+            breakDelayTimer--;
+            return;
+        }
+        HitResult trace = ctx.objectMouseOver();
+        boolean isBlockTrace = trace != null && trace.getType() == HitResult.Type.BLOCK;
+
+        if (isLeftClick && isBlockTrace) {
+            ctx.playerController().setHittingBlock(wasHitting);
+            if (ctx.playerController().hasBrokenBlock()) {
+                ctx.playerController().syncHeldItem();
+                ctx.playerController().clickBlock(((BlockHitResult) trace).getBlockPos(), ((BlockHitResult) trace).getDirection());
+                ctx.entity().swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
+            } else {
+                if (ctx.playerController().onPlayerDamageBlock(((BlockHitResult) trace).getBlockPos(), ((BlockHitResult) trace).getDirection())) {
+                    ctx.entity().swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
+                }
+                if (ctx.playerController().hasBrokenBlock()) { // block broken this tick
+                    // break delay timer only applies for multi-tick block breaks like vanilla
+                    // Ostinato: a headless controller owns its destroy delay itself (no client game mode).
+                    breakDelayTimer = BaritoneAPI.getSettings().blockBreakSpeed.value - BASE_BREAK_DELAY;
+                }
+            }
+            // if true, we're breaking a block. if false, we broke the block this tick
+            wasHitting = !ctx.playerController().hasBrokenBlock();
+            ctx.playerController().setHittingBlock(false);
+        } else {
+            wasHitting = false;
+        }
+    }
 }
