@@ -1,4 +1,4 @@
-# Ostinato: RTS live check under Grim (server-ac-client). Usage: rtsl.py <tag> [mine,build,storage,armor,layers] [W1,W2]
+# Ostinato: RTS live check under Grim (server-ac-client). Usage: rtsl.py <tag> [mine,build,storage,armor,layers,editor] [W1,W2]
 import os, re, sys, time, subprocess, hashlib, uuid as _uuid, glob, json
 P = r"C:\Users\redfa\Documents\MinecraftDev\swarm-gate-logs\rtsl"
 CG = r"C:\Users\redfa\Documents\MinecraftDev\headless-bot-logs\phase3\gate\client-gate.py"
@@ -257,8 +257,82 @@ try:
         except Exception:
             win.kill()
         log("window closed")
+    if "editor" in PARTS:
+        # Ostinato: 3D editor Live mode. Paint a 2-layer shape in --layout editor, Build live with both
+        # workers, erase one cell mid-build, require the rest placed and the erased cell air.
+        import subprocess as _sp
+        for c in ["fill -42 -61 38 -30 -61 44 grass_block", "fill -42 -60 38 -30 -56 44 air"]:
+            R(c)
+        R("tp %s -41 -60 40" % W1); R("tp %s -31 -60 40" % W2)
+        time.sleep(2)
+        for n in W:
+            R("give %s cobblestone 32" % n)
+        jar = r"C:\Users\redfa\Documents\MinecraftDev\schematic-editor-wt\ostinato\center-app\build\libs\ostinato-center-app.jar"
+        java = r"C:\Program Files\Eclipse Adoptium\jdk-21.0.12.101-hotspot\bin\java.exe"
+        wdir = os.path.join(P, "run", TAG); os.makedirs(wdir, exist_ok=True)
+        wlog, auto_f = os.path.join(wdir, "window.log"), os.path.join(wdir, "window-auto.txt")
+        open(auto_f, "w").close()
+        win = _sp.Popen([java, "-Xmx256m", "-cp", jar, "baritone.swarm.center.app.CenterApp",
+                         "--dir", os.path.join(P, "center"), "--layout", "editor", "--pos", "2600,40",
+                         "--log", wlog, "--auto-file", auto_f])
+        log("editor window pid %d over %s" % (win.pid, os.path.join(P, "center"))); time.sleep(8)
+        def wtext():
+            return open(wlog, encoding="utf-8", errors="replace").read() if os.path.exists(wlog) else ""
+        def auto(*lines, wait=None, timeout=20):
+            with open(auto_f, "a", encoding="utf-8") as f: f.write("\n".join(lines) + "\n")
+            log("window< " + " ; ".join(lines))
+            if not wait:
+                time.sleep(2); return None
+            t0 = time.time()
+            while time.time() - t0 < timeout:
+                m = re.search(wait, wtext())
+                if m:
+                    log("window> " + m.group(0)); return m.group(0)
+                time.sleep(1)
+            log("window> no " + wait); return None
+        cells = [(x, y, z) for y in (-60, -59) for x in range(-40, -37) for z in (42, 43)]  # 3x2 columns x 2 layers = 12
+        auto("@set|ed:name|wall", "@set|ed:block|cobblestone", "@set|ed:y|-60", "@set|ed:h|2", "@|ed:clear")
+        auto("@map|ed:paint:-40,42,-38,43", wait=r"blueprint wall 12 blocks")
+        auto("@|ed:save")
+        # selection lives on the map card; switch there, pick both workers, come back to the editor for Build live
+        auto("@|header.layout.map")
+        auto("@map|select:" + "+".join(W), wait=r"selected=")
+        auto("@|header.layout.editor")
+        auto("@|ed:live", wait=r"blueprint live")
+        erased = (-38, -59, 43)
+        t0 = time.time(); last = ""; did_erase = False
+        while time.time() - t0 < 240:
+            placed = [c for c in cells if block(*c, "cobblestone")]
+            if not did_erase and len(placed) >= 1:
+                cand = erased if block(*erased, "air") else next((c for c in cells if c not in placed), None)
+                if cand is not None:
+                    erased = cand
+                    cells = [c for c in cells if c != erased]
+                    auto("@set|ed:y|%d" % erased[1], "@set|ed:h|1",
+                         "@map|ed:erase:%d,%d" % (erased[0], erased[2]),
+                         wait=r"blueprint wall %d blocks" % len(cells))
+                    auto("@|ed:save")
+                    did_erase = True
+                    log("mid-build erase %s" % (erased,))
+            want = len(cells)
+            got_n = sum(1 for c in cells if block(*c, "cobblestone"))
+            s = "editor placed %d/%d (erased %s air=%s did_erase=%s)" % (got_n, want, erased, block(*erased, "air"), did_erase)
+            if s != last: log(s); last = s
+            if did_erase and got_n == want and block(*erased, "air"):
+                time.sleep(4); break
+            time.sleep(4)
+        got = [c for c in cells if block(*c, "cobblestone")]
+        log("RESULT editor: %d/%d cobblestone from editor paint h=2 + 2-bot live, erased cell %s is %s, mid-erase %s" % (
+            len(got), len(cells), erased, "air" if block(*erased, "air") else "NOT air", "yes" if did_erase else "NO"))
+        log("window log tail:\n  " + "\n  ".join(wtext().splitlines()[-50:]))
+        for n in W: send(n, "blueprint stop")
+        try:
+            win.terminate(); win.wait(8)
+        except Exception:
+            win.kill()
+        log("editor window closed")
     for n in BOTS:
-        lines = [l for l in clog(n).splitlines() if re.search(r"role|lease|scheduler|chest", l, re.I)]
+        lines = [l for l in clog(n).splitlines() if re.search(r"role|lease|scheduler|chest|blueprint", l, re.I)]
         log("%s role/lease lines (%d):\n  " % (n, len(lines)) + "\n  ".join(lines[-60:]))
 finally:
     txt, _ = read_from(SLOG, slog_off)
