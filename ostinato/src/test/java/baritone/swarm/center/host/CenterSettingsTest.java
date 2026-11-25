@@ -53,7 +53,9 @@ public class CenterSettingsTest {
         Path game = Path.of("C:/inst/Copper");
         assertEquals(game.resolve("ostinato").resolve("center"), CenterFeedService.dir(s, game));
         s.swarmLocalSpoolDir.value = "C:/swarm/spool";
-        assertEquals(Path.of("C:/swarm/center"), CenterFeedService.dir(s, game));
+        // Ostinato: dir() resolves the spool dir to an absolute path first, so on Linux/macOS "C:/swarm/spool" is
+        // relative to the working directory; expect the sibling "center" of whatever that resolves to.
+        assertEquals(Path.of("C:/swarm/spool").toAbsolutePath().getParent().resolve("center"), CenterFeedService.dir(s, game));
         s.swarmCenterDir.value = "D:/cc";
         assertEquals(Path.of("D:/cc"), CenterFeedService.dir(s, game));
     }
