@@ -171,7 +171,7 @@ public final class RoleOrder {
         if (chest != null && !(role == Role.STORAGE && chests.size() == 1 && chests.get(0) == chest)) {
             sb.append(" chest=").append(xyz(chest));
         }
-        if (role == Role.STORAGE) {
+        if (role == Role.STORAGE || (role == Role.ARMORER && !chests.isEmpty())) { // Ostinato: armorer supply chests
             List<String> ps = new ArrayList<>();
             for (int[] c : chests) {
                 ps.add(xyz(c));

@@ -137,8 +137,13 @@ try:
             R("setblock %d %d %d chest{Items:[%s]}" % (x, y, z, ",".join('{Slot:%db,id:"minecraft:%s",count:%d}' % (i, n, c) for i, (n, c) in enumerate(items))))
         R("tp %s -17 -60 23" % W1); R("clear %s" % W1)
         def contents(c):
-            t = rcon("data get block %d %d %d Items" % c); m = {}
-            for n, k in re.findall(r'id: "minecraft:(\w+)", count: (\d+)', t): m[n] = m.get(n, 0) + int(k)
+            # Ostinato: the server cuts a long "data get" reply ("{Slot:..."), so read the list one entry at a time
+            m = {}
+            for i in range(27):
+                e = rcon("data get block %d %d %d Items[%d]" % (c + (i,)))
+                a = re.search(r'id: "minecraft:(\w+)"', e); k = re.search(r"count: (\d+)", e)
+                if not a: break
+                m[a.group(1)] = m.get(a.group(1), 0) + (int(k.group(1)) if k else 1)
             return m
         send(W1, "role storage chests=" + ";".join("%d,%d,%d" % c for c in CH))
         t0 = time.time(); last = ""; ok = False
@@ -153,6 +158,33 @@ try:
         lines = [l for l in clog(W1).splitlines() if "role storage" in l]
         log("%s storage lines:\n  " % W1 + "\n  ".join(lines[-30:]))
         send(W1, "role idle")
+    if "armor" in PARTS:
+        # a crafting table, a supply chest with exactly one copper set's ingots (5+8+7+4) and a deliver chest left empty
+        TB = (-23, -60, 14); SUP = (-21, -60, 14); DLV = (-25, -60, 14)
+        for c in (TB, SUP, DLV): R("setblock %d %d %d air" % c)
+        R("setblock %d %d %d crafting_table" % TB)
+        R('setblock %d %d %d chest{Items:[{Slot:0b,id:"minecraft:copper_ingot",count:24}]}' % SUP)
+        R("setblock %d %d %d chest" % DLV)
+        AB = W[-1]
+        R("tp %s -23 -60 11" % AB); R("clear %s" % AB)
+        def worn(n):  # one slot per query: long replies are cut by the server
+            got = []
+            for sl, piece in (("head", "helmet"), ("chest", "chestplate"), ("legs", "leggings"), ("feet", "boots")):
+                if "copper_" + piece in rcon("data get entity %s equipment.%s.id" % (n, sl)): got.append("copper_" + piece)
+            return got
+        send(AB, "role armorer set=copper at=%d,%d,%d chests=%d,%d,%d" % (TB + SUP))
+        t0 = time.time(); last = ""
+        while time.time() - t0 < 300:
+            w = worn(AB); sup = rcon("data get block %d %d %d Items" % SUP)
+            st = "armor worn %s supply %s" % (",".join(w), re.sub(r"\s+", " ", sup)[-90:])
+            if st != last: log(st); last = st
+            if len(w) == 4: time.sleep(5); break
+            time.sleep(8)
+        w = worn(AB)
+        log("RESULT armor: %s wears %d/4 copper pieces %s; supply now %s" % (AB, len(w), w, rcon("data get block %d %d %d Items" % SUP)[-120:]))
+        lines = [l for l in clog(AB).splitlines() if "role armorer" in l or "role deposit" in l]
+        log("%s armorer lines:\n  " % AB + "\n  ".join(lines[-30:]))
+        send(AB, "role idle")
     for n in BOTS:
         lines = [l for l in clog(n).splitlines() if re.search(r"role|lease|scheduler|chest", l, re.I)]
         log("%s role/lease lines (%d):\n  " % (n, len(lines)) + "\n  ".join(lines[-60:]))

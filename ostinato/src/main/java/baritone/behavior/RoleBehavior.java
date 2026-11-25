@@ -24,6 +24,7 @@ import baritone.swarm.lease.LeaseCoordinator;
 import baritone.swarm.lease.LeaseFence;
 import baritone.swarm.rts.ChestScheduler;
 import baritone.swarm.rts.StoragePlan;
+import baritone.swarm.rts.ArmorPlan;
 import baritone.Baritone;
 import baritone.api.event.events.TickEvent;
 import baritone.api.pathing.goals.GoalGetToBlock;
@@ -44,7 +45,10 @@ import baritone.utils.BaritoneProcessHelper;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.inventory.CraftingMenu;
 import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
@@ -110,6 +114,10 @@ public final class RoleBehavior extends Behavior implements Helper {
         if (l.order().role == Role.STORAGE) {
             return "storage " + (deposit.isActive() ? "work" : "wait") + " (" + storageNote + ")"
                     + (leased ? " leased" : "") + " chests=" + l.order().chests.size();
+        }
+        if (l.order().role == Role.ARMORER) {
+            return "armorer " + (deposit.isActive() ? "work" : "wait") + " (" + armorNote + ") set=" + l.order().set
+                    + " delivered=" + armorDelivered;
         }
         String chestWait = awaitChest == null ? "" : " wait-chest=" + awaitChest;
         return l.order().role.id + " " + l.phase().name().toLowerCase() + (l.note().isEmpty() ? "" : " (" + l.note() + ")")
@@ -179,6 +187,7 @@ public final class RoleBehavior extends Behavior implements Helper {
             regionMissingSince = -1;
             awaitChest = null;
             storageReset();
+            armorReset();
             generation++;
             logDirect("role: " + next.line());
         }
@@ -225,6 +234,10 @@ public final class RoleBehavior extends Behavior implements Helper {
         }
         if (o.role == Role.STORAGE) {
             storageTick(o); // Ostinato: the organizer runs its own visit loop
+            return;
+        }
+        if (o.role == Role.ARMORER) {
+            armorTick(o); // Ostinato: gather -> craft -> equip or deliver, its own visit loop
             return;
         }
         int free = 0;
@@ -396,6 +409,13 @@ public final class RoleBehavior extends Behavior implements Helper {
     }
 
     /** Ostinato: the menu slot a storage visit quick-moves next, or -1 when it is done. */
+    /** Ostinato: a click script on an open screen: {slot, button, 0 pickup | 1 quick-move}, {-1} to wait, null done. */
+    interface Script {
+        int[] next(LocalPlayer p, AbstractContainerMenu menu);
+
+        String failure();
+    }
+
     interface Picker {
         int next(LocalPlayer p, ChestMenu menu);
     }
@@ -509,6 +529,228 @@ public final class RoleBehavior extends Behavior implements Helper {
         storageChest = 0;
     }
 
+    // ---- Ostinato: RTS armor maker (role armorer set=copper at=table chests=supply;.. chest=deliver) ----
+    private String armorNote = "";
+    private int armorDelivered;
+    private int armorSupplyTried; // supply chests visited since the ingots last ran short
+    private long armorIdleUntil;
+    private int armorFails;
+    private ArmorPlan.Kind armorDoing;
+    private int armorEquipTicks;
+
+    private void armorReset() {
+        armorNote = "";
+        armorDelivered = 0;
+        armorSupplyTried = 0;
+        armorIdleUntil = 0;
+        armorFails = 0;
+        armorDoing = null;
+        armorEquipTicks = 0;
+    }
+
+    private void armorTick(RoleOrder o) {
+        boolean done = deposit.takeDone();
+        String fail = deposit.takeFailure();
+        if (deposit.isActive()) {
+            return;
+        }
+        if (fail != null) {
+            armorFails++;
+            armorNote = (armorDoing == null ? "" : armorDoing.name().toLowerCase() + " ") + "failed: " + fail;
+            logDirect("role armorer: " + armorNote);
+            armorIdleUntil = System.currentTimeMillis() + Math.min(30_000, 3_000L * armorFails);
+        } else if (done) {
+            armorFails = 0;
+            if (armorDoing == ArmorPlan.Kind.DELIVER && deposit.moved > 0) {
+                armorDelivered += deposit.moved;
+            }
+            if (armorDoing == ArmorPlan.Kind.GATHER) {
+                armorSupplyTried++;
+            }
+        }
+        armorDoing = null;
+        long now = System.currentTimeMillis();
+        if (now < armorIdleUntil) {
+            return;
+        }
+        LocalPlayer p = ctx.player();
+        String set = o.set;
+        String ingot = ArmorPlan.ingot(set);
+        java.util.Set<String> worn = new java.util.HashSet<>();
+        for (EquipmentSlot es : new EquipmentSlot[]{EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET}) {
+            ItemStack st = p.getItemBySlot(es);
+            if (!st.isEmpty()) {
+                worn.add(id(st));
+            }
+        }
+        java.util.List<String> carriedArmor = new java.util.ArrayList<>();
+        int ingots = 0;
+        for (ItemStack st : p.getInventory().getNonEquipmentItems()) {
+            if (st.isEmpty()) {
+                continue;
+            }
+            if (RoleItems.isArmor(id(st))) {
+                carriedArmor.add(id(st));
+            } else if (id(st).equals(ingot)) {
+                ingots += st.getCount();
+            }
+        }
+        if (ingots > 0 && armorSupplyTried > 0) {
+            armorSupplyTried = 0; // the supply had some: start over the next time ingots run short
+        }
+        boolean supplyLeft = armorSupplyTried < o.chests.size();
+        ArmorPlan.Step step = ArmorPlan.next(set, worn, carriedArmor, ingots, o.chest != null, armorDelivered, supplyLeft);
+        if (!step.note().equals(armorNote)) {
+            armorNote = step.note();
+            logDirect("role armorer: " + armorNote);
+        }
+        switch (step.kind()) {
+            case EQUIP -> {
+                // Ostinato: shift-click the piece in the inventory screen (ControlInput opens it); vanilla equips it
+                if (++armorEquipTicks % 10 != 1) {
+                    return; // one click, then let the equipment update arrive
+                }
+                String want = step.piece().id(set);
+                for (int i = 0; i < p.inventoryMenu.slots.size(); i++) {
+                    Slot sl = p.inventoryMenu.slots.get(i);
+                    if (sl.container == p.getInventory() && i >= 9 && !sl.getItem().isEmpty() && id(sl.getItem()).equals(want)) {
+                        ctx.playerController().windowClick(p.inventoryMenu.containerId, i, 0, ContainerInput.QUICK_MOVE, p);
+                        return;
+                    }
+                }
+            }
+            case DELIVER -> {
+                armorDoing = ArmorPlan.Kind.DELIVER;
+                String want = step.piece().id(set);
+                deposit.visit(new BlockPos(o.chest[0], o.chest[1], o.chest[2]), o,
+                        (pl, menu) -> playerSlotWith(pl, menu, want), null);
+            }
+            case CRAFT -> {
+                if (o.at == null) {
+                    armorNote = "needs at=x,y,z (a crafting table)";
+                    armorIdleUntil = now + 20_000;
+                    return;
+                }
+                armorDoing = ArmorPlan.Kind.CRAFT;
+                deposit.craft(new BlockPos(o.at[0], o.at[1], o.at[2]), o, new CraftScript(step.piece(), set));
+            }
+            case GATHER -> {
+                armorDoing = ArmorPlan.Kind.GATHER;
+                int[] c = o.chests.get(armorSupplyTried);
+                deposit.visit(new BlockPos(c[0], c[1], c[2]), o, (pl, menu) -> chestSlotWith(pl, menu, ingot), null);
+            }
+            case WAIT -> armorIdleUntil = now + 20_000;
+            case DONE -> armorIdleUntil = now + 20_000;
+        }
+    }
+
+    /** A player slot in the open chest holding {@code item}, or -1. */
+    private static int playerSlotWith(LocalPlayer p, ChestMenu menu, String item) {
+        for (int i = 0; i < menu.slots.size(); i++) {
+            Slot s = menu.slots.get(i);
+            if (s.container == p.getInventory() && !s.getItem().isEmpty() && id(s.getItem()).equals(item)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** A chest slot holding {@code item}, while the inventory has room, or -1. */
+    private static int chestSlotWith(LocalPlayer p, ChestMenu menu, String item) {
+        boolean room = false;
+        for (ItemStack st : p.getInventory().getNonEquipmentItems()) {
+            if (st.isEmpty() || (id(st).equals(item) && st.getCount() < st.getMaxStackSize())) {
+                room = true;
+                break;
+            }
+        }
+        if (!room) {
+            return -1;
+        }
+        for (int i = 0; i < menu.slots.size(); i++) {
+            Slot s = menu.slots.get(i);
+            if (s.container != p.getInventory() && !s.getItem().isEmpty() && id(s.getItem()).equals(item)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Ostinato: the clicks a player makes on an open crafting table to craft one armor piece: pick up an ingot stack,
+     * right-click one into each recipe cell, put the rest back, shift-click the result. One click per call.
+     */
+    static final class CraftScript implements Script {
+        private final ArmorPlan.Piece piece;
+        private final String ingot;
+        private final String result;
+        private int cell;
+        private int home = -1;
+        private int waited;
+        private boolean took;
+        String failure;
+
+        CraftScript(ArmorPlan.Piece piece, String set) {
+            this.piece = piece;
+            this.ingot = ArmorPlan.ingot(set);
+            this.result = piece.id(set);
+        }
+
+        @Override
+        public int[] next(LocalPlayer p, AbstractContainerMenu menu) {
+            ItemStack carried = menu.getCarried();
+            if (cell < piece.grid.length) {
+                if (carried.isEmpty()) {
+                    for (int i = 10; i < menu.slots.size(); i++) {
+                        ItemStack st = menu.slots.get(i).getItem();
+                        if (!st.isEmpty() && id(st).equals(ingot)) {
+                            home = i;
+                            return new int[]{i, 0, 0};
+                        }
+                    }
+                    failure = "ran out of " + ingot;
+                    return null;
+                }
+                return new int[]{ArmorPlan.craftSlot(piece.grid[cell++]), 1, 0};
+            }
+            if (!carried.isEmpty()) {
+                int to = home;
+                if (to < 0 || !(menu.slots.get(to).getItem().isEmpty() || id(menu.slots.get(to).getItem()).equals(ingot))) {
+                    to = -1;
+                    for (int i = 10; i < menu.slots.size(); i++) {
+                        if (menu.slots.get(i).getItem().isEmpty()) {
+                            to = i;
+                            break;
+                        }
+                    }
+                }
+                if (to < 0) {
+                    failure = "no room to put the ingots back";
+                    return null;
+                }
+                return new int[]{to, 0, 0};
+            }
+            ItemStack out = menu.slots.get(0).getItem();
+            if (!took && !out.isEmpty() && id(out).equals(result)) {
+                took = true;
+                return new int[]{0, 0, 1};
+            }
+            if (took) {
+                return null;
+            }
+            if (++waited > 20) {
+                failure = "no " + result + " in the result slot";
+                return null;
+            }
+            return new int[]{-1};
+        }
+
+        @Override
+        public String failure() {
+            return failure;
+        }
+    }
+
     private LocalPlayer pl() {
         return ctx.player();
     }
@@ -616,6 +858,9 @@ public final class RoleBehavior extends Behavior implements Helper {
         private java.util.function.Consumer<ChestMenu> onOpen;
         private boolean opened;
         private int moved;
+        // Ostinato: the armor maker opens a crafting table and runs a click script instead of a chest picker
+        private Class<? extends AbstractContainerMenu> menuKind = ChestMenu.class;
+        private Script script;
 
         Deposit(Baritone baritone) {
             super(baritone);
@@ -629,6 +874,8 @@ public final class RoleBehavior extends Behavior implements Helper {
         void visit(BlockPos chest, RoleOrder order, Picker picker, java.util.function.Consumer<ChestMenu> onOpen) {
             this.picker = picker;
             this.onOpen = onOpen;
+            this.menuKind = ChestMenu.class;
+            this.script = null;
             opened = false;
             moved = 0;
             this.chest = chest;
@@ -642,8 +889,15 @@ public final class RoleBehavior extends Behavior implements Helper {
             failure = null;
         }
 
+        /** Ostinato: open the crafting table at {@code table} and run {@code script}'s clicks on it. */
+        void craft(BlockPos table, RoleOrder order, Script script) {
+            visit(table, order, null, null);
+            this.menuKind = CraftingMenu.class;
+            this.script = script;
+        }
+
         void cancel() {
-            if (stage != null && ctx.player() != null && ctx.player().containerMenu instanceof ChestMenu) {
+            if (stage != null && ctx.player() != null && ctx.player().containerMenu != ctx.player().inventoryMenu) {
                 ctx.player().closeContainer();
             }
             stage = null;
@@ -708,7 +962,7 @@ public final class RoleBehavior extends Behavior implements Helper {
                     return new PathingCommand(new GoalGetToBlock(chest), PathingCommandType.SET_GOAL_AND_PATH);
                 }
                 case OPEN -> {
-                    if (p.containerMenu instanceof ChestMenu) {
+                    if (menuKind.isInstance(p.containerMenu)) {
                         baritone.getInputOverrideHandler().setInputForceState(Input.CLICK_RIGHT, false);
                         stage = Stage.MOVE;
                         ticks = 0;
@@ -734,12 +988,33 @@ public final class RoleBehavior extends Behavior implements Helper {
                 }
                 case MOVE -> {
                     baritone.getInputOverrideHandler().setInputForceState(Input.CLICK_RIGHT, false);
-                    if (!(p.containerMenu instanceof ChestMenu menu)) {
+                    if (!menuKind.isInstance(p.containerMenu)) {
                         return fail("chest closed early");
                     }
                     if (++ticks < 3) {
                         return pause; // the screen and the slot contents arrive a tick after the menu
                     }
+                    if (script != null) {
+                        if (ticks % 2 == 1) {
+                            return pause; // one click every other tick, as a player clicks
+                        }
+                        int[] c = script.next(p, p.containerMenu);
+                        if (c == null) {
+                            String why = script.failure();
+                            if (why != null) {
+                                return fail(why);
+                            }
+                            stage = Stage.CLOSE;
+                            return pause;
+                        }
+                        if (c[0] >= 0) {
+                            moved++;
+                            ctx.playerController().windowClick(p.containerMenu.containerId, c[0], c[1],
+                                    c[2] == 1 ? ContainerInput.QUICK_MOVE : ContainerInput.PICKUP, p);
+                        }
+                        return pause;
+                    }
+                    ChestMenu menu = (ChestMenu) p.containerMenu;
                     if (!opened) {
                         opened = true;
                         if (onOpen != null) {
