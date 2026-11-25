@@ -13,7 +13,7 @@ import fails it, and runs their tests headless. No client, no server, no game as
 | `pwsh scripts/center-app.ps1 test\|demo\|screens\|jar` | the same, with JDK 21 and a 1.5 GB daemon cap set for you |
 
 Window arguments: `--dir <feed dir>` or `--fake N`, `--theme dark|light|high-contrast|colorblind`,
-`--layout wall|map`, `--pos x,y` (default 2600,40, the second monitor), `--log <file>` (replies and tile lines),
+`--layout wall|map|editor`, `--pos x,y` (default 2600,40, the second monitor), `--log <file>` (replies and tile lines),
 `--auto "secs|bot|formId|arg=value,..."` (press a tile button through Swing after `secs`; for live checks, never the
 real mouse).
 

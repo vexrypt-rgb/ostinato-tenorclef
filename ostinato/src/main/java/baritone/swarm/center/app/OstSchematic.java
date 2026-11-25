@@ -71,6 +71,39 @@ public final class OstSchematic {
         return sb.toString();
     }
 
+    /**
+     * Build from local, non-air cells (coordinates >= 0). Size is the tight volume around them,
+     * or 1x1x1 when empty.
+     */
+    public static OstSchematic of(List<Cell> in) {
+        if (in == null || in.isEmpty()) {
+            return new OstSchematic(1, 1, 1, List.of());
+        }
+        Map<Long, Cell> at = new LinkedHashMap<>();
+        int sx = 1, sy = 1, sz = 1;
+        for (Cell raw : in) {
+            if (raw == null) {
+                continue;
+            }
+            int x = raw.x(), y = raw.y(), z = raw.z();
+            if (x < 0 || y < 0 || z < 0) {
+                throw new IllegalArgumentException("block outside the volume: " + x + " " + y + " " + z);
+            }
+            String block = blockName(raw.block());
+            at.put(key(x, y, z), new Cell(x, y, z, block));
+            if (at.size() > MAX_CELLS) {
+                throw new IllegalArgumentException("schematic has more than " + MAX_CELLS + " blocks");
+            }
+            sx = Math.max(sx, x + 1);
+            sy = Math.max(sy, y + 1);
+            sz = Math.max(sz, z + 1);
+        }
+        if (sx > MAX_EDGE || sy > MAX_EDGE || sz > MAX_EDGE) {
+            throw new IllegalArgumentException("schematic size out of range");
+        }
+        return new OstSchematic(sx, sy, sz, new ArrayList<>(at.values()));
+    }
+
     public static OstSchematic read(String text) {
         if (text == null) {
             throw new IllegalArgumentException("not an ostinato schematic");

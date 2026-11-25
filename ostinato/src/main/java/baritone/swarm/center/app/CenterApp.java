@@ -42,7 +42,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <pre>
  *   java -cp &lt;jar&gt; baritone.swarm.center.app.CenterApp --dir &lt;swarmCenterDir&gt;
- *        [--theme dark|light|high-contrast|colorblind] [--layout wall|map] [--pos x,y] [--log file]
+ *        [--theme dark|light|high-contrast|colorblind] [--layout wall|map|editor] [--pos x,y] [--log file]
  *        [--fake N]                               moving demo swarm of N bots (DemoSwarm), no files, no host
  *        [--auto "secs|bot|formId|arg=value,..."] press a tile button programmatically (live checks; no mouse)
  * </pre>
@@ -342,6 +342,9 @@ public final class CenterApp {
         if (spec.startsWith("rts:")) {
             return rtsAuto(map, canvas, shell, spec.substring("rts:".length()));
         }
+        if (spec.startsWith("ed:")) {
+            return editorAuto(shell, spec.substring("ed:".length()));
+        }
         return "bad map spec";
     }
 
@@ -403,6 +406,40 @@ public final class CenterApp {
             return "order " + x + "," + z + " for " + map.selected();
         }
         return "bad rts spec";
+    }
+
+    /**
+     * Ostinato: 3D editor live checks. {@code ed:paint:x1,z1,x2,z2} and {@code ed:erase:x1,z1,x2,z2}
+     * paint the current layer (and {@code ed:h} up) through {@link EditorView#paintBox}, the same method a
+     * canvas click uses.
+     */
+    static String editorAuto(CenterShell shell, String spec) {
+        EditorView ed = shell.editor();
+        if (ed == null) {
+            return "no editor";
+        }
+        boolean erase = spec.startsWith("erase:");
+        if (spec.startsWith("paint:") || erase) {
+            String[] n = spec.substring(spec.indexOf(':') + 1).split(",");
+            int x1 = Integer.parseInt(n[0].trim());
+            int z1 = Integer.parseInt(n[1].trim());
+            int x2, z2;
+            if (n.length >= 4) {
+                x2 = Integer.parseInt(n[2].trim());
+                z2 = Integer.parseInt(n[3].trim());
+            } else {
+                x2 = x1;
+                z2 = z1;
+            }
+            ed.syncLayer();
+            ed.paintBox(x1, z1, x2, z2, erase);
+            return "blueprint " + ed.blueprint().name() + " " + ed.blueprint().size() + " blocks v" + ed.blueprint().version();
+        }
+        if (spec.equals("status")) {
+            ed.readStatus();
+            return ed.blueprint().name() + " " + ed.blueprint().size() + " placed=" + ed.placed().size();
+        }
+        return "bad editor spec";
     }
 
     /** Depth-first search by component name. */

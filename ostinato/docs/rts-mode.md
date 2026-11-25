@@ -96,8 +96,9 @@ types), so the later 3D Design/Live editor can open and save the same file.
 
 ## 5. Not in this slice
 
-- The full 3D schematic editor (Design and Live modes). It will read and write the same `ost1` files and reuse
-  `blueprint live` for its Live mode.
+- The full 3D schematic editor (Design and Live modes) now lives on `swarm/schematic-editor` (`docs/schematic-editor.md`).
+  It reads and writes the same `ost1` files and reuses `blueprint live` for Live mode. A Grim-gated live proof is still
+  outstanding.
 - Isometric rendering, a minimap of chest contents, and per-role priorities.
 - Remote-PC bots: feeds and blueprints are same-PC files, as for the rest of the window.
 

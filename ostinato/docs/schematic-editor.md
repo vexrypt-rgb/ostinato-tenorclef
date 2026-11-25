@@ -100,7 +100,7 @@ The window already accepts named-component auto lines (`@map|…`, `@set|…`). 
 
 | Piece | State | Evidence |
 |---|---|---|
-| Design doc, branch, worktree | written | this file; worktree `schematic-editor-wt` on `swarm/schematic-editor` at `029359b3d` |
-| Design mode (orbit, place/erase, palette, save/load) | next | |
-| Import `.litematic` / `.schem` | next | |
-| Live mode (status colors, write, Build live, mid-build erase) | next | Grim-gated run still required |
+| Design doc, branch, worktree | written | this file; worktree `schematic-editor-wt` on `swarm/schematic-editor` |
+| Design mode (orbit, place/erase, palette, save/load `.ost`) | unit-tested | `EditorViewTest`, `EditorCameraTest`; `center-app` 202 tests, 0 failed; `center-app/build/screens/editor-dark.png` |
+| Import `.litematic` / `.schem` (ids only) | unit-tested | `SchemImportTest` (Sponge v2 + litematic fixtures, classic `.schematic` refused) |
+| Live mode (status colors, write, Build live, mid-build erase) | unit-tested, not live-proven | `EditorViewTest.liveBuildSendsBlueprintLiveAndStatusColorsPlacedCells`. Grim-gated run still required |

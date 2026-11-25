@@ -7,7 +7,7 @@ import javax.swing.JComponent;
 
 /**
  * Ostinato: Phase 3 window, one layout card (the slice contract). {@link WallView} is the reference; the War room map
- * is {@link MapView}. A view:
+ * is {@link MapView}; the 3D schematic editor is {@link EditorView}. A view:
  * <ul>
  *   <li>is built once with the window's {@link AppStyle} and {@link Commands} (built again on a theme change),</li>
  *   <li>gets every refresh through {@link #update} on the Swing thread, with a complete immutable snapshot, and keeps

@@ -193,6 +193,11 @@ public final class Blueprint {
         return (((long) (x & 0x3FFFFFF)) << 38) | (((long) (y & 0xFFF)) << 26) | (z & 0x3FFFFFF);
     }
 
+    /** Public alias of {@link #key} for the command-center editor and the map. */
+    public static long cellKey(int x, int y, int z) {
+        return key(x, y, z);
+    }
+
     /** File name in {@code <swarmCenterDir>/blueprints/}. */
     public static String fileName(String name) {
         return safeName(name) + ".ost";
