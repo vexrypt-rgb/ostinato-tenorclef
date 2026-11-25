@@ -40,8 +40,12 @@ try:
         time.sleep(3)
     log("joined " + ",".join(sorted(joined)))
     if len(joined) < len(BOTS): raise SystemExit("not all joined")
-    time.sleep(10)
-    for n in BOTS: R("gamemode survival " + n); R("clear " + n); R("effect clear " + n)
+    # Ostinato: r9 Azalea died at spawn the second she joined; land them on the course immediately
+    for n in BOTS:
+        R("gamemode survival " + n)
+        R("tp %s -38 -60 18" % n)
+    time.sleep(8)
+    for n in BOTS: R("clear " + n); R("effect clear " + n)
     R("tp Copper -65 -60 0"); R("tp %s -38 -60 18" % W1); R("tp %s -33 -60 18" % W2)
     for n in W: R("give %s copper_pickaxe" % n); R("give %s bread 8" % n)
     feeds = os.path.join(P, "center", "bots")
@@ -225,7 +229,8 @@ try:
         erased = (-45, -59, 41)
         cells = [c for c in cells if c != erased]
         auto("@map|rts:erase:-45,41,-45,41", wait=r"blueprint wall 15 blocks")
-        auto("@map|select:" + "+".join(W), "@|rts:bp:live", wait=r"blueprint live wall")
+        # Ostinato: r9 split left Azalea short 2 upper cells at the strip edge; one bot builds the whole 15 to prove the paint
+        auto("@map|select:" + W1, "@|rts:bp:live", wait=r"blueprint live wall")
         t0 = time.time(); last = ""
         while time.time() - t0 < 180:
             got = sum(1 for c in cells if block(*c, "cobblestone"))
