@@ -70,6 +70,10 @@ Proof is a Grim-gated live run (Paper 26.3 + Grim, 0 flags, 0 deaths): the edito
 paints a small 3D shape in Live, starts the build, erases one cell mid-build, and the bots finish the remaining
 cells with the erased cell left air.
 
+Proven in se-r2 (25 Nov 2026, 5:46:23-5:48:18 AM America/Phoenix): 2-layer 12-cell wall, 2-bot live, mid-erase
+of `(-38,-59,43)`, **11/11** cobblestone, erased cell air, **GRIM 0, DEATHS 0**. Log: `swarm-gate-logs/rtsl/se-r2.out`.
+se-r1 was 10/11 (same shape, Azalea hung on `(-38,-59,42)`); fixed in `BuilderProcess` (commit `93079aaa1`).
+
 ## 4. Driving it from tests and the gate
 
 The window already accepts named-component auto lines (`@map|…`, `@set|…`). The editor adds:
@@ -103,4 +107,4 @@ The window already accepts named-component auto lines (`@map|…`, `@set|…`). 
 | Design doc, branch, worktree | written | this file; worktree `schematic-editor-wt` on `swarm/schematic-editor` |
 | Design mode (orbit, place/erase, palette, save/load `.ost`) | unit-tested | `EditorViewTest`, `EditorCameraTest`; `center-app` 202 tests, 0 failed; `center-app/build/screens/editor-dark.png` |
 | Import `.litematic` / `.schem` (ids only) | unit-tested | `SchemImportTest` (Sponge v2 + litematic fixtures, classic `.schematic` refused) |
-| Live mode (status colors, write, Build live, mid-build erase) | unit-tested, not live-proven | `EditorViewTest.liveBuildSendsBlueprintLiveAndStatusColorsPlacedCells`. Grim-gated run still required |
+| Live mode (status colors, write, Build live, mid-build erase) | live (se-r2) | `EditorViewTest.liveBuildSendsBlueprintLiveAndStatusColorsPlacedCells`. se-r2: 11/11, mid-erase air, Grim 0, deaths 0 (`swarm-gate-logs/rtsl/se-r2.out`). se-r1 10/11 fixed in `93079aaa1` |

@@ -1,80 +1,61 @@
 # Schematic editor handoff
 
-Updated 25 Nov 2026, 5:39 AM America/Phoenix. Assume you can be cut off at any moment.
+Updated 25 Nov 2026, 5:48 AM America/Phoenix. Assume you can be cut off at any moment.
 
 ## Branch and HEAD
 
 - Worktree: `C:\Users\redfa\Documents\MinecraftDev\schematic-editor-wt`
 - Branch: `swarm/schematic-editor` (off `swarm/rts-mode` at `029359b3d`)
-- HEAD: `81982c271` plus uncommitted builder deadlock fix + setup.ps1 jar path + this handoff (about to commit, local only)
+- HEAD: `93079aaa1` (builder deadlock fix) plus this handoff / design-doc status update (about to commit, local only)
 - Do not edit `rts-wt` (still clean at `029359b3d`)
+- Local only; never pushed.
 
 ## What's done and proven
 
 - Design/Live editor in the command center, unit-tested: `scripts\center-app.ps1 test` — 202 tests, 0 failed.
-- Harness: `if "editor" in PARTS` in `scripts/rtsl/rtsl.py` (commit `81982c271`). Window at 2600,40, `--layout editor`, no focus, muted clients, Paper 26.3 + Grim, `respawn_radius 0`.
+- Harness: `if "editor" in PARTS` in `scripts/rtsl/rtsl.py` (`81982c271`). Window at 2600,40, `--layout editor`, no focus.
+- **Live mode is Grim-proven (se-r2).**
 
-## se-r1 (25 Nov 2026, 5:24:56–5:30:35 AM America/Phoenix) — FAILED completeness, Grim 0
+## se-r2 (25 Nov 2026, 5:46:23-5:48:18 AM America/Phoenix) — PASS
 
-- Command: `python ostinato\scripts\rtsl\rtsl.py se-r1 editor Copper,Azalea`
-- Logs: `C:\Users\redfa\Documents\MinecraftDev\swarm-gate-logs\rtsl\se-r1.out` (err empty); `run\se-r1\window.log`; clients `run\client-Copper-052512.log`, `run\client-Azalea-052520.log`
-- Fabric jar was still the rts-wt build (4:17 AM). Center-app jar from this worktree (5:24:32 AM).
-- Paint: 12-cell 2-layer wall (x=-40..-38, z=42,43, y=-60 and -59). Selected Copper+Azalea. Live leases: Copper 8 cells (`x=-40,-39`), Azalea 4 then 3 after erase.
-- Mid-erase of `(-38,-59,43)` after first placed; ost v12→v13; erased cell stayed air. Copper finished all 8 by 5:26:22.
-- RESULT: **10/11 cobblestone**, erased air, mid-erase yes, **GRIM FLAGS 0, DEATHS 0**. Window closed, clients/server stopped cleanly. StopAll + `rcon stop`.
-- Missing cell: **`(-38,-59,42)`** — Azalea's remaining upper cell next to the hole.
-- Azalea placed both bottoms, pathed to `GoalAdjacent{-38,-59,42}`, logged "Wrong Y coordinate" x9, then "All done" at that goal, and never issued `place cell -38,-59,42 clear`. Silent until blueprint stop at 5:30:18.
+- Command: `python ostinato\scripts\rtsl\rtsl.py se-r2 editor Copper,Azalea` from the worktree root (python pid 15584).
+- Logs: `C:\Users\redfa\Documents\MinecraftDev\swarm-gate-logs\rtsl\se-r2.out` (err empty); `run\se-r2\window.log`; clients `run\client-Copper-054639.log`, `run\client-Azalea-054647.log`.
+- Fabric jar: this worktree `baritone-fabric-1.28.0.jar` 9971301 bytes, 5:44:15 AM (`93079aaa1` remap). Center-app jar already from this worktree. `setup.ps1` now copies from this worktree; mute verified (`soundCategory_*` all 0.0). `respawn_radius 0` already set. Logins at `-64.5, -60.0, 0.5`.
+- Paint: 12-cell 2-layer wall. Selected Copper+Azalea. Live at 5:47:44. Mid-erase of `(-38,-59,43)` at 5:47:52 (after first placements; 8/11 then). Azalea then `place cell -38,-59,42 clear` at 5:47:53 — the cell that hung in se-r1.
+- RESULT (5:48:00): **11/11 cobblestone**, erased cell `(-38,-59,43)` is air, mid-erase yes. Window closed 5:48:01. **GRIM FLAGS 0, DEATHS 0**. STOPALL + `rcon stop`, server relay exit 0 at 5:48:18. Port 25582 free. No leftover clients/window.
 
-### Root cause
+## se-r1 (25 Nov 2026, 5:24:56-5:30:35 AM America/Phoenix) — FAILED completeness, Grim 0
 
-Stock `BuilderProcess` cannot finish an open-sky second-layer cell when the only floored same-Y stand is gone or forbidden:
+- Same shape and 2-bot split; fabric jar was still the rts-wt 4:17 AM build.
+- RESULT: **10/11**, erased air, mid-erase yes, GRIM 0, DEATHS 0, closed cleanly.
+- Missing `(-38,-59,42)` (Azalea's remaining upper cell). She pathed to `GoalAdjacent{-38,-59,42}`, "Wrong Y" x9, "All done", never placed.
+- Artifacts preserved at `swarm-gate-logs/rtsl/se-r1-artifacts/` (setup.ps1 wipes `run/`).
 
-1. `placementGoal` checks horizontals before DOWN, so a neighbor-column block (here Copper's `(-39,-59,42)`) becomes GoalAdjacent's forbidden `no`.
-2. `allowSameLevel` is false whenever the cell has air above, so standing at y-1 (ground, a vanilla click on the support) is not in-goal. Every remaining in-goal cell is mid-air.
-3. `searchForPlacables` skips `dy==1` when the block above the candidate is air, so after she falls back to y=-60 she never clicks the support.
+### Root cause and fix (`93079aaa1`)
 
-Do not "fix" this only by giving Azalea two columns or erasing a different cell.
+Stock `BuilderProcess` could not finish an open-sky second-layer cell when the only floored same-Y stand was gone or forbidden:
 
-## Fix (uncommitted at this writing)
+1. `placementGoal` checked horizontals before DOWN, so Copper's `(-39,-59,42)` became GoalAdjacent's forbidden `no`.
+2. `allowSameLevel` was false whenever the cell had air above, so standing at y-1 was not in-goal.
+3. `searchForPlacables` skipped `dy==1` when the block above the candidate was air.
 
-In `BuilderProcess`:
-
-- `placementGoal`: if the support below is a legal against-block, return `GoalAdjacent(pos, pos.below(), true)` so y-1 stands are in-goal and the support is the forbidden cell.
-- `searchForPlacables`: still skip an open-sky `dy==1` only when there is *no* support below.
-- Cadenza `CellFilter` (cadenza is off in this gate) matches the same rule, so enabling it later does not reintroduce the deadlock.
-
-`scripts/rtsl/setup.ps1` now copies the fabric jar from this worktree (`ostinato/fabric/build/libs`), not a hardcoded `rts-wt` path.
-
-## In progress right now
-
-About to commit the fix (local only), build `:fabric:remapJar` from this worktree, run `setup.ps1`, then
-
-```
-python ostinato\scripts\rtsl\rtsl.py se-r2 editor Copper,Azalea
-```
-
-Same rules: mute, fullbright, no focus, controls-only, `respawn_radius 0`, local commits only, never `gradlew --stop`. Expect 11/11 + erased cell air + Grim 0 + deaths 0, then close everything.
+Fix: if the support below is a legal against-block, `placementGoal` returns `GoalAdjacent(pos, pos.below(), true)`; `searchForPlacables` (and the Cadenza cell filter, cadenza off in this gate) only skip an open-sky `dy==1` when there is no support below.
 
 ## Running processes this session started
 
-None right now. Leftover host Java (do not kill): pid 1756 (2:02 AM, JDK 21 Gradle-like), pid 13232 (3:37 AM, Gradle worker on JDK 25). Port 25582 should be free. Will close every client, window, and server se-r2 starts.
+None left from se-r2. Leftover host Java (do not kill): pid 1756 (2:02 AM, JDK 21 Gradle-like), pid 13232 (3:37 AM, Gradle worker on JDK 25), plus gradle daemons this remap started (pids 376 and 19016 at 5:43 AM). Never `gradlew --stop`.
 
 ## Exact next steps
 
-1. Commit BuilderProcess + setup.ps1 + both handoff copies (local only, no push).
-2. `cd ostinato` and `.\gradlew.bat :fabric:remapJar` (JDK 25 toolchain). Never `--stop`.
-3. `powershell -ExecutionPolicy Bypass -File scripts\rtsl\setup.ps1` — confirm the jar is the new remap, not the 4:17 AM rts-wt one, and options.txt is muted.
-4. Run se-r2 as above; on failure, fix the root cause and rerun (se-r3…).
-5. Record Grim/deaths, log paths, and RESULT here; close everything.
+Live editor gate is proven. Remaining optional: nothing required for this request. Keep handoff current if more editor work lands. Local commits only, no push.
 
-## How to run the gate
+## How to rerun the gate
 
 ```
 cd C:\Users\redfa\Documents\MinecraftDev\schematic-editor-wt\ostinato
 .\gradlew.bat :fabric:remapJar
 powershell -ExecutionPolicy Bypass -File scripts\rtsl\setup.ps1
-python scripts\rtsl\rtsl.py se-r2 editor Copper,Azalea
+python scripts\rtsl\rtsl.py se-r3 editor Copper,Azalea
 ```
 
-Redirect stdout/err to `C:\Users\redfa\Documents\MinecraftDev\swarm-gate-logs\rtsl\se-r2.out`.
-Muted clients, window at 2600,40 without focus, Paper 26.3 + Grim, `respawn_radius 0`, never `gradlew --stop`.
+Preserve previous `run/` logs first (`setup.ps1` wipes `run/`). Muted clients, window at 2600,40 without focus, Paper 26.3 + Grim, `respawn_radius 0`, never `gradlew --stop`.
