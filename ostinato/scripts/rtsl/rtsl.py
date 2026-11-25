@@ -34,7 +34,7 @@ try:
     # in the HBotAc-only playerdata wipe, so they rejoined at last position (the layers wall, which sat
     # in that trench) and fell before any teleport (r10: Copper void at -47,-58,41, Azalea high-fall).
     # client-gate now wipes every player and setworldspawn; this restates the spawn after our fills.
-    R("gamerule spawnRadius 0")
+    R("gamerule respawn_radius 0")  # Ostinato: 26.3 name; spawnRadius is rejected
     R("setworldspawn -65 -60 0")
     for n in BOTS: outs[n] = 0
     for n in BOTS:
