@@ -147,7 +147,7 @@ jobs:
         run: |
           mkdir -p out
           for f in tenorclef/versions/26.3/build/libs/*.jar; do
-            case "$f" in *-sources.jar|*-dev.jar|*-javadoc.jar) continue;; esac
+            case "$f" in *-sources.jar|*-dev.jar|*-javadoc.jar|*-slim.jar) continue;; esac
             cp -v "$f" "out/tenorclef-mc26.3-${TAG#tenorclef-}.jar"
           done
           test -n "$(ls out)"
