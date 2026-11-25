@@ -16,6 +16,7 @@
  */
 
 package baritone.spectate;
+import baritone.utils.player.ControlInput; // Ostinato: controls-only input
 
 import baritone.Baritone;
 import baritone.api.BaritoneAPI;
@@ -884,8 +885,9 @@ public final class ServerSpectate extends Behavior implements baritone.api.utils
         float pitch = (float) (-Math.toDegrees(Math.atan2(d.y, Math.hypot(d.x, d.z))));
         // a calm head turn: at most 5 degrees a tick
         float dy = net.minecraft.util.Mth.wrapDegrees(yaw - me.getYRot());
-        me.setYRot(me.getYRot() + Math.max(-5, Math.min(5, dy)));
-        me.setXRot(me.getXRot() + Math.max(-4, Math.min(4, pitch - me.getXRot())));
+        // Ostinato: spectator camera is still a live player; queue its visible mouse step.
+        ControlInput.look(me.getYRot() + Math.max(-5, Math.min(5, dy)),
+                me.getXRot() + Math.max(-4, Math.min(4, pitch - me.getXRot())));
         if (mc.gameMode.getPlayerMode() != net.minecraft.world.level.GameType.SPECTATOR) return; // in a lobby: only look
         double dist = Math.sqrt(d.x * d.x + d.z * d.z);
         if (Math.abs(dy) < 30) {

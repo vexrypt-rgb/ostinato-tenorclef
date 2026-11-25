@@ -17,82 +17,8 @@
 
 package baritone.launch.mixins;
 
-import baritone.api.BaritoneAPI;
-import baritone.api.IBaritone;
-import baritone.api.event.events.RotationMoveEvent;
-import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntityType;
-import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.level.Level;
-import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Unique;
-import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import java.util.Optional;
-
-/**
- * While swimming, the vertical part of your motion is pulled towards your look angle in
- * {@code Player.travel}, which reads the real entity rotation — outside of {@code moveRelative}, so the
- * moveRelative rotation spoof can't cover it. Same deal as elytra flight in {@link MixinLivingEntity}:
- * set the real rotation for the duration of the getLookAngle call so pitch steering works with free look,
- * then restore. The user's camera never sees any of this.
- */
-@Mixin(Player.class)
-public abstract class MixinPlayer extends Entity {
-
-    /**
-     * Event called to override the movement direction while swimming
-     */
-    @Unique
-    private RotationMoveEvent swimRotationEvent;
-
-    private MixinPlayer(EntityType<?> entityType, Level world) {
-        super(entityType, world);
-    }
-
-    @Inject(
-            method = "travel",
-            at = @At(
-                    value = "INVOKE",
-                    target = "Lnet/minecraft/world/entity/player/Player;getLookAngle()Lnet/minecraft/world/phys/Vec3;"
-            )
-    )
-    private void preSwimMove(Vec3 direction, CallbackInfo ci) {
-        this.getBaritone().ifPresent(baritone -> {
-            this.swimRotationEvent = new RotationMoveEvent(RotationMoveEvent.Type.MOTION_UPDATE, this.getYRot(), this.getXRot());
-            baritone.getGameEventHandler().onPlayerRotationMove(this.swimRotationEvent);
-            this.setYRot(this.swimRotationEvent.getYaw());
-            this.setXRot(this.swimRotationEvent.getPitch());
-        });
-    }
-
-    @Inject(
-            method = "travel",
-            at = @At(
-                    value = "INVOKE",
-                    target = "Lnet/minecraft/world/entity/player/Player;getLookAngle()Lnet/minecraft/world/phys/Vec3;",
-                    shift = At.Shift.AFTER
-            )
-    )
-    private void postSwimAngle(Vec3 direction, CallbackInfo ci) {
-        if (this.swimRotationEvent != null) {
-            this.setYRot(this.swimRotationEvent.getOriginal().getYaw());
-            this.setXRot(this.swimRotationEvent.getOriginal().getPitch());
-            this.swimRotationEvent = null;
-        }
-    }
-
-    @Unique
-    private Optional<IBaritone> getBaritone() {
-        // noinspection ConstantConditions
-        if (LocalPlayer.class.isInstance(this)) {
-            return Optional.ofNullable(BaritoneAPI.getProvider().getBaritoneForPlayer((LocalPlayer) (Object) this));
-        } else {
-            return Optional.empty();
-        }
-    }
-}
+// Ostinato: physics always uses the visible vanilla rotation; no temporary yaw/pitch substitution.
+@Mixin(net.minecraft.world.entity.player.Player.class)
+public abstract class MixinPlayer {}

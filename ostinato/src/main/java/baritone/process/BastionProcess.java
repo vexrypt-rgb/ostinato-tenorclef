@@ -1,5 +1,7 @@
 package baritone.process;
 
+import baritone.utils.player.ControlInput; // Ostinato: controls-only action mailbox
+
 import baritone.bastion.OutsideTrade;
 import baritone.bastion.EndermanHunt;
 import net.minecraft.world.entity.monster.Enderman;
@@ -574,13 +576,14 @@ public final class BastionProcess extends BaritoneProcessHelper {
                 }
                 int pk = pickaxeSlot(me);
                 if (pk >= 9) { ctx.playerController().windowClick(me.inventoryMenu.containerId, pk, 6, ContainerInput.SWAP, me); return pause0(); }
-                if (pk >= 0) me.getInventory().setSelectedSlot(pk);
+                // Ostinato: publish through the controls-only input boundary.
+                if (pk >= 0) ControlInput.selectSlot(pk);
                 Vec3 c = Vec3.atCenterOf(b);
                 baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(eye, c, ctx.playerRotations()), true);
                 Direction face = Direction.getApproximateNearest(eye.x - c.x, eye.y - c.y, eye.z - c.z);
                 if (!b.equals(shelterDig)) { shelterDig = b; ctx.playerController().clickBlock(b, face); }
                 else ctx.playerController().onPlayerDamageBlock(b, face);
-                me.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                // Ostinato: vanilla attack/use performs its own swing.
                 status = "taking the walls down";
                 return pause0();
             }
@@ -687,8 +690,9 @@ public final class BastionProcess extends BaritoneProcessHelper {
             Rotation rot = RotationUtils.calcRotationFromVec3d(me.getEyePosition(1.0F), intruder.getBoundingBox().getCenter(), ctx.playerRotations());
             yaw = rot.getYaw();
             baritone.getLookBehavior().updateTarget(rot, true);
-            ctx.minecraft().gameMode.attack((LocalPlayer) me, intruder);
-            me.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.attack((LocalPlayer) me, intruder);
+            // Ostinato: vanilla attack/use performs its own swing.
             shelterShoveAt = ticks;
             if (shelterShoves++ == 0) logDirect("Bastion: " + intruder.getType().toShortString() + " in the way of the wall, knocking it back");
         } else if (slot >= 9) {
@@ -702,7 +706,8 @@ public final class BastionProcess extends BaritoneProcessHelper {
             if (clickOpens(against) && !me.isShiftKeyDown()) {
                 sneak = true;
             } else {
-                me.getInventory().setSelectedSlot(slot);
+                // Ostinato: publish through the controls-only input boundary.
+                ControlInput.selectSlot(slot);
                 if (!c.equals(shelterTry)) { shelterTry = c; shelterTries = 0; }
                 if (++shelterTries > 6) {
                     // six clicks and still open: whatever it is, the other cells come first for a while
@@ -713,7 +718,7 @@ public final class BastionProcess extends BaritoneProcessHelper {
                 } else {
                     ctx.playerController().processRightClickBlock((LocalPlayer) me, ctx.world(), InteractionHand.MAIN_HAND, new BlockHitResult(hit, Direction.getApproximateNearest(p.fx(), p.fy(), p.fz()), against, false));
                     shelterPlaced.add(c);
-                    me.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                    // Ostinato: vanilla attack/use performs its own swing.
                 }
             }
         }
@@ -802,12 +807,13 @@ public final class BastionProcess extends BaritoneProcessHelper {
             if (!ctx.world().getBlockState(shelterSlit).canBeReplaced()) {
                 int pk = pickaxeSlot(me);
                 if (pk >= 9) { ctx.playerController().windowClick(me.inventoryMenu.containerId, pk, 6, ContainerInput.SWAP, me); return pause0(); }
-                if (pk >= 0) me.getInventory().setSelectedSlot(pk);
+                // Ostinato: publish through the controls-only input boundary.
+                if (pk >= 0) ControlInput.selectSlot(pk);
                 baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(eye, Vec3.atCenterOf(shelterSlit), ctx.playerRotations()), true);
                 Direction face = Direction.getApproximateNearest(cell.getX() - shelterSlit.getX(), 0, cell.getZ() - shelterSlit.getZ());
                 if (!shelterSlit.equals(shelterDig)) { shelterDig = shelterSlit; ctx.playerController().clickBlock(shelterSlit, face); }
                 else ctx.playerController().onPlayerDamageBlock(shelterSlit, face);
-                me.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                // Ostinato: vanilla attack/use performs its own swing.
                 status = "walled in, opening a slit";
                 return pause0();
             }
@@ -818,12 +824,14 @@ public final class BastionProcess extends BaritoneProcessHelper {
                 Vec3 a = clearAim(me, b);
                 if (a != null && (aim == null || eye.distanceTo(a) < eye.distanceTo(aim))) { t = b; aim = a; }
             }
-            if (me.getInventory().getSelectedSlot() != weapon) me.getInventory().setSelectedSlot(weapon);
+            // Ostinato: publish through the controls-only input boundary.
+            if (me.getInventory().getSelectedSlot() != weapon) ControlInput.selectSlot(weapon);
             else if (t != null) {
                 baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(eye, aim, ctx.playerRotations()), true);
                 if (me.getAttackStrengthScale(0.5f) >= 0.95f) {
-                    ctx.minecraft().gameMode.attack((LocalPlayer) me, t);
-                    me.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                    // Ostinato: publish through the controls-only input boundary.
+                    ControlInput.attack((LocalPlayer) me, t);
+                    // Ostinato: vanilla attack/use performs its own swing.
                     shelterStruckAt = ticks;
                     if (t != shelterMark) shelterStrikes = 0;
                     shelterMark = t;
@@ -968,7 +976,8 @@ public final class BastionProcess extends BaritoneProcessHelper {
             status = "hotbar gold";
             return pause;
         }
-        me.getInventory().setSelectedSlot(slot);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(slot);
         aimer.look(angry.position().add(0, 0.3, 0), 0);
         if (Math.abs(Mth.wrapDegrees(me.getYRot() - yawTo(me, angry))) < 12) {
             if (!safeDrop(me)) return pause0();
@@ -1065,7 +1074,8 @@ public final class BastionProcess extends BaritoneProcessHelper {
                 status = "hotbar gold";
                 return pause;
             }
-            me.getInventory().setSelectedSlot(slot);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.selectSlot(slot);
             aimer.look(Vec3.atBottomCenterOf(pit).add(0, 0.6, 0), 0);
             if (++aimTicks >= 6) {
                 if (!safeDrop(me)) return pause0();
@@ -1083,8 +1093,9 @@ public final class BastionProcess extends BaritoneProcessHelper {
             }
             aimer.look(victim.getEyePosition(), 0);
             if (++aimTicks >= 4) {
-                net.minecraft.client.Minecraft.getInstance().gameMode.attack((LocalPlayer) me, victim);
-                me.swing(net.minecraft.world.InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                // Ostinato: publish through the controls-only input boundary.
+                ControlInput.attack((LocalPlayer) me, victim);
+                // Ostinato: vanilla attack/use performs its own swing.
                 angered = true;
             }
             return pause;
@@ -1126,7 +1137,8 @@ public final class BastionProcess extends BaritoneProcessHelper {
             BlockPos under = ctx.player().blockPosition().below();
             if (nudgeDest.getX() == ctx.player().blockPosition().getX() && nudgeDest.getZ() == ctx.player().blockPosition().getZ() && solid(under) && !lavaNearPos(under.below())) {
                 int pk = pickaxeSlot(ctx.player());
-                if (pk >= 0 && pk < 9) ctx.player().getInventory().setSelectedSlot(pk);
+                // Ostinato: publish through the controls-only input boundary.
+                if (pk >= 0 && pk < 9) ControlInput.selectSlot(pk);
                 else if (pk >= 9) ctx.playerController().windowClick(ctx.player().inventoryMenu.containerId, pk, 7, ContainerInput.SWAP, ctx.player());
                 baritone.getLookBehavior().updateTarget(new Rotation(ctx.player().getYRot(), 90), true);
                 if (!under.equals(holeTarget)) { holeTarget = under; ctx.playerController().clickBlock(under, Direction.UP); }
@@ -1143,7 +1155,8 @@ public final class BastionProcess extends BaritoneProcessHelper {
             return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
         }
         if (ctx.player() != null) {
-            selAtTickStart = ctx.player().getInventory().getSelectedSlot(); updateFlow(ctx.player(), brokeNextToFluid()); if (ticks - lastBlockTick == 3) { net.minecraft.client.Minecraft.getInstance().options.keyUse.setDown(false); if (ctx.player().isUsingItem() && ctx.player().getUseItem().is(Items.SHIELD)) net.minecraft.client.Minecraft.getInstance().gameMode.releaseUsingItem(ctx.player()); }
+            // Ostinato: publish through the controls-only input boundary.
+            selAtTickStart = ctx.player().getInventory().getSelectedSlot(); updateFlow(ctx.player(), brokeNextToFluid()); if (ticks - lastBlockTick == 3) { net.minecraft.client.Minecraft.getInstance().options.keyUse.setDown(false); if (ctx.player().isUsingItem() && ctx.player().getUseItem().is(Items.SHIELD)) ControlInput.releaseUsingItem(ctx.player()); }
             // picked-up counter from the inventory (counting the item we walked to missed most pickups, run 32: 2)
             int u = 0;
             for (int i = 0; i < 36; i++) { ItemStack st = ctx.player().getInventory().getItem(i); if (!st.isEmpty() && BastionGoals.barterUseful(itemId(st)) && !st.is(Items.GOLD_INGOT)) u += st.getCount(); }
@@ -1391,7 +1404,8 @@ public final class BastionProcess extends BaritoneProcessHelper {
             if (cell != null) {
                 int b = clutchBlock(me);
                 if (b >= 0 && b < 9) {
-                    me.getInventory().setSelectedSlot(b);
+                    // Ostinato: publish through the controls-only input boundary.
+                    ControlInput.selectSlot(b);
                     BlockPos against = cell.below();
                     if (!cell.equals(wallCell)) { wallCell = cell.immutable(); wallTries = 0; }
                     if (++wallTries > 8) wallFailed.put(wallCell, ticks + 100L);
@@ -1527,7 +1541,8 @@ public final class BastionProcess extends BaritoneProcessHelper {
             double ox = mid.x - me.getX(), oz = mid.z - me.getZ();
             if (Math.hypot(ox, oz) > 0.12) {
                 baritone.getLookBehavior().updateTarget(new Rotation((float) Math.toDegrees(Math.atan2(-ox, oz)), me.getXRot()), true);
-                me.setDeltaMovement(ox * 0.4, me.getDeltaMovement().y, oz * 0.4);
+                // Ostinato: steer out of lava with a forward key, never injected velocity.
+                baritone.getInputOverrideHandler().setInputForceState(Input.MOVE_FORWARD, true);
             }
             // mid-descent the old door breaks with the block under it, so this runs whether or not we are in a door right now
             if (descentSteps > 0 && ticks - doorSince > 300) { descentSteps = -1; logDirect("Bastion: door descent stalled, normal escape"); }
@@ -1541,7 +1556,8 @@ public final class BastionProcess extends BaritoneProcessHelper {
                 for (int i = 0; i < 36 && gap < 0; i++) if (me.getInventory().getItem(i).is(Items.GOLDEN_APPLE) || me.getInventory().getItem(i).is(Items.ENCHANTED_GOLDEN_APPLE)) gap = i;
                 if (gap >= 0 && me.getHealth() < 12 && !me.hasEffect(net.minecraft.world.effect.MobEffects.REGENERATION)) {
                     if (gap >= 9) { ctx.playerController().windowClick(me.inventoryMenu.containerId, gap, 6, ContainerInput.SWAP, me); return pause0(); }
-                    me.getInventory().setSelectedSlot(gap);
+                    // Ostinato: publish through the controls-only input boundary.
+                    ControlInput.selectSlot(gap);
                     baritone.getInputOverrideHandler().setInputForceState(Input.CLICK_RIGHT, true);
                     ctx.minecraft().options.keyUse.setDown(true);
                     status = "in door pocket, eating a golden apple against the fire";
@@ -1619,7 +1635,8 @@ public final class BastionProcess extends BaritoneProcessHelper {
                     for (BlockPos w : new BlockPos[]{fr.above(), fr, me.blockPosition().above()}) {
                         if (!solid(w) || lavaNearPos(w) && lavaAt(w.above())) continue;
                         int pk = pickaxeSlot(me);
-                        if (pk >= 0 && pk < 9) me.getInventory().setSelectedSlot(pk);
+                        // Ostinato: publish through the controls-only input boundary.
+                        if (pk >= 0 && pk < 9) ControlInput.selectSlot(pk);
                         baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(me.getEyePosition(1.0F), Vec3.atCenterOf(w), ctx.playerRotations()), true);
                         if (!w.equals(holeTarget)) { holeTarget = w; ctx.playerController().clickBlock(w, fd.getOpposite()); }
                         else ctx.playerController().onPlayerDamageBlock(w, fd.getOpposite());
@@ -1689,7 +1706,7 @@ public final class BastionProcess extends BaritoneProcessHelper {
                     }
                     baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(me.getEyePosition(1.0F), Vec3.atCenterOf(f), ctx.playerRotations()), true);
                     ctx.playerController().clickBlock(f, net.minecraft.core.Direction.UP);
-                    me.swing(net.minecraft.world.InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                    // Ostinato: vanilla attack/use performs its own swing.
                     status = "putting out fire";
                     return pause0();
                 }
@@ -1922,7 +1939,8 @@ public final class BastionProcess extends BaritoneProcessHelper {
             status = "hotbar gold";
             return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
         }
-        me.getInventory().setSelectedSlot(slot);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(slot);
         aimer.look(target.position().add(0, 0.4, 0), 0);
         if (Math.abs(Mth.wrapDegrees(me.getYRot() - yawTo(me, target))) < 12) {
             if (!safeDrop(me)) return pause0();
@@ -2006,7 +2024,8 @@ public final class BastionProcess extends BaritoneProcessHelper {
             int b = clutchBlock(me);
             if (b < 0) { descentSteps = -1; return null; }
             if (b >= 9) { ctx.playerController().windowClick(me.inventoryMenu.containerId, b, 7, ContainerInput.SWAP, me); return pause0(); }
-            me.getInventory().setSelectedSlot(b);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.selectSlot(b);
             // sneaking, so the click on the door top places the block instead of opening the door
             baritone.getInputOverrideHandler().setInputForceState(Input.SNEAK, true);
             if (me.isShiftKeyDown()) {
@@ -2020,7 +2039,8 @@ public final class BastionProcess extends BaritoneProcessHelper {
             int pick = pickaxeSlot(me);
             if (pick < 0) { descentSteps = -1; return null; }
             if (pick >= 9) { ctx.playerController().windowClick(me.inventoryMenu.containerId, pick, 7, ContainerInput.SWAP, me); return pause0(); }
-            me.getInventory().setSelectedSlot(pick);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.selectSlot(pick);
             baritone.getLookBehavior().updateTarget(new Rotation(me.getYRot(), 90), true);
             // mine that exact block: the crosshair would hit the door we stand in first
             if (!digging) { ctx.playerController().clickBlock(below, Direction.UP); digging = true; }
@@ -2041,7 +2061,8 @@ public final class BastionProcess extends BaritoneProcessHelper {
         for (int i = 0; i < 36 && slot < 0; i++) if (me.getInventory().getItem(i).is(net.minecraft.tags.ItemTags.WOODEN_DOORS)) slot = i;
         if (slot < 0) { descentSteps = -1; return null; }
         if (slot >= 9) { ctx.playerController().windowClick(me.inventoryMenu.containerId, slot, 7, ContainerInput.SWAP, me); return pause0(); }
-        me.getInventory().setSelectedSlot(slot);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(slot);
         placeDoor(me, below);
         if (ctx.world().getBlockState(below).getBlock() instanceof net.minecraft.world.level.block.DoorBlock) {
             // placed (the client sees it next tick at the latest): this is our pocket now
@@ -2188,7 +2209,8 @@ public final class BastionProcess extends BaritoneProcessHelper {
                     in.setInputForceState(Input.SNEAK, true);
                     return pause0();
                 }
-                me.getInventory().setSelectedSlot(slot);
+                // Ostinato: publish through the controls-only input boundary.
+                ControlInput.selectSlot(slot);
                 if (placeDoor(me, feet)) { centreTicks = 0; wDoor = feet.immutable(); logDirect("Bastion: water door pocket at " + feet.toShortString() + " air=" + me.getAirSupply()); }
                 in.setInputForceState(Input.SNEAK, true);
                 return pause0();
@@ -2225,7 +2247,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
                     if (fluidNextTo(t, cur, cur.above(), n, n.above())) { if (wExit != null) wBadExit.add(wExit); wExit = null; status = "water: tunnel blocked by fluid"; return pause0(); }
                     int pk = pickaxeSlot(me);
                     if (pk >= 9) { ctx.playerController().windowClick(me.inventoryMenu.containerId, pk, 7, ContainerInput.SWAP, me); return pause0(); }
-                    me.getInventory().setSelectedSlot(pk);
+                    // Ostinato: publish through the controls-only input boundary.
+                    ControlInput.selectSlot(pk);
                     baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(me.getEyePosition(1.0F), Vec3.atCenterOf(t), ctx.playerRotations()), true);
                     if (!t.equals(holeTarget)) { holeTarget = t; ctx.playerController().clickBlock(t, dir.getOpposite()); }
                     else ctx.playerController().onPlayerDamageBlock(t, dir.getOpposite());
@@ -2271,7 +2294,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
             ctx.playerController().windowClick(me.inventoryMenu.containerId, slot, 7, ContainerInput.SWAP, me);
             return pause0();
         }
-        me.getInventory().setSelectedSlot(slot);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(slot);
         if (placeDoor(me, cell)) {
             doorPos = cell.immutable();
             doorSince = ticks;
@@ -2486,7 +2510,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
                     ctx.playerController().windowClick(me.inventoryMenu.containerId, slot, 7, ContainerInput.SWAP, me);
                     return pause0();
                 }
-                me.getInventory().setSelectedSlot(slot);
+                // Ostinato: publish through the controls-only input boundary.
+                ControlInput.selectSlot(slot);
                 baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(me.getEyePosition(1.0F), hit, ctx.playerRotations()), true);
                 ctx.playerController().processRightClickBlock((LocalPlayer) me, ctx.world(), InteractionHand.MAIN_HAND, new BlockHitResult(hit, dir.getOpposite(), against, false));
                 status = "clutch: block under us (" + (int) me.fallDistance + " fallen, " + remaining + " to go" + (intoLava ? ", lava" : "") + ")";
@@ -2837,7 +2862,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
             return BastionScript.Result.FAILED;
         }
         if (slot >= 9) { ctx.playerController().windowClick(me.inventoryMenu.containerId, slot, 8, ContainerInput.SWAP, me); return BastionScript.Result.WORKING; }
-        me.getInventory().setSelectedSlot(slot);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(slot);
         baritone.getInputOverrideHandler().setInputForceState(Input.SNEAK, true); // do not open a chest or door we click on
         baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(eye, aim, ctx.playerRotations()), true);
         if (ctx.minecraft().hitResult instanceof BlockHitResult h && h.getBlockPos().equals(sup) && h.getDirection() == face) {
@@ -2861,7 +2887,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
         int pick = pickaxeSlot(me);
         if (pick < 0) return BastionScript.Result.FAILED;
         if (pick >= 9) { ctx.playerController().windowClick(me.inventoryMenu.containerId, pick, 7, ContainerInput.SWAP, me); return BastionScript.Result.WORKING; }
-        me.getInventory().setSelectedSlot(pick);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(pick);
         Rotation rot = RotationUtils.calcRotationFromVec3d(eye, Vec3.atCenterOf(cell), ctx.playerRotations());
         baritone.getLookBehavior().updateTarget(rot, true);
         if (ctx.isLookingAt(cell)) { baritone.getInputOverrideHandler().setInputForceState(Input.CLICK_LEFT, true); aimMiss = 0; }
@@ -2876,7 +2903,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
         int slot = shelterBlock(me, false);
         if (slot < 0) return BastionScript.Result.FAILED;
         if (slot >= 9) { ctx.playerController().windowClick(me.inventoryMenu.containerId, slot, 8, ContainerInput.SWAP, me); return BastionScript.Result.WORKING; }
-        me.getInventory().setSelectedSlot(slot);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(slot);
         baritone.getLookBehavior().updateTarget(new Rotation(me.getYRot(), 90), true);
         if (me.onGround()) baritone.getInputOverrideHandler().setInputForceState(Input.JUMP, true);
         else if (me.getY() - Math.floor(me.getY()) > 0.15 || me.getDeltaMovement().y < 0) {
@@ -2893,7 +2921,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
             if (!realLava(opLava)) { opLava = null; return BastionScript.Result.DONE; }
             int b = slotOf(me, Items.BUCKET);
             if (b < 0 || b >= 9) { opLava = null; return BastionScript.Result.DONE; }
-            me.getInventory().setSelectedSlot(b);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.selectSlot(b);
             baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(eye, Vec3.atCenterOf(opLava), ctx.playerRotations()), true);
             if (ticks % 4 == 0) baritone.getInputOverrideHandler().setInputForceState(Input.CLICK_RIGHT, true);
             return BastionScript.Result.WORKING;
@@ -2906,7 +2935,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
         if (lb < 0 || lb >= 9) return BastionScript.Result.FAILED;
         BlockPos fl = t.blockPosition().below();
         if (!solid(fl)) return BastionScript.Result.WORKING;
-        me.getInventory().setSelectedSlot(lb);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(lb);
         Vec3 a = Vec3.atCenterOf(fl).add(0, 0.5, 0);
         if (eye.distanceTo(a) > 4.4) return BastionScript.Result.WORKING;
         baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(eye, a, ctx.playerRotations()), true);
@@ -2955,7 +2985,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
             if (BruteTactics.scoopNow(ticks - btPourTick, b != null && b.isAlive(), b != null && b.isInLava(), drops)) {
                 int s = slotOf(me, Items.BUCKET);
                 if (s < 0 || s >= 9) { logDirect("Bastion: brute lava: no empty bucket in the hotbar to scoop"); btLava = null; return null; }
-                me.getInventory().setSelectedSlot(s);
+                // Ostinato: publish through the controls-only input boundary.
+                ControlInput.selectSlot(s);
                 baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(eye, Vec3.atCenterOf(btLava), ctx.playerRotations()), true);
                 if (eye.distanceTo(Vec3.atCenterOf(btLava)) > 4.4) return new PathingCommand(new GoalNear(btLava, 3), PathingCommandType.SET_GOAL_AND_PATH);
                 if (ticks % 4 == 0) baritone.getInputOverrideHandler().setInputForceState(Input.CLICK_RIGHT, true);
@@ -3012,7 +3043,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
             return brutePit(me, heavies);
         }
         if (lb >= 9) { ctx.playerController().windowClick(me.inventoryMenu.containerId, lb, 6, ContainerInput.SWAP, me); return pause0(); }
-        me.getInventory().setSelectedSlot(lb);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(lb);
         BlockPos fl = target.below();
         Vec3 a = Vec3.atCenterOf(fl).add(0, 0.5, 0);
         baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(eye, a, ctx.playerRotations()), true);
@@ -3115,7 +3147,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
                 otMode = OutsideTrade.Mode.DONE; return null; // the normal trade hole/pit logic takes the free piglins from here
             }
             // drop an ingot every 5 s as we walk out: piglins go for it and follow the trail
-            if (ticks - otLastDrop > 100 && ingotCount(me) > 6) { int s = slotOf(me, Items.GOLD_INGOT); if (s >= 0 && s < 9) { me.getInventory().setSelectedSlot(s); if (safeDrop(me)) otLastDrop = ticks; } }
+            // Ostinato: publish through the controls-only input boundary.
+            if (ticks - otLastDrop > 100 && ingotCount(me) > 6) { int s = slotOf(me, Items.GOLD_INGOT); if (s >= 0 && s < 9) { ControlInput.selectSlot(s); if (safeDrop(me)) otLastDrop = ticks; } }
             status = "outside trade: luring piglins out";
             return new PathingCommand(new GoalXZ(otGoal.getX(), otGoal.getZ()), PathingCommandType.SET_GOAL_AND_PATH);
         }
@@ -3164,7 +3197,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
         Enderman best = null;
         for (Enderman e : ems) if (best == null || me.distanceTo(e) < me.distanceTo(best)) best = e;
         if (best == null) { status = "enderman hunt: waiting for endermen"; return pause0(); }
-        int sw = slotOf(me, Items.DIAMOND_SWORD); if (sw >= 0 && sw < 9) me.getInventory().setSelectedSlot(sw);
+        // Ostinato: publish through the controls-only input boundary.
+        int sw = slotOf(me, Items.DIAMOND_SWORD); if (sw >= 0 && sw < 9) ControlInput.selectSlot(sw);
         if (best.isCreepy() || EndermanHunt.provoke(me.distanceTo(best), angry)) {
             baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(eye, best.getEyePosition(1.0F), ctx.playerRotations()), true);
             if (best.isCreepy() && me.distanceTo(best) < 3.2 && me.getAttackStrengthScale(0) >= 0.95F && ctx.minecraft().hitResult instanceof net.minecraft.world.phys.EntityHitResult h && h.getEntity() == best)
@@ -3272,7 +3306,7 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
             HitResult h = RayTraceUtils.rayTraceTowards(me, rot, ctx.playerController().getBlockReachDistance(), false);
             if (h instanceof BlockHitResult bh && bh.getBlockPos().equals(next)) {
                 ctx.playerController().processRightClickBlock((LocalPlayer) me, ctx.world(), InteractionHand.MAIN_HAND, bh);
-                me.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+                // Ostinato: vanilla attack/use performs its own swing.
                 chestClickTick = ticks;
                 openedChest = next;
             }
@@ -3300,7 +3334,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
         }
         int slot = hotbarGold(me);
         if (slot < 0) return pause0();
-        me.getInventory().setSelectedSlot(slot);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(slot);
         aimer.look(target.position().add(0, 0.4, 0), 0);
         if (Math.abs(Mth.wrapDegrees(me.getYRot() - yawTo(me, target))) < 12) {
             if (!safeDrop(me)) return pause0();
@@ -3554,7 +3589,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
             ctx.playerController().windowClick(me.inventoryMenu.containerId, pick, 7, ContainerInput.SWAP, me);
             return pause;
         }
-        me.getInventory().setSelectedSlot(hot);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(hot);
         baritone.getLookBehavior().updateTarget(rot, true);
         if (ctx.isLookingAt(dig) || ctx.playerRotations().isReallyCloseTo(rot)) {
             baritone.getInputOverrideHandler().setInputForceState(Input.CLICK_LEFT, true);
@@ -3603,7 +3639,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
             if (!heavies.isEmpty() && ticks - lavaTick < 120) return null;
             int b = hotbarItem(me, Items.BUCKET);
             if (b < 0) { lavaPos = null; return null; }
-            me.getInventory().setSelectedSlot(b);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.selectSlot(b);
             Vec3 c = Vec3.atCenterOf(lavaPos).add(0, 0.4, 0);
             if (eye.distanceTo(c) > 4.4) { lavaPos = null; return null; }
             baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(eye, c, ctx.playerRotations()), true);
@@ -3645,7 +3682,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
         }
         if (col == null) return null;
         baritone.getInputOverrideHandler().setInputForceState(Input.SNEAK, true);
-        me.getInventory().setSelectedSlot(slot);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(slot);
         baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(eye, aim, ctx.playerRotations()), true);
         status = "perch: lava trap";
         if (ctx.minecraft().hitResult instanceof BlockHitResult h && h.getBlockPos().equals(col) && h.getDirection() == d) {
@@ -3682,11 +3720,13 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
         status = "on tower, striking brute at " + String.format("%.1f", best);
         // sneaking at the edge of a one-block column: we do not step off it turning to aim
         baritone.getInputOverrideHandler().setInputForceState(Input.SNEAK, true);
-        if (slot >= 0 && me.getInventory().getSelectedSlot() != slot) { me.getInventory().setSelectedSlot(slot); return pause0(); }
+        // Ostinato: publish through the controls-only input boundary.
+        if (slot >= 0 && me.getInventory().getSelectedSlot() != slot) { ControlInput.selectSlot(slot); return pause0(); }
         baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(eye, aim.lerp(t.getBoundingBox().getCenter(), 0.2), ctx.playerRotations()), true);
         if (me.getAttackStrengthScale(0.5f) >= 0.95f) {
-            ctx.minecraft().gameMode.attack((LocalPlayer) me, t);
-            me.swing(InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.attack((LocalPlayer) me, t);
+            // Ostinato: vanilla attack/use performs its own swing.
         }
         return pause0();
     }
@@ -3699,7 +3739,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
             ctx.playerController().windowClick(me.inventoryMenu.containerId, food, 6, ContainerInput.SWAP, me);
             return pause0();
         }
-        me.getInventory().setSelectedSlot(food);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(food);
         baritone.getInputOverrideHandler().setInputForceState(Input.CLICK_RIGHT, true);
         ctx.minecraft().options.keyUse.setDown(true);
         status = "eating";
@@ -3791,7 +3832,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
                 if (r > rank) { rank = r; best = i; }
             }
             if (best >= 9) { ctx.playerController().windowClick(me.inventoryMenu.containerId, best, 0, ContainerInput.SWAP, me); best = 0; }
-            if (best >= 0) me.getInventory().setSelectedSlot(best);
+            // Ostinato: publish through the controls-only input boundary.
+            if (best >= 0) ControlInput.selectSlot(best);
             logDirect("Bastion: duel start vs brute at " + b.blockPosition().toShortString());
         }
         if (fighting) { baritone.getPveProcess().clearEnemies(); fighting = false; }
@@ -3804,10 +3846,13 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
         if (!edge && cd >= 0.95f && d <= 3.3 /* center distance; run 92 blocked for 8 s at ~3.1 and never swung */ && me.hasLineOfSight(b)) {
             // lower the shield and swing this tick, then block again
             net.minecraft.client.Minecraft.getInstance().options.keyUse.setDown(false);
-            if (me.isUsingItem()) net.minecraft.client.Minecraft.getInstance().gameMode.releaseUsingItem(me);
-            me.setSprinting(true);
-            net.minecraft.client.Minecraft.getInstance().gameMode.attack((LocalPlayer) me, b);
-            me.swing(net.minecraft.world.InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+            // Ostinato: publish through the controls-only input boundary.
+            if (me.isUsingItem()) ControlInput.releaseUsingItem(me);
+            // Ostinato: request sprint with the ordinary input key.
+            baritone.getInputOverrideHandler().setInputForceState(Input.SPRINT, true);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.attack((LocalPlayer) me, b);
+            // Ostinato: vanilla attack/use performs its own swing.
             duelHits++;
             status = "duel: hit " + duelHits;
             return pause0();
@@ -3819,7 +3864,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
         // run 61: the CLICK_RIGHT override never raised the shield (using=false); hold the real use key and start the use
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
         mc.options.keyUse.setDown(true);
-        if (!me.isUsingItem()) mc.gameMode.useItem(me, net.minecraft.world.InteractionHand.OFF_HAND);
+        // Ostinato: publish through the controls-only input boundary.
+        if (!me.isUsingItem()) ControlInput.useItem(me, net.minecraft.world.InteractionHand.OFF_HAND);
         status = "duel: blocking"; lastBlockTick = ticks;
         return pause0();
     }
@@ -3852,16 +3898,19 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
             int r = s.is(net.minecraft.tags.ItemTags.SWORDS) ? 2 : s.is(net.minecraft.tags.ItemTags.AXES) ? 1 : 0;
             if (r > rank) { rank = r; best = i; }
         }
-        if (best >= 0 && me.getInventory().getSelectedSlot() != best) { me.getInventory().setSelectedSlot(best); status = "skirmish: draw"; return pause0(); }
+        // Ostinato: publish through the controls-only input boundary.
+        if (best >= 0 && me.getInventory().getSelectedSlot() != best) { ControlInput.selectSlot(best); status = "skirmish: draw"; return pause0(); }
         double d = me.distanceTo(t);
         float cd = me.getAttackStrengthScale(0.5f);
         boolean shield = me.getOffhandItem().is(Items.SHIELD);
         aimer.look(t.getEyePosition(), 0);
         if (cd >= 0.95f && d <= 3.3 && me.hasLineOfSight(t)) {
             mc.options.keyUse.setDown(false);
-            if (me.isUsingItem()) mc.gameMode.releaseUsingItem(me);
-            mc.gameMode.attack((LocalPlayer) me, t);
-            me.swing(net.minecraft.world.InteractionHand.MAIN_HAND, net.minecraft.world.item.component.SwingAnimation.DEFAULT, false);
+            // Ostinato: publish through the controls-only input boundary.
+            if (me.isUsingItem()) ControlInput.releaseUsingItem(me);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.attack((LocalPlayer) me, t);
+            // Ostinato: vanilla attack/use performs its own swing.
             status = "skirmish: hit";
             return pause0();
         }
@@ -3872,7 +3921,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
         }
         if (shield) {
             mc.options.keyUse.setDown(true);
-            if (!me.isUsingItem()) mc.gameMode.useItem(me, net.minecraft.world.InteractionHand.OFF_HAND);
+            // Ostinato: publish through the controls-only input boundary.
+            if (!me.isUsingItem()) ControlInput.useItem(me, net.minecraft.world.InteractionHand.OFF_HAND);
             status = "skirmish: blocking"; lastBlockTick = ticks;
         } else status = "skirmish: cooldown";
         return pause0();
@@ -3897,10 +3947,12 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
             }
             return null;
         }
-        me.getInventory().setSelectedSlot(slot);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(slot);
         if (me.getInventory().getSelectedSlot() != selAtTickStart) return pause0();
         mc.options.keyUse.setDown(true);
-        mc.gameMode.useItem(me, net.minecraft.world.InteractionHand.MAIN_HAND);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.useItem(me, net.minecraft.world.InteractionHand.MAIN_HAND);
         cureUntil = ticks + 40;
         logDirect("Bastion: " + (me.isInLava() ? "in lava" : "burning") + " at " + (int) me.getHealth() + " hp, using " + itemId(me.getInventory().getItem(slot)));
         status = "drinking/eating for fire";
@@ -4001,7 +4053,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
             int pick = pickaxeSlot(me);
             if (pick < 0) { logDirect("Bastion: hole dig aborted (no pickaxe)"); digHole = null; holeRetry = ticks + 6000; return null; }
             if (pick >= 9) { ctx.playerController().windowClick(me.inventoryMenu.containerId, pick, 7, ContainerInput.SWAP, me); return pause0(); }
-            me.getInventory().setSelectedSlot(pick);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.selectSlot(pick);
             // sneak: never step into the hole we are digging
             baritone.getInputOverrideHandler().setInputForceState(Input.SNEAK, true);
             baritone.getLookBehavior().updateTarget(RotationUtils.calcRotationFromVec3d(me.getEyePosition(1.0F), Vec3.atCenterOf(target).add(0, 0.5, 0), ctx.playerRotations()), true);
@@ -4046,7 +4099,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
                 if (admiring.containsKey(caught.getUUID()) || caught.getOffhandItem().is(Items.GOLD_INGOT) || ingots < 1) { status = "camp: pickup hole, waiting"; return pause0(); }
                 int slot = hotbarGold(me);
                 if (slot < 0) return pause0();
-                me.getInventory().setSelectedSlot(slot);
+                // Ostinato: publish through the controls-only input boundary.
+                ControlInput.selectSlot(slot);
                 // aim at the far corner of the trap hole so the ingot lands on the piglin's side, not back at our feet
                 Vec3 far = new Vec3(caughtHole.getX() + 0.5 + 0.35 * (caughtHole.getX() - pickHole.getX()), caughtHole.getY() - 2, caughtHole.getZ() + 0.5 + 0.35 * (caughtHole.getZ() - pickHole.getZ()));
                 // simulate the ingot's flight (ItemThrow) and pick the pitch that lands it in that corner
@@ -4079,7 +4133,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
             if (occupied || ticks - lastBait < 140 || ingots < 2) continue;
             int slot = hotbarGold(me);
             if (slot < 0) return null;
-            me.getInventory().setSelectedSlot(slot);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.selectSlot(slot);
             baritone.getInputOverrideHandler().setInputForceState(Input.SNEAK, true);
             aimer.look(Vec3.atCenterOf(h.below(2)), 0);
             if (Math.abs(Mth.wrapDegrees(me.getYRot() - (float) Math.toDegrees(Math.atan2(-(h.getX() + 0.5 - me.getX()), h.getZ() + 0.5 - me.getZ())))) < 15 && safeDrop(me)) { lastBait = ticks; status = "camp: baiting hole"; logDirect("Bastion: baited hole at " + h.toShortString()); }
@@ -4168,7 +4223,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
         campIdleSince = ticks;
         int slot = hotbarGold(me);
         if (slot < 0) { camping = false; return null; }
-        me.getInventory().setSelectedSlot(slot);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(slot);
         aimer.look(t.position().add(0, 0.4, 0), 0);
         if (Math.abs(Mth.wrapDegrees(me.getYRot() - yawTo(me, t))) < 12 && safeDrop(me)) {
             admiring.put(t.getUUID(), ticks);
@@ -4196,7 +4252,8 @@ if (!solid(n) && !solid(n.above()) && !water(n) && !water(n.above())) {
      */
     private boolean safeDrop(Player me) {
         if (me.getInventory().getSelectedSlot() != selAtTickStart || !me.getMainHandItem().is(Items.GOLD_INGOT)) return false;
-        ctx.minecraft().gameMode.dropItem((LocalPlayer) me, false);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.dropItem((LocalPlayer) me, false);
         return true;
     }
     private long lastWatched = -1000;

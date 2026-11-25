@@ -16,6 +16,7 @@
  */
 
 package baritone.event;
+import baritone.utils.player.ControlInput;
 
 import baritone.pathing.movement.movements.MovementJump;
 import baritone.pathing.movement.CalculationContext;
@@ -79,6 +80,12 @@ public final class GameEventHandler implements IEventBus, Helper {
         }
         if (event.getType() == TickEvent.Type.IN && Baritone.settings().physicalInput.value) {
             baritone.getInputOverrideHandler().realizePhysicalKeys();
+        }
+        // Ostinato: actions use the current crosshair; look/slot changes wait for tick HEAD.
+        if (event.getType() == TickEvent.Type.IN) {
+            baritone.getInputOverrideHandler().publishControls();
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.flush();
         }
     }
 

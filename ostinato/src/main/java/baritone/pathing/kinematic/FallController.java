@@ -1,4 +1,5 @@
 package baritone.pathing.kinematic;
+import baritone.utils.player.ControlInput; // Ostinato: controls-only action mailbox
 
 import baritone.Baritone;
 import baritone.api.pathing.calc.IPath;
@@ -91,7 +92,8 @@ public final class FallController {
                 ticks = 0;
                 return -1;
             }
-            inv.setSelectedSlot(empty);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.selectSlot(empty);
             baritone.getLookBehavior().human();
             baritone.getLookBehavior().updateTarget(new Rotation(player.getYRot(), 90f), true);
             if (!press(baritone, false, false, false, false, false, false, player.getXRot() > 80 && ticks % 3 == 0)) {
@@ -129,7 +131,8 @@ public final class FallController {
         if (player.onGround() || inWater) {
             if (inWater && bucket && Inventory.isHotbarSlot(empty) && !Inventory.isHotbarSlot(water) && ticks < 60) {
                 ticks++;
-                inv.setSelectedSlot(empty);
+                // Ostinato: publish through the controls-only input boundary.
+                ControlInput.selectSlot(empty);
                 baritone.getLookBehavior().human();
                 baritone.getLookBehavior().updateTarget(new Rotation(player.getYRot(), 90f), true);
                 if (!press(baritone, false, false, false, false, false, false, player.getXRot() > 80 && ticks % 3 == 0)) {
@@ -161,7 +164,8 @@ public final class FallController {
         boolean place = bucket && air && Inventory.isHotbarSlot(water);
         float pitch = place ? 90f : 0f;
         if (place) {
-            inv.setSelectedSlot(water);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.selectSlot(water);
         }
         baritone.getLookBehavior().human();
         // drifting: keep facing the way the keys were worked out for

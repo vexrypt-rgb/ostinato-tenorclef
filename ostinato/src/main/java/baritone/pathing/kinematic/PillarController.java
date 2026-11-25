@@ -118,7 +118,9 @@ public final class PillarController {
         boolean jump = grounded && !fix && down && player.getY() < dest.y;
         boolean steer = !jump && (off > 0.05 || hspeed > 0.03); // a jump tick carries no sideways push: sprint momentum would take it off the column
         if (player.isSprinting()) {
-            player.setSprinting(false); // left over from the walking move before: a sprint jump throws the player off the column
+            // Ostinato: a sneak tap cancels vanilla sprint before the pillar jump.
+            in.setInputForceState(Input.SNEAK, true);
+            jump = false;
         }
         in.setInputForceState(Input.MOVE_FORWARD, steer && fwd > KEY);
         in.setInputForceState(Input.MOVE_BACK, steer && fwd < -KEY);

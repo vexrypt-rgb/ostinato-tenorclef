@@ -17,6 +17,8 @@
 
 package baritone.process;
 
+import baritone.utils.player.ControlInput; // Ostinato: controls-only action mailbox
+
 import baritone.api.process.ProcessOutcome;
 import baritone.Baritone;
 import baritone.altoclef.AltoClefSettings;
@@ -986,8 +988,12 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
             float originalYaw = ctx.player().getYRot();
             float originalPitch = ctx.player().getXRot();
             // the state depends on the facing of the player sometimes
-            ctx.player().setYRot(rot.getYaw());
-            ctx.player().setXRot(rot.getPitch());
+            // Ostinato: placement prediction must not mutate the live player.
+            if (Math.abs(net.minecraft.util.Mth.wrapDegrees(rot.getYaw() - originalYaw)) > 1
+                    || Math.abs(rot.getPitch() - originalPitch) > 1) {
+                baritone.getLookBehavior().updateTarget(rot, true);
+                continue;
+            }
             BlockPlaceContext meme = new BlockPlaceContext(new UseOnContext(
                     ctx.world(),
                     ctx.player(),
@@ -996,8 +1002,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
                     (BlockHitResult) result
             ) {}); // that {} gives us access to a protected constructor lmfao
             BlockState wouldBePlaced = ((BlockItem) stack.getItem()).getBlock().getStateForPlacement(meme);
-            ctx.player().setYRot(originalYaw);
-            ctx.player().setXRot(originalPitch);
+            // Ostinato: no rotation restoration: prediction did not change it.
             if (wouldBePlaced == null) {
                 continue;
             }
@@ -1213,7 +1218,8 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
             }
             Rotation rot = toPlace.get().rot;
             baritone.getLookBehavior().updateTarget(rot, true);
-            ctx.player().getInventory().setSelectedSlot(toPlace.get().hotbarSelection);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.selectSlot(toPlace.get().hotbarSelection);
             baritone.getInputOverrideHandler().setInputForceState(Input.SNEAK, true);
             if ((ctx.isLookingAt(toPlace.get().placeAgainst) && ((BlockHitResult) ctx.objectMouseOver()).getDirection().equals(toPlace.get().side)) || ctx.playerRotations().isReallyCloseTo(rot)) {
                 baritone.getInputOverrideHandler().setInputForceState(Input.CLICK_RIGHT, true);

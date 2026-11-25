@@ -489,9 +489,8 @@ public class PathExecutor implements IPathExecutor, Helper {
             return true;
         } else {
             sprintNextTick = shouldSprintNextTick();
-            if (!sprintNextTick) {
-                ctx.player().setSprinting(false); // letting go of control doesn't make you stop sprinting actually
-            }
+            // Ostinato: sprint through the input key, never direct player state.
+            behavior.baritone.getInputOverrideHandler().setInputForceState(Input.SPRINT, sprintNextTick);
             ticksOnCurrent++;
             if (ticksOnCurrent > currentMovementOriginalCostEstimate + Baritone.settings().movementTimeoutTicks.value) {
                 // only cancel if the total time has exceeded the initial estimate
@@ -606,6 +605,8 @@ public class PathExecutor implements IPathExecutor, Helper {
     }
 
     private boolean shouldSprintNextTick() {
+        // Ostinato: no sprint on or immediately above a ladder/vine.
+        if (ctx.player().onClimbable() || ctx.world().getBlockState(ctx.playerFeet().below()).is(net.minecraft.tags.BlockTags.CLIMBABLE)) return false;
         boolean requested = behavior.baritone.getInputOverrideHandler().isInputForcedDown(Input.SPRINT);
 
         // we'll take it from here, no need for minecraft to see we're holding down control and sprint for us
@@ -861,7 +862,9 @@ public class PathExecutor implements IPathExecutor, Helper {
                 return false;
             }
             IMovement m = path.movements().get(i);
-            if (!m.getDirection().equals(dir) || !(m instanceof Movement)) {
+            // Ostinato: only plain flat walks in the window. A parkour (or any other movement) inside it times its own
+            // jump; a sprint-hop launched early lands short of its takeoff edge and falls into the gap.
+            if (!m.getDirection().equals(dir) || !(m instanceof MovementTraverse || m instanceof MovementDiagonal)) {
                 return false;
             }
             if (!((Movement) m).toBreak(bsi).isEmpty() || !((Movement) m).toPlace(bsi).isEmpty()) {

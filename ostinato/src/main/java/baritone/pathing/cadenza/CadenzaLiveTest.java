@@ -2,6 +2,7 @@
  * Ostinato: new file (Cadenza). Not part of upstream Baritone.
  */
 package baritone.pathing.cadenza;
+import baritone.utils.player.ControlInput; // Ostinato: controls-only input
 
 import baritone.Baritone;
 import baritone.api.event.events.PacketEvent;
@@ -455,7 +456,8 @@ public final class CadenzaLiveTest implements AbstractGameEventListener {
             if (l.scenario().task == Task.PLACE) {
                 p.getInventory().setItem(1, new ItemStack(Items.COBBLESTONE, 64));
             }
-            p.getInventory().setSelectedSlot(0);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.selectSlot(0);
             // full resync: a lap whose placements the server refused leaves the client's stack predicted away, and
             // setting the same stack again sends nothing (the smoke run's later placement laps started with no blocks)
             p.inventoryMenu.sendAllDataToRemote();
@@ -465,7 +467,8 @@ public final class CadenzaLiveTest implements AbstractGameEventListener {
         });
         // the held slot too: the server-side select above is never sent to the client, which kept the previous lap's
         // block slot, never re-sent it, and had every placement refused (the server held the pickaxe) as a ghost
-        mc.player.getInventory().setSelectedSlot(0);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(0);
         state = 4;
         step = 0;
         wait = 40;
@@ -480,8 +483,9 @@ public final class CadenzaLiveTest implements AbstractGameEventListener {
             arm(l.arm());
             RouteReuse.clear();
             LegatoFailures.clear();
-            player.setYRot(l.scenario().startYaw);
-            player.setXRot(0);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.look(l.scenario().startYaw, player.getXRot()); // Ostinato: queued harness mouse input
+            ControlInput.look(player.getYRot(), 0); // Ostinato: queued harness mouse input
             cadenza0 = cadenzaCounters();
             posPackets0 = positionPackets;
             calcs = cancels = navTicks = clickTicks = idleTicks = 0;

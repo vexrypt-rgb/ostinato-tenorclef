@@ -21,13 +21,13 @@ import net.minecraft.core.BlockPos;
 
 public interface IPlayerControllerMP {
 
-    void setIsHittingBlock(boolean isHittingBlock);
+    // Ostinato: mutator removed; vanilla owns mining state and carried-item synchronization.
 
     boolean isHittingBlock();
 
     BlockPos getCurrentBlock();
 
-    void callSyncCurrentPlayItem();
+    // Ostinato: mutator removed; vanilla owns mining state and carried-item synchronization.
 
-    void setDestroyDelay(int destroyDelay);
+    // Ostinato: mutator removed; vanilla owns mining state and carried-item synchronization.
 }

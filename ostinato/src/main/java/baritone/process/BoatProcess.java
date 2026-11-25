@@ -1,5 +1,7 @@
 package baritone.process;
 
+import baritone.utils.player.ControlInput; // Ostinato: controls-only action mailbox
+
 import baritone.utils.HumanInputCaps;
 import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
 import net.minecraft.world.item.component.SwingAnimation;
@@ -343,7 +345,8 @@ public final class BoatProcess extends BaritoneProcessHelper {
                 if (findBoat(4) != null) { enter(Phase.MOUNT); return pause(); }
                 int slot = BoatUtil.hotbarBoat(ctx);
                 if (slot < 0 || phaseTicks > 100) return abort("could not place the boat (" + Minecraft.getInstance().hitResult + " eye " + ctx.player().getEyeY() + ")");
-                ctx.player().getInventory().setSelectedSlot(slot);
+                // Ostinato: publish through the controls-only input boundary.
+                ControlInput.selectSlot(slot);
                 if (surfacing()) {
                     if (phaseTicks < 15) return pause();
                     // Can't place from under the surface; let the swim carry on and look again shortly.
@@ -369,9 +372,10 @@ public final class BoatProcess extends BaritoneProcessHelper {
                     float toP = HumanInputCaps.capPitch(fromP, aim.getPitch(), HumanInputCaps.maxPitch());
                     // Ostinato: physicalInput off returns toY/toP unchanged
                     float[] aimed = baritone.getLookBehavior().physicalLook(fromY, fromP, toY, toP);
-                    ctx.player().setYRot(aimed[0]);
-                    ctx.player().setXRot(aimed[1]);
-                    Minecraft.getInstance().gameMode.useItem(ctx.player(), InteractionHand.MAIN_HAND);
+                    // Ostinato: wait for the next input step, never snap before a use.
+                    baritone.getLookBehavior().updateTarget(aim, true);
+                    // Ostinato: publish through the controls-only input boundary.
+                    ControlInput.useItem(ctx.player(), InteractionHand.MAIN_HAND);
                 }
                 return pause();
             }
@@ -386,7 +390,8 @@ public final class BoatProcess extends BaritoneProcessHelper {
                 if (b == null || phaseTicks > 100) return abort("could not board");
                 if (ctx.player().distanceTo(b) > 3) return new PathingCommand(new GoalNear(b.blockPosition(), 1), PathingCommandType.REVALIDATE_GOAL_AND_PATH);
                 look(b.getX(), b.getY() + 0.3, b.getZ());
-                if (phaseTicks % 4 == 3) Minecraft.getInstance().gameMode.interact(ctx.player(), b, new net.minecraft.world.phys.EntityHitResult(b), InteractionHand.MAIN_HAND);
+                // Ostinato: publish through the controls-only input boundary.
+                if (phaseTicks % 4 == 3) ControlInput.interact(ctx.player(), b, new net.minecraft.world.phys.EntityHitResult(b), InteractionHand.MAIN_HAND);
                 return pause();
             }
             case SAIL:
@@ -406,8 +411,9 @@ public final class BoatProcess extends BaritoneProcessHelper {
                 if (phaseTicks > 100 || ctx.player().distanceTo(boat) > 5) return finish();
                 look(boat.getX(), boat.getY() + 0.3, boat.getZ());
                 if (phaseTicks % 4 == 0) {
-                    Minecraft.getInstance().gameMode.attack(ctx.player(), boat);
-                    ctx.player().swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
+                    // Ostinato: publish through the controls-only input boundary.
+                    ControlInput.attack(ctx.player(), boat);
+                    // Ostinato: vanilla attack/use performs its own swing.
                 }
                 return pause();
             }

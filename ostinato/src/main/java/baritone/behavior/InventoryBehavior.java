@@ -17,6 +17,8 @@
 
 package baritone.behavior;
 
+import baritone.utils.player.ControlInput; // Ostinato: controls-only action mailbox
+
 import baritone.utils.OstinatoRandom;
 import baritone.Baritone;
 import baritone.altoclef.AltoClefSettings;
@@ -239,7 +241,8 @@ public final class InventoryBehavior extends Behavior implements Helper {
             // acceptableThrowawayItems to the CalculationContext
             if (desired.test(item)) {
                 if (select) {
-                    p.getInventory().setSelectedSlot(i);
+                    // Ostinato: publish through the controls-only input boundary.
+                    ControlInput.selectSlot(i);
                 }
                 return true;
             }
@@ -254,7 +257,8 @@ public final class InventoryBehavior extends Behavior implements Helper {
                 ItemStack item = inv.get(i);
                 if (item.isEmpty() || item.getItem().components().has(DataComponents.TOOL)) {
                     if (select) {
-                        p.getInventory().setSelectedSlot(i);
+                        // Ostinato: publish through the controls-only input boundary.
+                        ControlInput.selectSlot(i);
                     }
                     return true;
                 }
@@ -266,7 +270,8 @@ public final class InventoryBehavior extends Behavior implements Helper {
                 if (desired.test(inv.get(i))) {
                     if (select) {
                         requestSwapWithHotBar(i, 7);
-                        p.getInventory().setSelectedSlot(7);
+                        // Ostinato: publish through the controls-only input boundary.
+                        ControlInput.selectSlot(7);
                     }
                     return true;
                 }

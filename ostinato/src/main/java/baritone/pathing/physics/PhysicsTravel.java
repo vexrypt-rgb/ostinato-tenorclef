@@ -178,9 +178,9 @@ public final class PhysicsTravel {
         }
         PhysicsPathfinder.Action a = plan.get(step);
         // Set yaw now: the look behaviour applies a tick late, and the plan assumes this tick's yaw.
-        ctx.player().setYRot(a.yaw);
+        // Ostinato: the plan waits for the visible mouse step below.
         baritone.getLookBehavior().updateTarget(new Rotation(a.yaw, 0), false);
-        if (real.onGround && offPlan(baritone.getLookBehavior().getAimProcessor().peekRotation(new Rotation(a.yaw, 0)).getYaw(), a.yaw)) {
+        if (real.onGround && offPlan(ctx.player().getYRot(), a.yaw)) {
             // Ostinato Presto v4: the move this tick goes the aim processor's way, at most 32° a tick from the last
             // sent yaw, not the plan's. Turn in place first: with the keys down the walk went out sideways
             // (presto-v4-fix4 laps 2, 5: a lap started facing back, the yaw swung through south, z 0.5 to 1.15 in four

@@ -1,4 +1,5 @@
 package baritone.process;
+import baritone.utils.player.ControlInput; // Ostinato: controls-only input
 
 import baritone.Baritone;
 import baritone.api.utils.IPlayerContext;
@@ -52,7 +53,8 @@ final class CombatAim {
 
     /** A real key press: queued like a keyboard or mouse event and handled at the start of the next client tick. */
     static void press(net.minecraft.client.KeyMapping km) {
-        net.minecraft.client.KeyMapping.click(com.mojang.blaze3d.platform.InputConstants.getKey(km.saveString()));
+        // Ostinato: serialize with hotbar and inventory transactions.
+        ControlInput.press(km);
     }
 
     void aim(Rotation r, boolean blockInteract) {

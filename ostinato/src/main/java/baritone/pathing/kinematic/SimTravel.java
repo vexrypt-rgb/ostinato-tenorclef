@@ -120,12 +120,12 @@ public final class SimTravel {
             return press(baritone, path, pathPosition, body);
         }
         yaw = SimProbe.yawToward(body.x, body.z, dest.x, dest.z);
-        if (body.onGround && PhysicsTravel.offPlan(baritone.getLookBehavior().getAimProcessor().peekRotation(new Rotation(yaw, 0)).getYaw(), yaw)) {
+        if (body.onGround && PhysicsTravel.offPlan(ctx.player().getYRot(), yaw)) {
             // Ostinato Presto v4.1: the move this tick goes the way the look has turned to (32° a tick), not the plan's.
             // presto-v4.1 final1 laps 21, 22: after a jolt Baritone's Jump had turned back west toward its run-up; this
             // driver then pressed W and sprint east at once and the walk swung through south (north), off the one-wide
             // walkway at x 33. Turn in place first, as PhysicsTravel does, and solve once facing the plan's way.
-            ctx.player().setYRot(yaw);
+            // Ostinato: updateTarget below queues the visible mouse turn.
             baritone.getLookBehavior().updateTarget(new Rotation(yaw, 0), false);
             baritone.getInputOverrideHandler().clearAllKeys();
             plan = null;
@@ -174,7 +174,7 @@ public final class SimTravel {
         predY = predicted.y;
         predZ = predicted.z;
         havePred = true;
-        ctx.player().setYRot(yaw);
+        // Ostinato: updateTarget below queues the visible mouse turn.
         baritone.getLookBehavior().updateTarget(new Rotation(yaw, 0), false);
         baritone.getInputOverrideHandler().clearAllKeys();
         baritone.getInputOverrideHandler().setInputForceState(Input.MOVE_FORWARD, true);

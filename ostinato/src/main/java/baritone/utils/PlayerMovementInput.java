@@ -16,6 +16,7 @@
  */
 
 package baritone.utils;
+import baritone.utils.player.ControlInput; // Ostinato: controls-only input
 
 import baritone.api.utils.input.Input;
 import net.minecraft.client.player.ClientInput;
@@ -59,8 +60,8 @@ public class PlayerMovementInput extends ClientInput {
         if (analog != null) {
             // Ostinato: a controller stick, not keys. The client's own input chain (0.98, sneak, the square-to-circle
             // map) applies to it as it does to a gamepad's.
-            leftImpulse = HumanInputCaps.clampAxis(analog[0]); // Ostinato: a real stick stops at full tilt
-            forwardImpulse = HumanInputCaps.clampAxis(analog[1]);
+            leftImpulse = Math.abs(analog[0]) < 0.25f ? 0 : Math.signum(analog[0]); // Ostinato: keyboard-shaped axes // Ostinato: a real stick stops at full tilt
+            forwardImpulse = Math.abs(analog[1]) < 0.25f ? 0 : Math.signum(analog[1]); // Ostinato: keyboard-shaped axes
             up = forwardImpulse > 0;
             down = forwardImpulse < 0;
             left = leftImpulse > 0;
@@ -70,9 +71,19 @@ public class PlayerMovementInput extends ClientInput {
         // Ostinato: no 0.3 here. LocalPlayer.modifyInput scales by the sneaking-speed attribute itself, so scaling here
         // too made a sneak walk 0.09: on ice it barely pushed, and a landing that slid a block past stood there (cubed).
         boolean sneaking = handler.isInputForcedDown(Input.SNEAK) || handler.onMagma();
-        this.moveVector = new Vec2(leftImpulse, forwardImpulse);
+        // Ostinato: match vanilla KeyboardInput, including diagonal normalization.
+        this.moveVector = new Vec2(leftImpulse, forwardImpulse).normalized();
 
-        boolean sprinting = handler.isInputForcedDown(Input.SPRINT);
+        // Ostinato: ladder sprint suppression is an input release, never a physics override.
+        var p = net.minecraft.client.Minecraft.getInstance().player;
+        boolean ladder = p != null && (p.onClimbable() || p.level().getBlockState(p.blockPosition().below()).is(net.minecraft.tags.BlockTags.CLIMBABLE));
+        boolean sprinting = handler.isInputForcedDown(Input.SPRINT) && !ladder;
+        if (p != null && p.isSprinting() && (ladder || !sprinting)) sneaking = true;
+        // Ostinato: publish through the controls-only input boundary.
+        if (ControlInput.inventoryPaused()) {
+            up = down = left = right = jumping = sneaking = sprinting = false;
+            this.moveVector = Vec2.ZERO;
+        }
 
         this.keyPresses = new net.minecraft.world.entity.player.Input(up, down, left, right, jumping, sneaking, sprinting);
     }

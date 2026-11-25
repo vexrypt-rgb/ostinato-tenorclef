@@ -2,6 +2,7 @@
  * Ostinato: new file (Grace Note). Not part of upstream Baritone.
  */
 package baritone.gracenote;
+import baritone.utils.player.ControlInput; // Ostinato: controls-only input
 
 import baritone.Baritone;
 import baritone.api.event.events.TickEvent;
@@ -142,7 +143,8 @@ public final class GraceNoteLiveTest implements AbstractGameEventListener {
             p.teleportTo(0.5, FLOOR + 1, 0.5);
             p.resetFallDistance();
         });
-        mc.player.getInventory().setSelectedSlot(0);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(0);
         state = 4;
         wait = 40;
         setupTick = ticks;

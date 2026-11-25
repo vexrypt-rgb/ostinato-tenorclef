@@ -2,6 +2,7 @@
  * Ostinato 2.0 Phase 04 validation: a live-client harness for PredictionTolerance. Not part of upstream Baritone.
  */
 package baritone.contract;
+import baritone.utils.player.ControlInput; // Ostinato: controls-only input
 
 import baritone.Baritone;
 import baritone.api.event.events.PacketEvent;
@@ -625,7 +626,8 @@ public final class ToleranceTraceTest implements AbstractGameEventListener {
                 throw new IllegalStateException(e);
             }
         }
-        p.setYRot(yawCmd);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.look(yawCmd, p.getXRot()); // Ostinato: queued harness mouse input
         baritone.getLookBehavior().updateTarget(new Rotation(yawCmd, 0), false);
     }
 

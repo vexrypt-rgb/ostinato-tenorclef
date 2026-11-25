@@ -1,4 +1,5 @@
 package baritone.structure;
+import baritone.utils.player.ControlInput; // Ostinato: controls-only input
 
 import baritone.Baritone;
 import baritone.api.BaritoneAPI;
@@ -309,8 +310,9 @@ public final class PkTest implements AbstractGameEventListener {
     private void hop(Minecraft mc) {
         var p = mc.player;
         var o = mc.options;
-        p.setYRot(0f);
-        p.setXRot(0f);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.look(0f, p.getXRot()); // Ostinato: queued harness mouse input
+        ControlInput.look(p.getYRot(), 0f); // Ostinato: queued harness mouse input
         boolean og = p.onGround();
         hopJump = hopPattern.isEmpty() ? og && !hopJump : hopT < hopPattern.length() && hopPattern.charAt(hopT) == 'J';
         boolean still = hopPattern.startsWith("!"); // "!J...": stand still, jump only (jump-height probe)

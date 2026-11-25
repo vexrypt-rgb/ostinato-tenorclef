@@ -2,6 +2,7 @@
  * Ostinato: new file (Legato). Not part of upstream Baritone.
  */
 package baritone.pathing.legato;
+import baritone.utils.player.ControlInput; // Ostinato: controls-only input
 
 import baritone.Baritone;
 import baritone.api.event.events.PacketEvent;
@@ -497,8 +498,9 @@ public final class LegatoLiveTest implements AbstractGameEventListener {
             RouteReuse.clear();
             LegatoFailures.clear();
             // every lap starts facing +x, so the first turn is the same for every mode
-            player.setYRot(-90);
-            player.setXRot(0);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.look(-90, player.getXRot()); // Ostinato: queued harness mouse input
+            ControlInput.look(player.getYRot(), 0); // Ostinato: queued harness mouse input
             lapBody = baritone.getPathingBehavior().playerBody();
             predLegacy = predSim = Double.NaN;
             planWait = -1;

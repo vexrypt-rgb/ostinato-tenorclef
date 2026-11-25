@@ -92,8 +92,8 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
         if (!Baritone.settings().physicalInput.value || physicalLive) return;
         chord.step(inputForceStateMap, PhysicalInput.MAX_EDGES_PER_TICK);
         physicalLive = true;
-        blockBreakHelper.tick(isInputForcedDown(Input.CLICK_LEFT));
-        blockPlaceHelper.tick(isInputForcedDown(Input.CLICK_RIGHT));
+        // Ostinato: click state is sampled once after all planners.
+        // Ostinato: click state is sampled once after all planners.
     }
 
     /**
@@ -196,8 +196,8 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
         }
         // Ostinato: while physicalInput is on, the break and place run from realizePhysicalKeys after the chord.
         if (!Baritone.settings().physicalInput.value) {
-            blockBreakHelper.tick(isInputForcedDown(Input.CLICK_LEFT));
-            blockPlaceHelper.tick(isInputForcedDown(Input.CLICK_RIGHT));
+            // Ostinato: click state is sampled once after all planners.
+            // Ostinato: click state is sampled once after all planners.
         }
 
         if (inControl()) {
@@ -224,6 +224,12 @@ public final class InputOverrideHandler extends Behavior implements IInputOverri
         }
         // if we are not primary (a bot) we should set the movementinput even when idle (not pathing)
         return baritone.getPathingBehavior().isPathing() || baritone != BaritoneAPI.getProvider().getPrimaryBaritone();
+    }
+
+    // Ostinato: input publication before vanilla handleKeybinds.
+    public void publishControls() {
+        blockBreakHelper.tick(isInputForcedDown(Input.CLICK_LEFT));
+        blockPlaceHelper.tick(isInputForcedDown(Input.CLICK_RIGHT));
     }
 
     public BlockBreakHelper getBlockBreakHelper() {

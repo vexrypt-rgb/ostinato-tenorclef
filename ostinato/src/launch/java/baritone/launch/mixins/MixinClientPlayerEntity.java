@@ -84,11 +84,8 @@ public class MixinClientPlayerEntity {
     )
     @Group(name = "mayFly", min = 1, max = 1)
     private boolean isAllowFlying(Abilities capabilities) {
-        IBaritone baritone = BaritoneAPI.getProvider().getBaritoneForPlayer((LocalPlayer) (Object) this);
-        if (baritone == null) {
-            return capabilities.mayfly;
-        }
-        return !baritone.getPathingBehavior().isPathing() && capabilities.mayfly;
+        // Ostinato: controls-only; all visible turning happens at the input boundary.
+        return capabilities.mayfly;
     }
 
     @Redirect(
@@ -100,11 +97,8 @@ public class MixinClientPlayerEntity {
     )
     @Group(name = "mayFly", min = 1, max = 1)
     private boolean onMayFlyNeoforge(LocalPlayer instance) throws Throwable {
-        IBaritone baritone = BaritoneAPI.getProvider().getBaritoneForPlayer((LocalPlayer) (Object) this);
-        if (baritone == null) {
-            return (boolean) MAY_FLY.invokeExact(instance);
-        }
-        return !baritone.getPathingBehavior().isPathing() && (boolean) MAY_FLY.invokeExact(instance);
+        // Ostinato: controls-only; all visible turning happens at the input boundary.
+        return (boolean) MAY_FLY.invokeExact(instance);
     }
 
     @Redirect(
@@ -115,19 +109,7 @@ public class MixinClientPlayerEntity {
             )
     )
     private boolean redirectSprintInput(final Input instance) {
-        IBaritone baritone = BaritoneAPI.getProvider().getBaritoneForPlayer((LocalPlayer) (Object) this);
-        if (baritone == null) {
-            return instance.sprint();
-        }
-        SprintStateEvent event = new SprintStateEvent();
-        baritone.getGameEventHandler().onPlayerSprintState(event);
-        if (event.getState() != null) {
-            return event.getState();
-        }
-        if (baritone != BaritoneAPI.getProvider().getPrimaryBaritone()) {
-            // hitting control shouldn't make all bots sprint
-            return false;
-        }
+        // Ostinato: controls-only; all visible turning happens at the input boundary.
         return instance.sprint();
     }
 
@@ -152,10 +134,7 @@ public class MixinClientPlayerEntity {
             )
     )
     private boolean tryToStartFallFlying(final LocalPlayer instance) {
-        IBaritone baritone = BaritoneAPI.getProvider().getBaritoneForPlayer(instance);
-        if (baritone != null && baritone.getPathingBehavior().isPathing()) {
-            return false;
-        }
+        // Ostinato: controls-only; all visible turning happens at the input boundary.
         return instance.tryToStartFallFlying();
     }
 

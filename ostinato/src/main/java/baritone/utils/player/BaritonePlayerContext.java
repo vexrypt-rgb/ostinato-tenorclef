@@ -82,6 +82,7 @@ public final class BaritonePlayerContext implements IPlayerContext {
 
     @Override
     public HitResult objectMouseOver() {
-        return RayTraceUtils.rayTraceTowards(player(), playerRotations(), playerController().getBlockReachDistance());
+        // Ostinato: interactions must agree with vanilla crosshair selection.
+        return mc.hitResult;
     }
 }

@@ -55,12 +55,7 @@ public final class PositionSync {
      * after a slow tick, and the server kicks for that.
      */
     public static void sync(LocalPlayer p) {
-        if (REMINDER == null || clientWillReport(p)) {
-            return;
-        }
-        try {
-            REMINDER.setInt(p, 19);
-        } catch (IllegalAccessException ignored) {
-        }
+        // Ostinato: controls-only; all visible turning happens at the input boundary.
+        // Vanilla alone decides when to report position.
     }
 }

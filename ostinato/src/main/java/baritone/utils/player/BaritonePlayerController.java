@@ -49,7 +49,8 @@ public final class BaritonePlayerController implements IPlayerController {
 
     @Override
     public void syncHeldItem() {
-        ((IPlayerControllerMP) mc.gameMode).callSyncCurrentPlayItem();
+        // Ostinato: queue player controls; vanilla owns the action and its packets.
+
     }
 
     @Override
@@ -63,12 +64,14 @@ public final class BaritonePlayerController implements IPlayerController {
         if (LeaseFence.denied(LeaseFence.Kind.BREAK, pos.getX(), pos.getY(), pos.getZ())) {
             return false;
         }
-        return mc.gameMode.continueDestroyBlock(pos, side);
+        // Ostinato: asynchronous break; observe the block next tick.
+        return ControlInput.breakBlock(pos);
     }
 
     @Override
     public void resetBlockRemoving() {
-        mc.gameMode.stopDestroyBlock();
+        // Ostinato: vanilla stops destroying when the attack key is released.
+        ControlInput.releaseAttack();
     }
 
     @Override
@@ -77,7 +80,8 @@ public final class BaritonePlayerController implements IPlayerController {
         if (windowId != 0 && (LeaseFence.denied() || LeaseFence.containerBlocked())) {
             return;
         }
-        mc.gameMode.handleContainerInput(windowId, slotId, mouseButton, type, player);
+        // Ostinato: screen transaction waits until gameplay keys are released.
+        ControlInput.windowClick(windowId, slotId, mouseButton, type);
     }
 
     @Override
@@ -97,12 +101,14 @@ public final class BaritonePlayerController implements IPlayerController {
                 at.getX(), at.getY(), at.getZ())) {
             return InteractionResult.PASS;
         }
-        return mc.gameMode.useItemOn(player, hand, result);
+        // Ostinato: vanilla decides hand/fallback after the queued click.
+        return ControlInput.useBlock(result);
     }
 
     @Override
     public InteractionResult processRightClick(LocalPlayer player, Level world, InteractionHand hand) {
-        return mc.gameMode.useItem(player, hand);
+        // Ostinato: no synchronous result for a queued input.
+        return ControlInput.useItem(player, hand);
     }
 
     @Override
@@ -111,11 +117,13 @@ public final class BaritonePlayerController implements IPlayerController {
         if (LeaseFence.denied(LeaseFence.Kind.BREAK, loc.getX(), loc.getY(), loc.getZ())) {
             return false;
         }
-        return mc.gameMode.startDestroyBlock(loc, face);
+        // Ostinato: actual crosshair must match when input is delivered.
+        return ControlInput.breakBlock(loc);
     }
 
     @Override
     public void setHittingBlock(boolean hittingBlock) {
-        ((IPlayerControllerMP) mc.gameMode).setIsHittingBlock(hittingBlock);
+        // Ostinato: queue player controls; vanilla owns the action and its packets.
+
     }
 }

@@ -1,4 +1,5 @@
 package baritone.pathing.kinematic;
+import baritone.utils.player.ControlInput; // Ostinato: controls-only action mailbox
 
 import baritone.Baritone;
 import baritone.api.pathing.calc.IPath;
@@ -128,7 +129,8 @@ public final class BoatFallController {
         if (boat != null) {
             look.updateTarget(RotationUtils.calcRotationFromVec3d(ctx.playerHead(), new Vec3(boat.getX(), boat.getY() + 0.3, boat.getZ()), ctx.playerRotations()), true);
             if (boatTicks % 4 == 3) {
-                Minecraft.getInstance().gameMode.interact(player, boat, new net.minecraft.world.phys.EntityHitResult(boat), InteractionHand.MAIN_HAND);
+                // Ostinato: publish through the controls-only input boundary.
+                ControlInput.interact(player, boat, new net.minecraft.world.phys.EntityHitResult(boat), InteractionHand.MAIN_HAND);
             }
             return pathPosition;
         }
@@ -136,13 +138,15 @@ public final class BoatFallController {
         if (slot < 0) {
             return -1; // no boat: nothing keeps this alive
         }
-        player.getInventory().setSelectedSlot(slot);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(slot);
         if (feet.equals(src) && MovementHelper.canWalkThrough(ctx, src.above(2)) && MovementHelper.canWalkThrough(ctx, src.above(3))) {
             look.updateTarget(new Rotation(player.getYRot(), 90), true);
             if (player.onGround()) {
                 in.setInputForceState(Input.JUMP, true);
             } else if (player.getY() - src.getY() > 0.7 && player.getXRot() > 80) {
-                Minecraft.getInstance().gameMode.useItem(player, InteractionHand.MAIN_HAND);
+                // Ostinato: publish through the controls-only input boundary.
+                ControlInput.useItem(player, InteractionHand.MAIN_HAND);
             }
             return pathPosition;
         }
@@ -153,7 +157,8 @@ public final class BoatFallController {
         if (back < 0.8) {
             in.setInputForceState(Input.MOVE_BACK, true);
         } else if (boatTicks % 5 == 4) {
-            Minecraft.getInstance().gameMode.useItem(player, InteractionHand.MAIN_HAND);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.useItem(player, InteractionHand.MAIN_HAND);
         }
         return pathPosition;
     }

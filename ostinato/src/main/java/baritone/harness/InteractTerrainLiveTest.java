@@ -2,6 +2,7 @@
  * Ostinato 2.0 Phase 10: new file. Not part of upstream Baritone.
  */
 package baritone.harness;
+import baritone.utils.player.ControlInput; // Ostinato: controls-only input
 
 import baritone.Baritone;
 import baritone.api.Settings;
@@ -452,7 +453,8 @@ public final class InteractTerrainLiveTest implements AbstractGameEventListener 
             p.getFoodData().setFoodLevel(20);
             p.getInventory().clearContent();
             p.getInventory().setItem(0, new ItemStack(Items.DIAMOND_PICKAXE));
-            p.getInventory().setSelectedSlot(0);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.selectSlot(0);
             p.inventoryMenu.sendAllDataToRemote();
             p.teleportTo(origin.getX() + 0.5, origin.getY(), origin.getZ() + 0.5);
             p.setDeltaMovement(0, 0, 0);
@@ -462,7 +464,8 @@ public final class InteractTerrainLiveTest implements AbstractGameEventListener 
                 p.openMenu(new SimpleMenuProvider((id, inv, pl) -> ChestMenu.threeRows(id, inv), Component.literal("p10")));
             }
         });
-        mc.player.getInventory().setSelectedSlot(0);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(0);
         state = 4;
         step = 0;
         wait = 40;
@@ -489,8 +492,9 @@ public final class InteractTerrainLiveTest implements AbstractGameEventListener 
         if (step == 0) {
             if (--wait > 0) return;
             arm(l.arm());
-            mc.player.setYRot(-90);
-            mc.player.setXRot(0);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.look(-90, mc.player.getXRot()); // Ostinato: queued harness mouse input
+            ControlInput.look(mc.player.getYRot(), 0); // Ostinato: queued harness mouse input
             runner = new TaskRunner(new BaritoneTaskAdapter());
             lapTicks = 0;
             verdictAt = stopAt = lagAt = -1;

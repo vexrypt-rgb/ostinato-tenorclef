@@ -137,7 +137,7 @@ public abstract class Movement implements IMovement, MovementHelper {
      */
     @Override
     public MovementStatus update() {
-        ctx.player().getAbilities().flying = false;
+        // Ostinato: flight state belongs to vanilla jump input, never the path executor.
         currentState = updateState(currentState);
         // Unconditional JUMP-in-liquid causes bobbing stuck (cabaletta/baritone#2377).
         // In deep water the swim controller steers instead (real sprint-swim, #3988).

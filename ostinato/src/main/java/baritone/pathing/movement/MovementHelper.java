@@ -16,6 +16,7 @@
  */
 
 package baritone.pathing.movement;
+import baritone.utils.player.ControlInput; // Ostinato: controls-only action mailbox
 
 import baritone.Baritone;
 import baritone.altoclef.AltoClefSettings;
@@ -861,7 +862,8 @@ public interface MovementHelper extends ActionCosts, Helper {
      */
     static void switchToBestToolFor(IPlayerContext ctx, BlockState b, ToolSet ts, boolean preferSilkTouch) {
         if (Baritone.settings().autoTool.value && !Baritone.settings().assumeExternalAutoTool.value) {
-            ctx.player().getInventory().setSelectedSlot(ts.getBestSlot(b.getBlock(), preferSilkTouch));
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.selectSlot(ts.getBestSlot(b.getBlock(), preferSilkTouch));
         }
     }
 

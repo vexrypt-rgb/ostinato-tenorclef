@@ -27,9 +27,7 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 @Mixin(MultiPlayerGameMode.class)
 public abstract class MixinPlayerController implements IPlayerControllerMP {
 
-    @Accessor("isDestroying")
-    @Override
-    public abstract void setIsHittingBlock(boolean isHittingBlock);
+    // Ostinato: no mutating mining accessors or packet-producing invokers.
 
     @Accessor("isDestroying")
     @Override
@@ -39,11 +37,7 @@ public abstract class MixinPlayerController implements IPlayerControllerMP {
     @Override
     public abstract BlockPos getCurrentBlock();
 
-    @Invoker("ensureHasSentCarriedItem")
-    @Override
-    public abstract void callSyncCurrentPlayItem();
+    // Ostinato: no mutating mining accessors or packet-producing invokers.
 
-    @Accessor("destroyDelay")
-    @Override
-    public abstract void setDestroyDelay(int destroyDelay);
+    // Ostinato: no mutating mining accessors or packet-producing invokers.
 }

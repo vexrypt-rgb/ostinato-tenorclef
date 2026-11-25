@@ -36,6 +36,7 @@ public final class DefaultCommands {
                 new CommandAlias(baritone, "reset", "Reset all settings or just one", "set reset"),
                 new GoalCommand(baritone),
                 new GotoCommand(baritone),
+                new VanillaKeysCommand(baritone), // Ostinato: anticheat control runs
                 new PathCommand(baritone),
                 new ProcCommand(baritone),
                 new ETACommand(baritone),

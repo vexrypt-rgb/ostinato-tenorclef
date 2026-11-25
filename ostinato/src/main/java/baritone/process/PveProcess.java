@@ -1,5 +1,7 @@
 package baritone.process;
 
+import baritone.utils.player.ControlInput; // Ostinato: controls-only action mailbox
+
 import baritone.health.Hp; // Ostinato: estimated health
 import baritone.Baritone;
 import baritone.api.pathing.goals.GoalNear;
@@ -424,7 +426,8 @@ public final class PveProcess extends BaritoneProcessHelper {
         slot = inv.toHotbar(me, slot); // from the main inventory this takes two ticks: false until it is up
         if (slot < 0) return false;
         if (me.getInventory().getSelectedSlot() != slot) {
-            me.getInventory().setSelectedSlot(slot);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.selectSlot(slot);
             press(ctx.minecraft().options.keyHotbarSlots[slot]);
         }
         return me.getInventory().getSelectedSlot() == slot;

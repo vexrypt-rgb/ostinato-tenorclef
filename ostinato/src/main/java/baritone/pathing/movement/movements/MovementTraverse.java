@@ -61,6 +61,9 @@ public class MovementTraverse extends Movement {
      * Did we have to place a bridge block or was it always there
      */
     private boolean wasTheBridgeBlockAlwaysThere = true;
+    /** Ticks the placed bridge block has stayed solid in the client world. 0 while it is missing. */
+    private int bridgeBlockSolidTicks;
+    // Ostinato: local-server NCP noswing reverts a refused place on the next tick. 3 ticks covers that plus a little lag.
 
     public MovementTraverse(IBaritone baritone, BetterBlockPos from, BetterBlockPos to) {
         super(baritone, from, to, new BetterBlockPos[]{to.above(), to}, to.below());
@@ -70,6 +73,7 @@ public class MovementTraverse extends Movement {
     public void reset() {
         super.reset();
         wasTheBridgeBlockAlwaysThere = true;
+        bridgeBlockSolidTicks = 0;
     }
 
     @Override
@@ -310,6 +314,17 @@ public class MovementTraverse extends Movement {
         }
 
         if (isTheBridgeBlockThere) {
+            // Ostinato: if we placed this block, keep sneak down and do not walk onto it (or finish the
+            // traverse) until it has stayed solid long enough for the server to accept or reject the
+            // prediction. NCP blockplace.noswing can revert the place a tick later; in nc3 the bot
+            // released sneak, stepped onto the predicted block, and fell when the revert arrived.
+            if (!wasTheBridgeBlockAlwaysThere && !Baritone.settings().assumeSafeWalk.value) {
+                state.setInput(Input.SNEAK, true);
+                bridgeBlockSolidTicks++;
+                if (bridgeBlockSolidTicks < 3) {
+                    return state;
+                }
+            }
             if (feet.equals(dest) || (swim && MovementHelper.atSwum(ctx, dest))) {
                 return state.setStatus(MovementStatus.SUCCESS);
             }
@@ -341,6 +356,7 @@ public class MovementTraverse extends Movement {
             return state;
         } else {
             wasTheBridgeBlockAlwaysThere = false;
+            bridgeBlockSolidTicks = 0;
             Block standingOn = BlockStateInterface.get(ctx, feet.below()).getBlock();
             if ((standingOn.equals(Blocks.SOUL_SAND) && !AltoClefSettings.getInstance().shouldTreatSoulSandAsOrdinaryBlock()) || standingOn instanceof SlabBlock) { // see issue #118
                 double dist = Math.max(Math.abs(dest.getX() + 0.5 - ctx.player().position().x), Math.abs(dest.getZ() + 0.5 - ctx.player().position().z));
@@ -356,7 +372,10 @@ public class MovementTraverse extends Movement {
             }
             double dist1 = Math.max(Math.abs(ctx.player().position().x - (dest.getX() + 0.5D)), Math.abs(ctx.player().position().z - (dest.getZ() + 0.5D)));
             PlaceResult p = MovementHelper.attemptToPlaceABlock(state, baritone, dest.below(), false, !Baritone.settings().assumeSafeWalk.value);
-            if ((p == PlaceResult.READY_TO_PLACE || dist1 < 0.6) && !Baritone.settings().assumeSafeWalk.value) {
+            // Ostinato: hold sneak the whole time the bridge block is missing, like a player sneak-bridging. A server
+            // can refuse a place (NCP blockplace) a tick after the client predicted it; with sneak released the bot
+            // backed off the edge onto the reverted air and fell.
+            if (!Baritone.settings().assumeSafeWalk.value) {
                 state.setInput(Input.SNEAK, true);
             }
             switch (p) {

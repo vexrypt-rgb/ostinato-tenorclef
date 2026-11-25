@@ -70,7 +70,7 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
     public void updateTarget(Rotation rotation, boolean blockInteract) {
         if (Baritone.settings().humanLookEverywhere.value && !ctx.player().isFallFlying()) this.human = true;
         // a humanized look is the player's own mouse: the camera turns, never a silent server-only rotation
-        this.target = new Target(rotation, this.human ? Target.Mode.CLIENT : Target.Mode.resolve(ctx, blockInteract));
+        this.target = new Target(rotation, Target.Mode.CLIENT);
         this.traceTarget = rotation; // Ostinato
         if (traceCallers) {
             traceTargetBy = StackWalker.getInstance().walk(f -> f.skip(1).findFirst()
@@ -140,18 +140,8 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
     private long frameFromNanos;
 
     public void frame() {
-        if (!Baritone.settings().frameLook.value) return;
-        net.minecraft.client.player.LocalPlayer p = ctx.player();
-        if (frameGoal == null || frameFrom == null || frameTo == null || p == null) return;
-        if (p.tickCount - frameGoalTick > 2 || ctx.minecraft().gui.screen() != null) return; // tickStart drops it
-        double frac = Math.max(0.0, Math.min(1.0, (System.nanoTime() - frameFromNanos) / 50_000_000.0));
-        float step = mouseStep();
-        float dy = net.minecraft.util.Mth.wrapDegrees(frameTo.getYaw() - frameFrom.getYaw()), dp = frameTo.getPitch() - frameFrom.getPitch();
-        float wy = frameFrom.getYaw() + Math.round(dy * frac / step) * step;
-        float wp = net.minecraft.util.Mth.clamp(frameFrom.getPitch() + Math.round(dp * frac / step) * step, -90f, 90f);
-        float my = net.minecraft.util.Mth.wrapDegrees(wy - p.getYRot()), mp = wp - p.getXRot();
-        if (my == 0 && mp == 0) return;
-        turnBy(p, my, mp);
+        // Ostinato: controls-only; all visible turning happens at the input boundary.
+
     }
 
     /** Ostinato: one physical look step per client tick, shared by tickStart, boat aim and the player update. */
@@ -181,32 +171,24 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
      * no fresh aim arrives. Deterministic per tick, so a client's frame rate cannot change a fight.
      */
     public void tickStart() {
-        lookSerial++; // Ostinato: physical look takes one step for the whole tick
-        if (!Baritone.settings().frameLook.value) {
-            frameGoal = null;
-            return;
-        }
-        net.minecraft.client.player.LocalPlayer p = ctx.player();
-        if (frameGoal == null || p == null) return;
-        if (frameTo != null) {
-            float my = net.minecraft.util.Mth.wrapDegrees(frameTo.getYaw() - p.getYRot()), mp = frameTo.getPitch() - p.getXRot();
-            if (my != 0 || mp != 0) {
-                if (!Baritone.settings().physicalInput.value) {
-                    turnBy(p, my, mp);
-                } else {
-                    // Ostinato: the per-tick coast is one mouse step, not a snap to the planned angle
-                    float[] o = physicalLook(p.getYRot(), p.getXRot(), p.getYRot() + my, p.getXRot() + mp);
-                    float ay = o[0] - p.getYRot(), ap = o[1] - p.getXRot();
-                    if (ay != 0 || ap != 0) turnBy(p, ay, ap);
-                }
-            }
-        }
-        if (p.tickCount - frameGoalTick > 2 || ctx.minecraft().gui.screen() != null) {
-            frameGoal = null;
-            frameFrom = frameTo = null;
-            return;
-        }
-        planFrameStep(p);
+        // Ostinato: controls-only; all visible turning happens at the input boundary.
+        lookSerial++;
+        var p = ctx.player();
+        Target pending = target;
+        target = null;
+        lastTurnDeg = 0f;
+        if (p == null || pending == null || ctx.minecraft().gui.screen() != null) return;
+        Rotation actual = humanStep(pending.rotation);
+        float dy = net.minecraft.util.Mth.wrapDegrees(actual.getYaw() - p.getYRot());
+        float dp = actual.getPitch() - p.getXRot();
+        float step = mouseStep();
+        float cap = p.onClimbable() ? 8f : 32f;
+        dy = Math.round(net.minecraft.util.Mth.clamp(dy, -cap, cap) / step) * step;
+        dp = Math.round(net.minecraft.util.Mth.clamp(dp, -32f, 32f) / step) * step;
+        turnBy(p, dy, dp);
+        lastTurnDeg = Math.max(Math.abs(dy), Math.abs(dp)); // Ostinato: how far this tick's mouse step moved
+        human = ownMove = false;
+        turnCap = 0;
     }
 
     /** Ostinato: from the current view, this tick's step toward the goal: 60% of the gap in whole mouse counts. */
@@ -220,16 +202,20 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
         frameFromNanos = System.nanoTime();
     }
 
+    // Ostinato: degrees the view turned at this tick's input step (0 when it did not turn). A player finishes a flick
+    // before clicking a block; ControlInput holds block clicks while the view is still swinging (Grim RotationPlace).
+    private static float lastTurnDeg;
+
+    public static float lastTurnDegrees() { return lastTurnDeg; }
+
     private float mouseStep() {
         double f = ctx.minecraft().options.sensitivity().get() * 0.6 + 0.2;
         return (float) (f * f * f * 8.0 * 0.15);
     }
 
     private static void turnBy(net.minecraft.client.player.LocalPlayer p, float my, float mp) {
-        p.setYRot(p.getYRot() + my);
-        p.setXRot(net.minecraft.util.Mth.clamp(p.getXRot() + mp, -90f, 90f));
-        p.yRotO += my;
-        p.xRotO = net.minecraft.util.Mth.clamp(p.xRotO + mp, -90f, 90f);
+        // Ostinato: controls-only; all visible turning happens at the input boundary.
+        p.turn(my / 0.15, mp / 0.15);
     }
 
     private float turnCap;
@@ -338,77 +324,14 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
      * step send what the camera shows, so the camera is the last sent rotation there.
      */
     static Rotation gateFrom(Target.Mode mode, boolean human, Rotation camera, Rotation sent) {
-        return mode == Target.Mode.SERVER && !human && sent != null ? sent : camera;
+        // Ostinato: controls-only; all visible turning happens at the input boundary.
+        return camera;
     }
 
     @Override
     public void onPlayerUpdate(PlayerUpdateEvent event) {
+        // Ostinato: controls-only; all visible turning happens at the input boundary.
 
-        if (this.target == null) {
-            return;
-        }
-
-        switch (event.getState()) {
-            case PRE: {
-                if (this.target.mode == Target.Mode.NONE) {
-                    // Just return for PRE, we still want to set target to null on POST
-                    return;
-                }
-
-                this.prevRotation = new Rotation(ctx.player().getYRot(), ctx.player().getXRot());
-                this.processor.capOverride = this.turnCap;
-                final Rotation actual = this.human ? humanStep(this.target.rotation) : this.processor.peekRotation(this.target.rotation);
-                this.processor.capOverride = 0;
-                // Ostinato: the human-input gate; no single-tick turn past a fast flick, pitch kept in range.
-                // physicalInput (off by default) then keeps that inside a hand's speed and acceleration.
-                Rotation from = gateFrom(this.target.mode, this.human, this.prevRotation, this.serverRotation);
-                float toY = HumanInputCaps.capYaw(from.getYaw(), actual.getYaw(), HumanInputCaps.maxYaw());
-                float toP = HumanInputCaps.capPitch(from.getPitch(), actual.getPitch(), HumanInputCaps.maxPitch());
-                float[] aimed = physicalLook(from.getYaw(), from.getPitch(), toY, toP);
-                ctx.player().setYRot(aimed[0]);
-                ctx.player().setXRot(aimed[1]);
-                break;
-            }
-            case POST: {
-                // Reset the player's rotations back to their original values
-                if (this.prevRotation != null) {
-                    this.smoothYawBuffer.addLast(this.target.rotation.getYaw());
-                    while (this.smoothYawBuffer.size() > Baritone.settings().smoothLookTicks.value) {
-                        this.smoothYawBuffer.removeFirst();
-                    }
-                    this.smoothPitchBuffer.addLast(this.target.rotation.getPitch());
-                    while (this.smoothPitchBuffer.size() > Baritone.settings().smoothLookTicks.value) {
-                        this.smoothPitchBuffer.removeFirst();
-                    }
-                    if (this.human) {
-                        // the camera stays on the rotation that was sent
-                        this.frameGoal = this.target.rotation;
-                        this.frameGoalTick = ctx.player().tickCount;
-                        planFrameStep(ctx.player()); // Ostinato
-                    } else if (this.target.mode == Target.Mode.SERVER) {
-                        ctx.player().setYRot(this.prevRotation.getYaw());
-                        ctx.player().setXRot(this.prevRotation.getPitch());
-                    } else if (ctx.player().isFallFlying() ? Baritone.settings().elytraSmoothLook.value : Baritone.settings().smoothLook.value) {
-                        ctx.player().setYRot((float) this.smoothYawBuffer.stream().mapToDouble(d -> d).average().orElse(this.prevRotation.getYaw()));
-                        if (ctx.player().isFallFlying()) {
-                            ctx.player().setXRot((float) this.smoothPitchBuffer.stream().mapToDouble(d -> d).average().orElse(this.prevRotation.getPitch()));
-                        }
-                    }
-                    //ctx.player().xRotO = prevRotation.getPitch();
-                    //ctx.player().yRotO = prevRotation.getYaw();
-                    this.prevRotation = null;
-                }
-                // The target is done being used for this game tick, so it can be invalidated
-                this.target = null;
-                if (!this.human) { velYaw = 0; velPitch = 0; }
-                this.human = false;
-                this.ownMove = false;
-                this.turnCap = 0;
-                break;
-            }
-            default:
-                break;
-        }
     }
 
     @Override
@@ -431,36 +354,19 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
     }
 
     public void pig() {
-        if (this.target != null) {
-            final Rotation actual = this.processor.peekRotation(this.target.rotation);
-            float fromY = ctx.player().getYRot();
-            float toY = HumanInputCaps.capYaw(fromY, actual.getYaw(), HumanInputCaps.maxYaw()); // Ostinato: capped
-            if (!Baritone.settings().physicalInput.value) {
-                ctx.player().setYRot(toY);
-            } else {
-                float fromP = ctx.player().getXRot();
-                float[] aimed = physicalLook(fromY, fromP, toY, fromP);
-                ctx.player().setYRot(aimed[0]);
-                ctx.player().setXRot(aimed[1]);
-            }
-        }
+        // Ostinato: controls-only; all visible turning happens at the input boundary.
+
     }
 
     public Optional<Rotation> getEffectiveRotation() {
-        if (Baritone.settings().freeLook.value) {
-            return Optional.ofNullable(this.serverRotation);
-        }
-        // If freeLook isn't on, just defer to the player's actual rotations
+        // Ostinato: controls-only; all visible turning happens at the input boundary.
         return Optional.empty();
     }
 
     @Override
     public void onPlayerRotationMove(RotationMoveEvent event) {
-        if (this.target != null && !this.ownMove) {
-            final Rotation actual = this.processor.peekRotation(this.target.rotation);
-            event.setYaw(actual.getYaw());
-            event.setPitch(actual.getPitch());
-        }
+        // Ostinato: controls-only; all visible turning happens at the input boundary.
+
     }
 
     private static final class AimProcessor extends AbstractAimProcessor {
@@ -639,7 +545,7 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
             CLIENT,
 
             /**
-             * Rotation will be set server-side and is silent to the player
+             * Legacy API value only; never selected or applied (all turns are visible).
              */
             SERVER,
 
@@ -649,26 +555,9 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
             NONE;
 
             static Mode resolve(IPlayerContext ctx, boolean blockInteract) {
-                final Settings settings = Baritone.settings();
-                final boolean antiCheat = settings.antiCheatCompatibility.value;
-                final boolean blockFreeLook = settings.blockFreeLook.value;
-
-                if (ctx.player().isFallFlying()) {
-                    // always need to set angles while flying
-                    return settings.elytraFreeLook.value ? SERVER : CLIENT;
-                } else if (settings.freeLook.value) {
-                    // Regardless of if antiCheatCompatibility is enabled, if a blockInteract is requested then the player
-                    // rotation needs to be set somehow, otherwise Baritone will halt since objectMouseOver() will just be
-                    // whatever the player is mousing over visually. Let's just settle for setting it silently.
-                    if (blockInteract) {
-                        return blockFreeLook ? SERVER : CLIENT;
-                    }
-                    return antiCheat ? SERVER : NONE;
-                }
-
-                // all freeLook settings are disabled so set the angles
+        // Ostinato: controls-only; all visible turning happens at the input boundary.
                 return CLIENT;
-            }
+    }
         }
     }
 }

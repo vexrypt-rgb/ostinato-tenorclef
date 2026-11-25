@@ -17,6 +17,8 @@
 
 package baritone.process;
 
+import baritone.utils.player.ControlInput; // Ostinato: controls-only action mailbox
+
 import baritone.Baritone;
 import baritone.api.pathing.goals.GoalBlock;
 import baritone.api.process.PathingCommand;
@@ -900,7 +902,7 @@ public final class PortalBuildProcess extends BaritoneProcessHelper {
             result = ctx.playerController().processRightClick(ctx.player(), ctx.world(), InteractionHand.MAIN_HAND);
         }
         if (swings(result)) {
-            ctx.player().swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
+            // Ostinato: vanilla attack/use performs its own swing.
         }
         cooldown = 3 + rand.nextInt(3);
         onTarget = 0;
@@ -959,7 +961,7 @@ public final class PortalBuildProcess extends BaritoneProcessHelper {
                 result = ctx.playerController().processRightClick(ctx.player(), ctx.world(), InteractionHand.MAIN_HAND);
             }
             if (swings(result)) {
-                ctx.player().swing(InteractionHand.MAIN_HAND, SwingAnimation.DEFAULT, false);
+                // Ostinato: vanilla attack/use performs its own swing.
             }
             cooldown = 3 + rand.nextInt(3);
             onTarget = 0;
@@ -1304,7 +1306,8 @@ public final class PortalBuildProcess extends BaritoneProcessHelper {
     }
 
     private void select(int slot) {
-        ctx.player().getInventory().setSelectedSlot(slot);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(slot);
         cooldown = 1 + rand.nextInt(2);
         onTarget = 0;
     }

@@ -16,6 +16,7 @@
  */
 
 package baritone.pathing.movement.movements;
+import baritone.utils.player.ControlInput; // Ostinato: controls-only action mailbox
 
 import baritone.utils.BoatUtil;
 import baritone.utils.FastMode;
@@ -331,7 +332,8 @@ public class MovementFall extends Movement {
             }
 
             if (ctx.player().position().y - dest.getY() < ctx.playerController().getBlockReachDistance() && !ctx.player().onGround()) {
-                ctx.player().getInventory().setSelectedSlot(ctx.player().getInventory().findSlotMatchingItem(STACK_BUCKET_WATER));
+                // Ostinato: publish through the controls-only input boundary.
+                ControlInput.selectSlot(ctx.player().getInventory().findSlotMatchingItem(STACK_BUCKET_WATER));
 
                 targetRotation = new Rotation(toDest.getYaw(), 90.0F);
 
@@ -350,7 +352,8 @@ public class MovementFall extends Movement {
                 && (!slime || ctx.player().onGround() && ctx.player().getDeltaMovement().y < 0.1)) { // 0.094 because lilypads; on slime, once we stop bouncing
             if (isWater) { // only match water, not flowing water (which we cannot pick up with a bucket)
                 if (Inventory.isHotbarSlot(ctx.player().getInventory().findSlotMatchingItem(STACK_BUCKET_EMPTY))) {
-                    ctx.player().getInventory().setSelectedSlot(ctx.player().getInventory().findSlotMatchingItem(STACK_BUCKET_EMPTY));
+                    // Ostinato: publish through the controls-only input boundary.
+                    ControlInput.selectSlot(ctx.player().getInventory().findSlotMatchingItem(STACK_BUCKET_EMPTY));
                     if (ctx.player().getDeltaMovement().y >= 0) {
                         return state.setInput(Input.CLICK_RIGHT, true);
                     } else {
@@ -452,7 +455,8 @@ public class MovementFall extends Movement {
         double nextY = ctx.player().position().y + (ctx.player().getDeltaMovement().y - 0.08) * 0.98f;
         if (reach <= MountUtil.REACH || nextY <= dest.y + 0.5 && reach < MountUtil.SERVER_REACH - 0.5) {
             emptyHand();
-            Minecraft.getInstance().gameMode.interact(ctx.player(), m, new net.minecraft.world.phys.EntityHitResult(m, aim), InteractionHand.MAIN_HAND);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.interact(ctx.player(), m, new net.minecraft.world.phys.EntityHitResult(m, aim), InteractionHand.MAIN_HAND);
         }
         return r;
     }
@@ -465,7 +469,8 @@ public class MovementFall extends Movement {
         }
         for (int i = 0; i < 9; i++) {
             if (inv.getItem(i).isEmpty()) {
-                inv.setSelectedSlot(i);
+                // Ostinato: publish through the controls-only input boundary.
+                ControlInput.selectSlot(i);
                 return;
             }
         }
@@ -525,7 +530,8 @@ public class MovementFall extends Movement {
         if (boat != null) {
             state.setTarget(new MovementTarget(RotationUtils.calcRotationFromVec3d(ctx.playerHead(), new Vec3(boat.getX(), boat.getY() + 0.3, boat.getZ()), ctx.playerRotations()), true));
             if (boatTicks % 4 == 3) {
-                net.minecraft.world.InteractionResult r = Minecraft.getInstance().gameMode.interact(ctx.player(), boat, new net.minecraft.world.phys.EntityHitResult(boat), InteractionHand.MAIN_HAND);
+                // Ostinato: publish through the controls-only input boundary.
+                net.minecraft.world.InteractionResult r = ControlInput.interact(ctx.player(), boat, new net.minecraft.world.phys.EntityHitResult(boat), InteractionHand.MAIN_HAND);
                 if (boatTicks % 40 == 3) logDebug("boat fall: board " + r + " riding=" + ctx.player().getVehicle());
             }
             return state;
@@ -535,7 +541,8 @@ public class MovementFall extends Movement {
             logDebug("boat fall: no boat " + ctx.player().position() + " ticks=" + boatTicks);
             return state.setStatus(MovementStatus.UNREACHABLE);
         }
-        ctx.player().getInventory().setSelectedSlot(slot);
+        // Ostinato: publish through the controls-only input boundary.
+        ControlInput.selectSlot(slot);
         // Boats can't overlap us. With headroom, jump and place underneath at the top of the jump;
         // in a 1-2 high space, back off src and place on its far half instead.
         if (ctx.playerFeet().equals(src) && MovementHelper.canWalkThrough(ctx, src.above(2)) && MovementHelper.canWalkThrough(ctx, src.above(3))) {
@@ -543,7 +550,8 @@ public class MovementFall extends Movement {
             if (ctx.player().onGround()) {
                 state.setInput(Input.JUMP, true);
             } else if (ctx.player().getY() - src.getY() > 0.7) {
-                Minecraft.getInstance().gameMode.useItem(ctx.player(), InteractionHand.MAIN_HAND);
+                // Ostinato: publish through the controls-only input boundary.
+                ControlInput.useItem(ctx.player(), InteractionHand.MAIN_HAND);
             }
             return state;
         }
@@ -554,7 +562,8 @@ public class MovementFall extends Movement {
         if (back < 0.8) {
             state.setInput(Input.MOVE_BACK, true);
         } else if (boatTicks % 5 == 4) {
-            Minecraft.getInstance().gameMode.useItem(ctx.player(), InteractionHand.MAIN_HAND);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.useItem(ctx.player(), InteractionHand.MAIN_HAND);
         }
         return state;
     }

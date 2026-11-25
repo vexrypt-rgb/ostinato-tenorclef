@@ -1,4 +1,5 @@
 package baritone.maze;
+import baritone.utils.player.ControlInput; // Ostinato: controls-only input
 
 import baritone.Baritone;
 import baritone.api.event.events.TickEvent;
@@ -461,8 +462,9 @@ public final class MazeTest implements AbstractGameEventListener {
     private void connectedShots(Minecraft mc) {
         if (++wait < 20) return;
         if (shot < 4) {
-            mc.player.setYRot(shot * 90f);
-            mc.player.setXRot(10f);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.look(shot * 90f, mc.player.getXRot()); // Ostinato: queued harness mouse input
+            ControlInput.look(mc.player.getYRot(), 10f); // Ostinato: queued harness mouse input
             if (wait < 40) return;
             net.minecraft.client.Screenshot.grab(mc, false);
             shot++;
@@ -746,8 +748,9 @@ public final class MazeTest implements AbstractGameEventListener {
     private void shots(Minecraft mc) {
         if (++wait < 40) return;
         if (shot < 4) {
-            mc.player.setYRot(shot * 90f);
-            mc.player.setXRot(10f);
+            // Ostinato: publish through the controls-only input boundary.
+            ControlInput.look(shot * 90f, mc.player.getXRot()); // Ostinato: queued harness mouse input
+            ControlInput.look(mc.player.getYRot(), 10f); // Ostinato: queued harness mouse input
             if (wait < 60) return;
             net.minecraft.client.Screenshot.grab(mc, false);
             say("screenshot " + (shot + 1) + "/4 yaw=" + (int) mc.player.getYRot() + " saved to " + mc.gameDirectory.toPath().resolve("screenshots"));

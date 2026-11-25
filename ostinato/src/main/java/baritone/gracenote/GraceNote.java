@@ -3,6 +3,8 @@
  */
 package baritone.gracenote;
 
+import baritone.utils.player.ControlInput; // Ostinato: controls-only action mailbox
+
 import baritone.Baritone;
 import baritone.altoclef.AltoClefSettings;
 import baritone.api.event.events.TickEvent;
@@ -211,7 +213,8 @@ public final class GraceNote extends Behavior implements IGraceNote {
         Command c = core.early(tick, mode, p != null, changed, body, f, m, heldLastTick, threatLevel, entityNote);
         if (p == null) return;
         if (c.hold()) pathing.requestEmergencyHold(OWNER + "#" + core.status().episode());
-        if (c.selectSlot() >= 0 && p.getInventory().getSelectedSlot() != c.selectSlot()) p.getInventory().setSelectedSlot(c.selectSlot());
+        // Ostinato: publish through the controls-only input boundary.
+        if (c.selectSlot() >= 0 && p.getInventory().getSelectedSlot() != c.selectSlot()) ControlInput.selectSlot(c.selectSlot());
         if (c.aim() != Aim.NONE) aim(p, c.aim());
         report();
     }
