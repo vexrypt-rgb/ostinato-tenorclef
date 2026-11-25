@@ -1,3 +1,18 @@
+# TenorClef 0.29.0
+
+Pairs with Ostinato v1.28.0 (26.3). Released from the monorepo
+[vexrypt-rgb/ostinato-tenorclef](https://github.com/vexrypt-rgb/ostinato-tenorclef) (tag `tenorclef-v0.29.0`), built
+against `ostinato/` from the same commit. The 1.21.11, 1.21.4 and 1.16.1 jars are unchanged since 0.28.0 and stay in
+the TenorClef repository.
+
+- **Swarm commands** (26.3, with Ostinato's `swarmCommandProtocol` on): `@swarm send <bot> <command>`,
+  `@swarm outcome <id>` and `@swarm cancel <id>`, with the outcome reported back to the sender.
+- **`@` chat through the command center registry**: local `@` lines go through Ostinato's public
+  `ISwarm.localAt` hook, so the chat, the command center window and the AI share one command registry. TenorClef no
+  longer reflects into Ostinato internals, and on older Ostinato builds it runs the command itself as before.
+- Works with Ostinato v1.28.0's controls-only input. Every action Ostinato performs for TenorClef now goes through
+  vanilla key presses and mouse look.
+
 # TenorClef 0.28.0
 
 Pairs with Ostinato v1.27.0 (26.3): `libs/baritone-unoptimized-fabric-ostinato-26.3.jar` is the v1.27.0 release jar. New 26.3 work

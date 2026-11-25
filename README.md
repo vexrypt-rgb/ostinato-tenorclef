@@ -20,9 +20,25 @@ TenorClef repo, and use pinned jars in `tenorclef/libs/`.
 
 ## Install (players)
 
-Download the jars from the [Ostinato releases](https://github.com/vexrypt-rgb/Ostinato/releases) and
-[TenorClef releases](https://github.com/vexrypt-rgb/TenorClef/releases). Current pair: Ostinato v1.27.0 + TenorClef v0.28.0. For 26.3 you need Fabric Loader, Java 25,
-`ostinato-mc26.3-unoptimized-fabric-*.jar` and the TenorClef 26.3 jar in `mods/`.
+Download the 26.3 jars from this repository's [releases](https://github.com/vexrypt-rgb/ostinato-tenorclef/releases).
+Current pair: **Ostinato v1.28.0** (tag `ostinato-v1.28.0`) and **TenorClef v0.29.0** (tag `tenorclef-v0.29.0`).
+You need Fabric Loader, Java 25, `ostinato-mc26.3-unoptimized-fabric-1.28.0.jar` and `tenorclef-mc26.3-v0.29.0.jar`
+in `mods/`. Older Minecraft lines are still in the [Ostinato](https://github.com/vexrypt-rgb/Ostinato/releases) and
+[TenorClef](https://github.com/vexrypt-rgb/TenorClef/releases) repositories.
+
+## What's new in Ostinato v1.28.0 / TenorClef v0.29.0
+
+- **Controls-only input**: the bot plays only through vanilla key presses and visible mouse look. On Paper 26.3 it
+  ran the full course with 0 flags under Grim, NoCheatPlus Updated and LightAntiCheat+. Spartan's gravity check also
+  flags plain vanilla 26.3, so its flags are a false positive (`ostinato/docs/CONTROLS_ONLY_AUDIT.md`).
+- **True headless bot** (experimental): a plain-JVM 26.3 protocol client with no Minecraft client
+  (`cd ostinato && ./gradlew runHeadlessBot`). Offline-mode servers only (`ostinato/HEADLESS_BOT_NOTES.md`).
+- **Swarm and command center**: signed swarm commands, leases, shared observations, region builds, and the command
+  center window with a war room map. Swarm features stay off until you turn them on.
+- **Microsoft sign-in** for bot accounts with Ostinato's own Azure app id. It waits on Mojang's approval: until
+  then, sign-in stops at the Minecraft step with "app ID awaiting Mojang approval".
+
+Full notes: `ostinato/RELEASE_NOTES.md` and `tenorclef/CHANGELOG.md`.
 
 ## Experimental features
 
@@ -73,13 +89,16 @@ Gradle runs with `--no-daemon --max-workers=2`.
 
 ## Tests
 
-- Ostinato: `cd ostinato && ./gradlew test -x nativeHost` (about 1,600 headless tests; no Minecraft client).
+- Ostinato: `cd ostinato && ./gradlew test -x nativeHost` (about 2,400 headless tests; no Minecraft client).
 - TenorClef: `:26.3:test` through the script above.
 
 Live harnesses (lap courses, maze, allblocks) start a real client and are documented next to their results in
 `ostinato/docs/` and `tenorclef/docs/`.
 
 ## CI
+
+`.github/workflows/release.yml` publishes a GitHub release for each `ostinato-v*` or `tenorclef-v*` tag (notes in
+`.github/release-notes/`).
 
 `.github/workflows/ci.yml` runs on every push and PR to `main`:
 - Ostinato tests.

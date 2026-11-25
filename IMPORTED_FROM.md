@@ -5,10 +5,15 @@ the place to read it (`git log`, blame) and to build the older Minecraft lines.
 
 | Directory    | Source repository                                   | Ref                                   | Commit      |
 |--------------|-----------------------------------------------------|---------------------------------------|-------------|
-| `ostinato/`  | https://github.com/vexrypt-rgb/Ostinato             | `main` (PR #146), tag `v1.27.0`       | `ffdcad248` |
-| `tenorclef/` | https://github.com/vexrypt-rgb/TenorClef            | `main` (PR #44), tag `v0.28.0`        | `58d49f64`  |
+| `ostinato/`  | https://github.com/vexrypt-rgb/Ostinato             | local `release/v1.28.0` (main + client/controls-only + headless-bot/main) | `521cdc906` |
+| `tenorclef/` | https://github.com/vexrypt-rgb/TenorClef            | `main` (PR #45)                       | `5c18e626`  |
 
-Earlier snapshots: 2026-11-10 integration branches (`ostinato/` @ `05c0ba160`, `tenorclef/` @ `1a9688b0`);
+The 2026-11-25 sync (Ostinato v1.28.0, TenorClef v0.29.0) came in as one snapshot commit per feature: swarm Phase 2/3
+and command center (standalone main @ `20a35ebba`), controls-only input (`9c091796b`), then the true headless bot and
+release notes (`521cdc906`). The monorepo's own swarm branches (phase 1, legit, hidden, headless client mode, spawn,
+command center, Azure client id) are kept with their history.
+
+Earlier snapshots: 2026-11-10 v1.27.0/v0.28.0 (`ffdcad248`, `58d49f64`); 2026-11-10 integration branches (`ostinato/` @ `05c0ba160`, `tenorclef/` @ `1a9688b0`);
 2026-11-07 (`ostinato/` @ `170d5c70`, `tenorclef/` @ `0f32e2c5`).
 
 Changes made on import:
