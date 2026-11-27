@@ -7,8 +7,11 @@ import net.minecraft.client.gui.screen.Screen;
 public class ScreenVer {
 
     public static Screen current(MinecraftClient mc) {
+        if (mc == null) {
+            return null;
+        }
         //#if MC >= 260000
-        //$$ return mc.gui.screen();
+        //$$ return mc.gui == null ? null : mc.gui.screen();
         //#else
         return mc.currentScreen;
         //#endif

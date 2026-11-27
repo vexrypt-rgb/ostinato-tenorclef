@@ -465,7 +465,9 @@ public class HeadlessPlaceTest {
 
             var aim = bot.liveDriver().aimAtPlace(Set.of(want));
             assertTrue("should see the floor's south face beside the wall", aim.isPresent());
-            bot.liveDriver().look().updateTarget(aim.get(), true);
+            for (int i = 0; i < 6; i++) {
+                bot.liveDriver().look().updateTarget(aim.get(), true);
+            }
             var placed = bot.liveDriver().context().objectMouseOver();
             assertTrue("aimed look missed the intended face: " + placed, bot.liveDriver().placesInto(placed, want));
             assertEquals(new BlockPos(0, 0, 0), ((BlockHitResult) placed).getBlockPos());
@@ -646,7 +648,9 @@ public class HeadlessPlaceTest {
             var face = new Vec3(0.5, 0.5, 1.0);
             Rotation look = RotationUtils.calcRotationFromVec3d(
                     bot.liveDriver().context().playerHead(), face, new Rotation(0f, 0f));
-            bot.liveDriver().look().updateTarget(look, true);
+            for (int i = 0; i < 6; i++) {
+                bot.liveDriver().look().updateTarget(look, true);
+            }
             var hit = bot.liveDriver().context().objectMouseOver();
             assertTrue("sneak-bridge hang must see the pad's south face, got " + hit
                     + " eye=" + player.getEyeHeight() + " rot=" + look

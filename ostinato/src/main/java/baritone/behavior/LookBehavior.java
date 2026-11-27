@@ -24,6 +24,8 @@ import baritone.utils.OstinatoRandom;
 import baritone.utils.PhysicalInput;
 import baritone.Baritone;
 import baritone.api.Settings;
+import baritone.api.context.BotContext;
+import baritone.api.context.BotContextScope;
 import baritone.api.behavior.ILookBehavior;
 import baritone.api.behavior.look.IAimProcessor;
 import baritone.api.behavior.look.ITickableAimProcessor;
@@ -188,7 +190,13 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
         dy = Math.round(net.minecraft.util.Mth.clamp(dy, -cap, cap) / step) * step;
         dp = Math.round(net.minecraft.util.Mth.clamp(dp, -32f, 32f) / step) * step;
         turnBy(p, dy, dp);
-        lastTurnDeg = Math.max(Math.abs(dy), Math.abs(dp)); // Ostinato: how far this tick's mouse step moved
+        float turnDeg = Math.max(Math.abs(dy), Math.abs(dp)); // Ostinato: how far this tick's mouse step moved
+        BotContext botCtx = BotContextScope.currentOrNull();
+        if (botCtx != null) {
+            botCtx.setLastLookTurnDegrees(turnDeg);
+        } else {
+            lastTurnDeg = turnDeg;
+        }
         human = ownMove = false;
         turnCap = 0;
     }
@@ -208,7 +216,10 @@ public final class LookBehavior extends Behavior implements ILookBehavior {
     // before clicking a block; ControlInput holds block clicks while the view is still swinging (Grim RotationPlace).
     private static float lastTurnDeg;
 
-    public static float lastTurnDegrees() { return lastTurnDeg; }
+    public static float lastTurnDegrees() {
+        BotContext botCtx = BotContextScope.currentOrNull();
+        return botCtx != null ? botCtx.lastLookTurnDegrees() : lastTurnDeg;
+    }
 
     private float mouseStep() {
         double f = ctx.minecraft().options.sensitivity().get() * 0.6 + 0.2;

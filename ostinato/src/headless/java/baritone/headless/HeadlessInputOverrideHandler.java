@@ -41,6 +41,18 @@ public final class HeadlessInputOverrideHandler implements IInputOverrideHandler
         analog = new float[]{Math.max(-1f, Math.min(1f, left)), Math.max(-1f, Math.min(1f, forward))};
     }
 
+    public boolean hasForcedInput() {
+        if (analog != null) {
+            return true;
+        }
+        for (Boolean b : forced.values()) {
+            if (Boolean.TRUE.equals(b)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     @Override
     public float[] pollAnalog() {
         float[] a = analog;

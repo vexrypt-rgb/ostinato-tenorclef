@@ -8,11 +8,11 @@ import adris.altoclef.trackers.MiscBlockTracker;
 import adris.altoclef.trackers.SimpleChunkTracker;
 import adris.altoclef.trackers.storage.ItemStorageTracker;
 import net.minecraft.block.Block;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.World;
 
 import java.util.Optional;
 
@@ -60,12 +60,12 @@ public final class AltoClefWorldKnowledge implements WorldKnowledge {
     }
 
     @Override
-    public ClientPlayerEntity getPlayer() {
+    public PlayerEntity getPlayer() {
         return mod.getPlayer();
     }
 
     @Override
-    public ClientWorld getWorld() {
+    public World getWorld() {
         return mod.getWorld();
     }
 
@@ -101,7 +101,7 @@ public final class AltoClefWorldKnowledge implements WorldKnowledge {
 
     @Override
     public long currentTick() {
-        ClientWorld world = getWorld();
+        World world = getWorld();
         if (world != null) {
             return world.getTime();
         }
@@ -111,7 +111,7 @@ public final class AltoClefWorldKnowledge implements WorldKnowledge {
     @Override
     public KnowledgeFact<Vec3d> playerPositionFact() {
         long tick = currentTick();
-        ClientPlayerEntity player = getPlayer();
+        PlayerEntity player = getPlayer();
         if (player != null) {
             KnowledgeFact<Vec3d> live = KnowledgeFact.of(player.getPos(), tick, 1.0, KnowledgeSource.SENSOR);
             factCache.put(KEY_PLAYER_POS, live);
@@ -123,7 +123,7 @@ public final class AltoClefWorldKnowledge implements WorldKnowledge {
     @Override
     public KnowledgeFact<Float> playerHealthFact() {
         long tick = currentTick();
-        ClientPlayerEntity player = getPlayer();
+        PlayerEntity player = getPlayer();
         if (player != null) {
             KnowledgeFact<Float> live = KnowledgeFact.of(player.getHealth(), tick, 1.0, KnowledgeSource.SENSOR);
             factCache.put(KEY_PLAYER_HEALTH, live);
@@ -175,7 +175,7 @@ public final class AltoClefWorldKnowledge implements WorldKnowledge {
             return KnowledgeFact.unknown();
         }
         String key = KEY_BLOCK_PRESENT_PREFIX + pos.toShortString();
-        ClientWorld world = getWorld();
+        World world = getWorld();
         if (world != null) {
             Block at = world.getBlockState(pos).getBlock();
             boolean match = expected == null || expected.length == 0;

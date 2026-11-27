@@ -1,6 +1,7 @@
 package adris.altoclef.butler;
 
 import adris.altoclef.AltoClef;
+import adris.altoclef.headless.TenorClefBotContext;
 import adris.altoclef.tasks.speedrun.testrun2.util.QueueWatch;
 
 import java.util.Locale;
@@ -38,6 +39,24 @@ public final class ButlerGuard {
         String cmd = (sp < 0 ? head : head.substring(0, sp)).toLowerCase(Locale.ROOT);
         if (DENY.contains(cmd)) return "command denied: " + cmd;
         long now = System.currentTimeMillis();
+        TenorClefBotContext tc = TenorClefBotContext.currentOrNull();
+        if (tc != null) {
+            long tcLastMs = tc.getTaskState("butler.lastMs", 0L);
+            int tcBurst = tc.getTaskState("butler.burst", 0);
+            if (user.equalsIgnoreCase(tc.butlerLastUser) && now - tcLastMs < 1500) {
+                tcBurst++;
+                if (tcBurst > 4) {
+                    tc.setTaskState("butler.burst", tcBurst);
+                    return "rate limit";
+                }
+            } else {
+                tcBurst = 0;
+            }
+            tc.butlerLastUser = user;
+            tc.setTaskState("butler.lastMs", now);
+            tc.setTaskState("butler.burst", tcBurst);
+            return null;
+        }
         if (user.equalsIgnoreCase(lastUser) && now - lastMs < 1500) {
             burst++;
             if (burst > 4) return "rate limit";

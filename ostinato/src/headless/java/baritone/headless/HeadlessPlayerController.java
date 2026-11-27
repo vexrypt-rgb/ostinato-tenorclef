@@ -14,6 +14,7 @@ package baritone.headless;
 import baritone.api.utils.IPlayerController;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.network.protocol.game.ServerboundContainerButtonClickPacket;
 import net.minecraft.network.protocol.game.ServerboundPlayerActionPacket;
 import net.minecraft.network.protocol.game.ServerboundSetCarriedItemPacket;
 import net.minecraft.network.protocol.game.ServerboundUseItemPacket;
@@ -206,6 +207,10 @@ public final class HeadlessPlayerController implements IPlayerController {
     public void windowClick(int windowId, int slotId, int mouseButton, ContainerInput type, Player player) {
         // Ostinato: hashed ServerboundContainerClick, same path MultiPlayerGameMode.handleContainerInput uses.
         bot.inventory().windowClick(windowId, slotId, mouseButton, type, player);
+    }
+
+    public void clickButton(int containerId, int buttonId) {
+        bot.send(new ServerboundContainerButtonClickPacket(containerId, buttonId));
     }
 
     /** Right-click a block without predicting a placement (opening a table, furnace, or chest). */

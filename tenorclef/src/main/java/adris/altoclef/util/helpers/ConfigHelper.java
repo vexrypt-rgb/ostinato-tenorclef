@@ -1,6 +1,7 @@
 package adris.altoclef.util.helpers;
 
 import adris.altoclef.Debug;
+import adris.altoclef.headless.TenorClefBotContext;
 import adris.altoclef.util.serialization.*;
 import com.fasterxml.jackson.core.util.DefaultIndenter;
 import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
@@ -31,12 +32,21 @@ public class ConfigHelper {
     // For reloading
     private static final HashMap<String, Runnable> loadedConfigs = new HashMap<>();
 
+    private static java.util.Map<String, Runnable> activeLoadedConfigs() {
+        TenorClefBotContext tc = TenorClefBotContext.currentOrNull();
+        return tc != null ? tc.loadedConfigs : loadedConfigs;
+    }
+
     private static File getConfigFile(String path) {
+        TenorClefBotContext tc = TenorClefBotContext.currentOrNull();
+        if (tc != null && tc.configDir() != null) {
+            return tc.configDir().resolve(path).toFile();
+        }
         return Paths.get(ALTO_FOLDER, path).toFile();
     }
 
     public static void reloadAllConfigs() {
-        for (Runnable reload : loadedConfigs.values()) {
+        for (Runnable reload : activeLoadedConfigs().values()) {
             reload.run();
         }
     }
@@ -83,7 +93,7 @@ public class ConfigHelper {
 
     public static <T> void loadConfig(String path, Supplier<T> getDefault, Class<T> classToLoad, Consumer<T> onReload) {
         T result = getConfig(path, getDefault, classToLoad);
-        loadedConfigs.put(path, () -> onReload.accept(getConfig(path, getDefault, classToLoad)));
+        activeLoadedConfigs().put(path, () -> onReload.accept(getConfig(path, getDefault, classToLoad)));
         onReload.accept(result);
     }
 
@@ -142,7 +152,7 @@ public class ConfigHelper {
 
     public static <T extends IListConfigFile> void loadListConfig(String path, Supplier<T> getDefault, Consumer<T> onReload) {
         T result = getListConfig(path, getDefault);
-        loadedConfigs.put(path, () -> onReload.accept(getListConfig(path, getDefault)));
+        activeLoadedConfigs().put(path, () -> onReload.accept(getListConfig(path, getDefault)));
         onReload.accept(result);
     }
 
@@ -167,6 +177,11 @@ public class ConfigHelper {
             }
         }
         try {
+            File parent = loadFrom.getParentFile();
+            if (parent != null && !parent.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                parent.mkdirs();
+            }
             Files.write(loadFrom.toPath(), result.toString().getBytes());
         } catch (IOException e) {
             Debug.logError("Failed to write list config to ("+loadFrom+")",e);

@@ -245,7 +245,7 @@ public class MazeCeilingPlaceTask extends Task {
             }
             look(mod, visiblePoint(mod, target));
             // Only swing once the crosshair is on this cell, so a neighbor ceiling is not opened into another hole.
-            HitResult hit = MinecraftClient.getInstance().crosshairTarget;
+            HitResult hit = adris.altoclef.headless.BotClientBridge.crosshairTarget();
             boolean onTarget = hit instanceof BlockHitResult bhr && bhr.getBlockPos().equals(target);
             mod.getClientBaritone().getInputOverrideHandler().setInputForceState(Input.CLICK_LEFT, onTarget);
             return stay("Mining ceiling " + target.toShortString());
@@ -292,14 +292,14 @@ public class MazeCeilingPlaceTask extends Task {
         }
         look(mod, click.hit);
         // Same click path as PlaceBlockNearbyTask: the server accepts the crosshair ray, not a made-up hit.
-        HitResult lookHit = MinecraftClient.getInstance().crosshairTarget;
+        HitResult lookHit = adris.altoclef.headless.BotClientBridge.crosshairTarget();
         if (!(lookHit instanceof BlockHitResult bhr) || !bhr.getBlockPos().offset(bhr.getSide()).equals(target)) {
             return stay("Aiming ceiling " + target.toShortString());
         }
         if (++actTicks % 4 != 0) {
             return stay("Placing ceiling " + target.toShortString());
         }
-        ActionResult res = MinecraftClient.getInstance().interactionManager.interactBlock(mod.getPlayer(), Hand.MAIN_HAND, bhr);
+        ActionResult res = adris.altoclef.headless.BotClientBridge.interactBlock(Hand.MAIN_HAND, bhr);
         if (res == ActionResult.SUCCESS) {
             mod.getPlayer().swingHand(Hand.MAIN_HAND);
             refusedClicks = 0;

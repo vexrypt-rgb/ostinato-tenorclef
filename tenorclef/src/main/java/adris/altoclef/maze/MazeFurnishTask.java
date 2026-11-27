@@ -247,7 +247,7 @@ public class MazeFurnishTask extends Task {
             for (Task t = this; t != null; t = t.getSub()) chain.append(" > ").append(t).append(" [").append(t.getDebugState()).append(']');
             System.out.println("MAZETEST FURNISH FAIL stuck=" + getDebugState() + " for=90s feet=" + feet.toShortString() + " held=" + mod.getPlayer().getMainHandStack().getItem().getTranslationKey() + " emptySlot=" + mod.getPlayer().getInventory().getEmptySlot() + " chain" + chain);
             failed = true;
-            net.minecraft.client.MinecraftClient.getInstance().scheduleStop();
+            adris.altoclef.headless.BotClientBridge.requestStop();
             return null;
         }
         if (feet.equals(lastFeet) && !smelting) stillTicks++; else { stillTicks = 0; lastFeet = feet; } // Ostinato: run99 smelt waits are not stillness
@@ -1381,11 +1381,13 @@ public class MazeFurnishTask extends Task {
     // Ostinato: run52. True when the block already there is one this step accepts, so the kit must not mine it.
     private boolean cellMatchesPlan(BlockPos p) {
         if (work == null) return false;
-        net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
-        net.minecraft.world.World w = mc.world;
-        if (mc.getServer() != null && mc.world != null) {
-            net.minecraft.server.world.ServerWorld sw = mc.getServer().getWorld(mc.world.getRegistryKey());
-            if (sw != null) w = sw;
+        net.minecraft.world.World w = adris.altoclef.headless.BotClientBridge.world();
+        if (!adris.altoclef.headless.BotClientBridge.isHeadless()) {
+            net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
+            if (mc.getServer() != null && mc.world != null) {
+                net.minecraft.server.world.ServerWorld sw = mc.getServer().getWorld(mc.world.getRegistryKey());
+                if (sw != null) w = sw;
+            }
         }
         if (w == null) return false;
         Block have = w.getBlockState(p).getBlock();
@@ -1397,11 +1399,13 @@ public class MazeFurnishTask extends Task {
     }
 
     private boolean isSolidCell(BlockPos p) {
-        net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
-        net.minecraft.world.World w = mc.world;
-        if (mc.getServer() != null && mc.world != null) {
-            net.minecraft.server.world.ServerWorld sw = mc.getServer().getWorld(mc.world.getRegistryKey());
-            if (sw != null) w = sw;
+        net.minecraft.world.World w = adris.altoclef.headless.BotClientBridge.world();
+        if (!adris.altoclef.headless.BotClientBridge.isHeadless()) {
+            net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
+            if (mc.getServer() != null && mc.world != null) {
+                net.minecraft.server.world.ServerWorld sw = mc.getServer().getWorld(mc.world.getRegistryKey());
+                if (sw != null) w = sw;
+            }
         }
         if (w == null) return false;
         BlockState st = w.getBlockState(p);

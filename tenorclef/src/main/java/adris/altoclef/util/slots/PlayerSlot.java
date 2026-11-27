@@ -1,7 +1,8 @@
 package adris.altoclef.util.slots;
 
-import net.minecraft.client.MinecraftClient;
+import adris.altoclef.headless.BotClientBridge;
 import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.entity.player.PlayerEntity;
 
 import java.util.stream.IntStream;
 
@@ -41,8 +42,9 @@ public class PlayerSlot extends Slot {
     public static Slot getEquipSlot(EquipmentSlot equipSlot) {
         switch (equipSlot) {
             case MAINHAND:
-                assert MinecraftClient.getInstance().player != null;
-                return Slot.getFromCurrentScreenInventory(MinecraftClient.getInstance().player.getInventory().selectedSlot);
+                PlayerEntity player = BotClientBridge.player();
+                assert player != null;
+                return Slot.getFromCurrentScreenInventory(player.getInventory().selectedSlot);
             case OFFHAND:
                 return OFFHAND_SLOT;
             case FEET:

@@ -7,11 +7,11 @@ import adris.altoclef.trackers.MiscBlockTracker;
 import adris.altoclef.trackers.SimpleChunkTracker;
 import adris.altoclef.trackers.storage.ItemStorageTracker;
 import net.minecraft.block.Block;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.World;
 
 /**
  * Read-only facade over existing AltoClef trackers and client world state.
@@ -25,9 +25,9 @@ public interface WorldKnowledge {
     /** Same as {@link adris.altoclef.AltoClef#inGame()}. */
     boolean inGame();
 
-    ClientPlayerEntity getPlayer();
+    PlayerEntity getPlayer();
 
-    ClientWorld getWorld();
+    World getWorld();
 
     ItemStorageTracker getItemStorage();
 

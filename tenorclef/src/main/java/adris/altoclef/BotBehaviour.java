@@ -1,5 +1,6 @@
 package adris.altoclef;
 
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.util.slots.Slot;
 import baritone.api.policy.IAgentPolicy; // Ostinato: driver API
 import baritone.api.Settings;
@@ -356,11 +357,17 @@ public class BotBehaviour {
             }
             _allowWalkThroughFlowingWater = settings.isFlowingWaterPassAllowed();
 
+            //#if MC >= 260000
+            //$$ rayFluidHandling = RayTraceUtils.currentFluidHandling();
+            //#else
             rayFluidHandling = RayTraceUtils.fluidHandling;
+            //#endif
         }
 
         private void readMinecraftState() {
-            pauseOnLostFocus = MinecraftClient.getInstance().options.pauseOnLostFocus;
+            if (!BotClientBridge.isHeadless()) {
+                pauseOnLostFocus = MinecraftClient.getInstance().options.pauseOnLostFocus;
+            }
         }
 
         /**
@@ -399,10 +406,16 @@ public class BotBehaviour {
             sa.allowSwimThroughLava(swimThroughLava);
 
             // Extra / hard coded
+            //#if MC >= 260000
+            //$$ RayTraceUtils.setFluidHandling(rayFluidHandling);
+            //#else
             RayTraceUtils.fluidHandling = rayFluidHandling;
+            //#endif
 
             // Minecraft
-            MinecraftClient.getInstance().options.pauseOnLostFocus = pauseOnLostFocus;
+            if (!BotClientBridge.isHeadless()) {
+                MinecraftClient.getInstance().options.pauseOnLostFocus = pauseOnLostFocus;
+            }
         }
 
         /**

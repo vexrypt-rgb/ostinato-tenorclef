@@ -167,7 +167,7 @@ public class ConstructNetherPortalSpeedrunTask extends adris.altoclef.tasksystem
                 }
                 // If we're the water source block...
                 if (block.equals(portalOrigin.add(WATER_SOURCE_ORIGIN))) {
-                    if (MinecraftClient.getInstance().world.getBlockState(block).getBlock() == Blocks.WATER)
+                    if (adris.altoclef.headless.BotClientBridge.world().getBlockState(block).getBlock() == Blocks.WATER)
                         return true;
                 }
             }
@@ -256,7 +256,7 @@ public class ConstructNetherPortalSpeedrunTask extends adris.altoclef.tasksystem
         // Place our water source
         if (!portalFrameBuilt) {
             BlockPos waterSourcePos = portalOrigin.add(WATER_SOURCE_ORIGIN);
-            if (MinecraftClient.getInstance().world.getBlockState(waterSourcePos).getBlock() != Blocks.WATER) {
+            if (adris.altoclef.headless.BotClientBridge.world().getBlockState(waterSourcePos).getBlock() != Blocks.WATER) {
                 if (!mod.getItemStorage().hasItem(Items.WATER_BUCKET)) {
                     setDebugState("Getting water");
                     return TaskCatalogue.getItemTask(Items.WATER_BUCKET, 1);
@@ -320,7 +320,7 @@ public class ConstructNetherPortalSpeedrunTask extends adris.altoclef.tasksystem
 
         // Delete water source
         BlockPos waterSourcePos = portalOrigin.add(WATER_SOURCE_ORIGIN);
-        BlockState waterSource = MinecraftClient.getInstance().world.getBlockState(waterSourcePos);
+        BlockState waterSource = adris.altoclef.headless.BotClientBridge.world().getBlockState(waterSourcePos);
         if (waterSource.getBlock() == Blocks.WATER) {
             setDebugState("Removing water source");
 
@@ -330,7 +330,7 @@ public class ConstructNetherPortalSpeedrunTask extends adris.altoclef.tasksystem
         // Clear inside of portal
         for (Vec3i offs : PORTAL_INTERIOR) {
             BlockPos p = portalOrigin.add(offs);
-            if (!MinecraftClient.getInstance().world.getBlockState(p).isAir()) {
+            if (!adris.altoclef.headless.BotClientBridge.world().getBlockState(p).isAir()) {
                 setDebugState("Clearing inside of portal");
                 return new DestroyBlockTask(p);
             }
@@ -405,7 +405,7 @@ public class ConstructNetherPortalSpeedrunTask extends adris.altoclef.tasksystem
         alreadyExplored.add(origin);
 
         // Base case: We hit a non-full lava block.
-        BlockState s = MinecraftClient.getInstance().world.getBlockState(origin);
+        BlockState s = adris.altoclef.headless.BotClientBridge.world().getBlockState(origin);
         if (s.getBlock() != Blocks.LAVA) {
             return 0;
         } else {
@@ -450,7 +450,7 @@ public class ConstructNetherPortalSpeedrunTask extends adris.altoclef.tasksystem
                     for (int dz = -1; dz < sizeAllocation.getZ() + 1; ++dz) {
                         for (int dy = -1; dy < sizeAllocation.getY(); ++dy) {
                             BlockPos toCheck = lava.add(offset).add(sizeOffset).add(dx,dy,dz);
-                            BlockState state = MinecraftClient.getInstance().world.getBlockState(toCheck);
+                            BlockState state = adris.altoclef.headless.BotClientBridge.world().getBlockState(toCheck);
                             if (state.getBlock() == Blocks.LAVA || state.getBlock() == Blocks.BEDROCK) {
                                 found = false;
                                 break moveAlongLine;
@@ -477,7 +477,7 @@ public class ConstructNetherPortalSpeedrunTask extends adris.altoclef.tasksystem
 
     private BlockPos getPortalRegionUnclearedBlock() {
         if (destroyTarget != null) {
-            BlockState state = MinecraftClient.getInstance().world.getBlockState(destroyTarget);
+            BlockState state = adris.altoclef.headless.BotClientBridge.world().getBlockState(destroyTarget);
             Block block = state.getBlock();
             if (state.isAir() || block == Blocks.WATER) {
                 destroyTarget = null;
@@ -503,7 +503,7 @@ public class ConstructNetherPortalSpeedrunTask extends adris.altoclef.tasksystem
     }
 
     private boolean shouldBeDestroyed(BlockPos toCheck) {
-        BlockState state = MinecraftClient.getInstance().world.getBlockState(toCheck);
+        BlockState state = adris.altoclef.headless.BotClientBridge.world().getBlockState(toCheck);
         Block block = state.getBlock();
 
         // Ignore air
@@ -531,9 +531,10 @@ public class ConstructNetherPortalSpeedrunTask extends adris.altoclef.tasksystem
     }
 
     private BlockPos getRequiredFrameLeft() {
+        var world = adris.altoclef.headless.BotClientBridge.world();
         for (Vec3i framePos : PORTAL_CONSTRUCTION_FRAME) {
             BlockPos worldPos = portalOrigin.add(framePos);
-            if (!MinecraftClient.getInstance().world.getBlockState(worldPos).isSolidBlock(MinecraftClient.getInstance().world, worldPos)) {
+            if (!world.getBlockState(worldPos).isSolidBlock(world, worldPos)) {
                 return worldPos;
             }
         }
@@ -563,7 +564,7 @@ public class ConstructNetherPortalSpeedrunTask extends adris.altoclef.tasksystem
             BlockPos placeAt = portalOrigin.add(where);
             BlockPos placeOn = placeAt.offset(fromWhere.getOpposite());
             // Clear first
-            BlockState b = MinecraftClient.getInstance().world.getBlockState(placeAt);
+            BlockState b = adris.altoclef.headless.BotClientBridge.world().getBlockState(placeAt);
             if (!b.isAir() && b.getBlock() != Blocks.WATER) {
                 return new DestroyBlockTask(placeAt);
             }
@@ -573,7 +574,7 @@ public class ConstructNetherPortalSpeedrunTask extends adris.altoclef.tasksystem
         }
 
         private boolean isSatisfied(BlockPos portalOrigin) {
-            Block b = MinecraftClient.getInstance().world.getBlockState(portalOrigin.add(where)).getBlock();
+            Block b = adris.altoclef.headless.BotClientBridge.world().getBlockState(portalOrigin.add(where)).getBlock();
             return b == Blocks.OBSIDIAN || b == Blocks.LAVA;
         }
     }

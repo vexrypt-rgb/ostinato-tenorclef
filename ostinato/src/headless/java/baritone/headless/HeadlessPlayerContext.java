@@ -61,8 +61,7 @@ public final class HeadlessPlayerContext implements IPlayerContext {
 
     @Override
     public Iterable<Entity> entities() {
-        // No entity tracking headlessly: nothing in the world but the bot itself, which cannot block itself.
-        return List.of();
+        return world.commonEntities();
     }
 
     @Override

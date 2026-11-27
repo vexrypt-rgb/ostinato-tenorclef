@@ -170,7 +170,7 @@ public class MineAndCollectTask extends ResourceTask {
             return;
         }
         _cursorStackTimer.reset();
-        assert MinecraftClient.getInstance().player != null;
+        if (mod.getPlayer() == null) return;
         if (_subtask.miningPos() == null) return;
         // Ostinato: equip for the block Baritone is actually breaking (a log in the path), not the far target, else this
         // and PlayerInteractionFixChain swap pick<->axe every tick and the path block never breaks (run16).

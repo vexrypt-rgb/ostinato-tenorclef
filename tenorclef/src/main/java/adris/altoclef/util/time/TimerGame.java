@@ -2,6 +2,7 @@ package adris.altoclef.util.time;
 
 import adris.altoclef.AltoClef;
 import adris.altoclef.Debug;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.mixins.ClientConnectionAccessor;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.network.ClientConnection;
@@ -25,6 +26,9 @@ public class TimerGame extends BaseTimer {
         if (!AltoClef.inGame()) {
             Debug.logError("Running game timer while not in game.");
             return 0;
+        }
+        if (BotClientBridge.isHeadless()) {
+            return (double) BotClientBridge.tickCount() / 20.0;
         }
         // If we change connections, our game time will also be reset. In that case, offset our time to reflect that change.
         ClientConnection currentConnection = null;

@@ -81,6 +81,7 @@ public final class SettingCategorizer {
         rule("^maze", BUILDING);
         rule("^swarm", SWARM);
         rule("^elytra", ELYTRA);
+        rule("^headless", ADVANCED);
         rule("^(color|render)|Render|Opacity$|LineWidth|^selection", RENDER);
         rule("^(notification|chat)", CHAT);
         rule("^(build|schematic|layer)|Schematic", BUILDING);

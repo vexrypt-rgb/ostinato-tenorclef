@@ -17,8 +17,16 @@
 
 package baritone.api;
 
+import baritone.api.cache.IWorldScanner;
+import baritone.api.command.ICommandSystem;
+import baritone.api.context.BotContext;
+import baritone.api.context.BotContextScope;
 import baritone.api.run.RunMode;
+import baritone.api.schematic.ISchematicSystem;
 import baritone.api.utils.SettingsUtil;
+import net.minecraft.client.Minecraft;
+
+import java.util.List;
 
 /**
  * Exposes the {@link IBaritoneProvider} instance and the {@link Settings} instance for API usage.
@@ -53,10 +61,63 @@ public final class BaritoneAPI {
     }
 
     public static IBaritoneProvider getProvider() {
+        BotContext ctx = BotContextScope.currentOrNull();
+        if (ctx != null && ctx.baritone() != null) {
+            return new ContextBaritoneProvider(ctx);
+        }
         return ProviderHolder.provider;
     }
 
     public static Settings getSettings() {
+        BotContext ctx = BotContextScope.currentOrNull();
+        if (ctx != null && ctx.settings() != null) {
+            return ctx.settings();
+        }
         return BaritoneAPI.settings;
+    }
+
+    private static final class ContextBaritoneProvider implements IBaritoneProvider {
+        private final BotContext ctx;
+        private final List<IBaritone> all;
+
+        ContextBaritoneProvider(BotContext ctx) {
+            this.ctx = ctx;
+            this.all = List.of(ctx.baritone());
+        }
+
+        @Override
+        public IBaritone getPrimaryBaritone() {
+            return ctx.baritone();
+        }
+
+        @Override
+        public List<IBaritone> getAllBaritones() {
+            return all;
+        }
+
+        @Override
+        public IBaritone createBaritone(Minecraft minecraft) {
+            return ctx.baritone();
+        }
+
+        @Override
+        public boolean destroyBaritone(IBaritone baritone) {
+            return false;
+        }
+
+        @Override
+        public IWorldScanner getWorldScanner() {
+            return ctx.headless() ? null : ProviderHolder.provider.getWorldScanner();
+        }
+
+        @Override
+        public ICommandSystem getCommandSystem() {
+            return ctx.headless() ? null : ProviderHolder.provider.getCommandSystem();
+        }
+
+        @Override
+        public ISchematicSystem getSchematicSystem() {
+            return ctx.headless() ? null : ProviderHolder.provider.getSchematicSystem();
+        }
     }
 }

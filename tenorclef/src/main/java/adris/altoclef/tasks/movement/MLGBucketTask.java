@@ -50,13 +50,15 @@ public class MLGBucketTask extends Task {
     private BlockPos movingTorwards;
 
     private static boolean isLava(BlockPos pos) {
-        assert MinecraftClient.getInstance().world != null;
-        return MinecraftClient.getInstance().world.getBlockState(pos).getBlock() == Blocks.LAVA;
+        var world = adris.altoclef.headless.BotClientBridge.world();
+        assert world != null;
+        return world.getBlockState(pos).getBlock() == Blocks.LAVA;
     }
 
     private static boolean lavaWillProtect(BlockPos pos) {
-        assert MinecraftClient.getInstance().world != null;
-        BlockState state = MinecraftClient.getInstance().world.getBlockState(pos);
+        var world = adris.altoclef.headless.BotClientBridge.world();
+        assert world != null;
+        BlockState state = world.getBlockState(pos);
         if (state.getBlock() == Blocks.LAVA) {
             int level = state.getFluidState().getLevel();
             return level == 0 || level >= _config.lavaLevelOrGreaterWillCancelFallDamage;
@@ -65,15 +67,16 @@ public class MLGBucketTask extends Task {
     }
 
     private static boolean isWater(BlockPos pos) {
-        assert MinecraftClient.getInstance().world != null;
-        return MinecraftClient.getInstance().world.getBlockState(pos).getBlock() == Blocks.WATER;
+        var world = adris.altoclef.headless.BotClientBridge.world();
+        assert world != null;
+        return world.getBlockState(pos).getBlock() == Blocks.WATER;
     }
 
     /**
      * Can we reach this block while falling, or will gravity pull us too far?
      */
     private static boolean canTravelToInAir(BlockPos pos) {
-        Entity player = MinecraftClient.getInstance().player;
+        Entity player = adris.altoclef.headless.BotClientBridge.player();
         assert player != null;
         double verticalDist = player.getPos().getY() - pos.getY() - 1;
         double verticalVelocity = -1 * player.getVelocity().y;
@@ -90,10 +93,11 @@ public class MLGBucketTask extends Task {
     }
 
     private static boolean isFallDeadly(BlockPos pos) {
-        PlayerEntity player = MinecraftClient.getInstance().player;
+        PlayerEntity player = adris.altoclef.headless.BotClientBridge.player();
         double damage = calculateFallDamageToLandOn(pos);
-        assert MinecraftClient.getInstance().world != null;
-        Block b = MinecraftClient.getInstance().world.getBlockState(pos).getBlock();
+        var world = adris.altoclef.headless.BotClientBridge.world();
+        assert world != null;
+        Block b = world.getBlockState(pos).getBlock();
         if (b == Blocks.HAY_BLOCK) {
             damage *= 0.2f;
         }
@@ -103,8 +107,8 @@ public class MLGBucketTask extends Task {
     }
 
     private static double calculateFallDamageToLandOn(BlockPos pos) {
-        ClientWorld world = MinecraftClient.getInstance().world;
-        PlayerEntity player = MinecraftClient.getInstance().player;
+        var world = adris.altoclef.headless.BotClientBridge.world();
+        PlayerEntity player = adris.altoclef.headless.BotClientBridge.player();
         assert player != null;
         double totalFallDistance = player.fallDistance + (player.getY() - pos.getY() - 1);
         // Copied from living entity I think, somewhere idk you get the picture.
@@ -418,13 +422,13 @@ public class MLGBucketTask extends Task {
     }
 
     private RaycastContext castDown(Vec3d origin) {
-        Entity player = MinecraftClient.getInstance().player;
+        Entity player = adris.altoclef.headless.BotClientBridge.player();
         assert player != null;
         return new RaycastContext(origin, origin.add(0, -1 * _config.castDownDistance, 0), RaycastContext.ShapeType.COLLIDER, RaycastContext.FluidHandling.ANY, player);
     }
 
     private RaycastContext castCone(double yaw, double pitch) {
-        Entity player = MinecraftClient.getInstance().player;
+        Entity player = adris.altoclef.headless.BotClientBridge.player();
         assert player != null;
         Vec3d origin = player.getPos();
         double dy = _config.epicClutchConeCastHeight;
@@ -472,7 +476,7 @@ public class MLGBucketTask extends Task {
 
     @Override
     public boolean isFinished() {
-        ClientPlayerEntity player = AltoClef.getInstance().getPlayer();
+        PlayerEntity player = AltoClef.getInstance().getPlayer();
 
         return player.isSwimming() || player.isTouchingWater() || player.isOnGround() || player.isClimbing();
     }

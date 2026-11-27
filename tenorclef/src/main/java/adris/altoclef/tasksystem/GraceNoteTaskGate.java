@@ -27,6 +27,7 @@ public final class GraceNoteTaskGate {
             }
             if (getter == null) return unavailable("Grace Note unsupported by this Ostinato version");
             Object service = getter.invoke(baritone);
+            if (service == null) return unavailable("Grace Note service unavailable");
             if (Boolean.TRUE.equals(call(service, "holdsControl"))) {
                 if (pendingEpisode < 0) pendingEpisode = Long.MAX_VALUE;
                 Object view = call(service, "status");

@@ -24,11 +24,11 @@ import baritone.api.utils.Rotation;
 import baritone.api.utils.input.Input;
 import net.minecraft.block.AbstractFireBlock;
 import net.minecraft.block.Block;
-import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.boss.WitherEntity;
 import net.minecraft.entity.effect.StatusEffects;
+import net.minecraft.entity.player.PlayerEntity;
 //#if MC < 260000
 import net.minecraft.entity.mob.*;
 //#else
@@ -92,7 +92,7 @@ public class MobDefenseChain extends SingleTaskChain {
     private static final List<Class<? extends Entity>> ignoredMobs = List.of(Entities.WARDEN, WitherEntity.class, EndermanEntity.class, BlazeEntity.class,
             WitherSkeletonEntity.class, HoglinEntity.class, ZoglinEntity.class, Entities.PIGLIN_BRUTE, VindicatorEntity.class, MagmaCubeEntity.class);
 
-    private static boolean shielding = false;
+    private boolean shielding = false;
     private final DragonBreathTracker dragonBreathTracker = new DragonBreathTracker();
     private final KillAura killAura = new KillAura();
     private Entity targetEntity;
@@ -164,7 +164,7 @@ public class MobDefenseChain extends SingleTaskChain {
         return distance * 0.2; // less is WORSE
     }
 
-    private static void startShielding(AltoClef mod) {
+    private void startShielding(AltoClef mod) {
         shielding = true;
         mod.getClientBaritone().getPathingBehavior().requestPause();
         mod.getExtraBaritoneSettings().setInteractionPaused(true);
@@ -963,7 +963,7 @@ public class MobDefenseChain extends SingleTaskChain {
         if (WorldHelper.isVulnerable()) {
             // If hostile mobs are nearby...
             try {
-                ClientPlayerEntity player = mod.getPlayer();
+                PlayerEntity player = mod.getPlayer();
                 List<LivingEntity> hostiles = mod.getEntityTracker().getHostiles();
 
                 synchronized (BaritoneHelper.MINECRAFT_LOCK) {
@@ -984,7 +984,7 @@ public class MobDefenseChain extends SingleTaskChain {
 
     private boolean angryHostileNear(AltoClef mod) {
         try {
-            ClientPlayerEntity player = mod.getPlayer();
+            PlayerEntity player = mod.getPlayer();
             synchronized (BaritoneHelper.MINECRAFT_LOCK) {
                 for (Entity entity : mod.getEntityTracker().getHostiles()) {
                     // S226: skeletons/pillagers hurt from range; SAFE_KEEP_DISTANCE alone let them snipe us to death

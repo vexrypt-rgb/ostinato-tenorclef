@@ -122,4 +122,49 @@ public class HeadlessChunkDecodeTest {
             assertTrue(expected.getMessage().contains("section decode failed"));
         }
     }
+
+    @Test
+    public void sharesEmptyAirSectionAndCopiesOnWriteWithCappedRetention() throws Exception {
+        HeadlessChunkStore storeA = new HeadlessChunkStore();
+        HeadlessChunkStore storeB = new HeadlessChunkStore();
+        storeA.setDimension(0, 32); // 2 sections
+        storeB.setDimension(0, 32);
+
+        PalettedContainer<BlockState> airSection = new PalettedContainer<>(
+                Blocks.AIR.defaultBlockState(), net.minecraft.world.level.chunk.Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY));
+        PalettedContainer<BlockState> stoneSection = new PalettedContainer<>(
+                Blocks.AIR.defaultBlockState(), net.minecraft.world.level.chunk.Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY));
+        stoneSection.set(1, 2, 3, Blocks.STONE.defaultBlockState());
+
+        FriendlyByteBuf raw = new FriendlyByteBuf(Unpooled.buffer());
+        HeadlessChunkStore.writeSection(raw, airSection);
+        HeadlessChunkStore.writeSection(raw, stoneSection);
+        byte[] bytes = new byte[raw.readableBytes()];
+        raw.readBytes(bytes);
+
+        storeA.loadChunk(new ClientboundLevelChunkWithLightPacket(0, 0, chunkData(bytes), null));
+        storeB.loadChunk(new ClientboundLevelChunkWithLightPacket(0, 0, chunkData(bytes), null));
+
+        // Copy-on-write on storeA's air section (y=0..15) must not affect storeB or EMPTY_AIR_SECTION.
+        assertTrue(storeA.setBlockState(new BlockPos(2, 4, 6), Blocks.COBBLESTONE.defaultBlockState()));
+        assertEquals(Blocks.COBBLESTONE.defaultBlockState(), storeA.getBlockState(2, 4, 6));
+        assertEquals(Blocks.AIR.defaultBlockState(), storeB.getBlockState(2, 4, 6));
+        assertEquals(Blocks.AIR.defaultBlockState(), HeadlessChunkStore.EMPTY_AIR_SECTION.get(2, 4, 6));
+
+        // HeadlessBlockStateInterface single-entry cache matches store state including post-COW update.
+        HeadlessBlockStateInterface bsi = new HeadlessBlockStateInterface(storeA);
+        assertEquals(Blocks.COBBLESTONE.defaultBlockState(), bsi.get0(2, 4, 6));
+        assertEquals(Blocks.STONE.defaultBlockState(), bsi.get0(1, 18, 3));
+        assertTrue(storeA.setBlockState(new BlockPos(5, 5, 5), Blocks.OAK_LOG.defaultBlockState()));
+        assertEquals(Blocks.OAK_LOG.defaultBlockState(), bsi.get0(5, 5, 5));
+
+        // Radius clamping: maxChunkRadius=3 caps server radius 12 down to 3, and never below 2.
+        storeA.setMaxChunkRadius(3);
+        storeA.createEmptyChunk(3, 0);
+        storeA.createEmptyChunk(4, 0);
+        int dropped = storeA.retainAround(0, 0, 12);
+        assertEquals(1, dropped);
+        assertTrue(storeA.isChunkLoaded(3, 0));
+        assertFalse(storeA.isChunkLoaded(4, 0));
+    }
 }

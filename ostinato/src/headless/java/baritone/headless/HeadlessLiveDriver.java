@@ -2,6 +2,9 @@ package baritone.headless;
 
 import baritone.Baritone;
 import baritone.altoclef.AltoClefSettings;
+import baritone.api.Settings;
+import baritone.api.context.BotContext;
+import baritone.api.context.BotContextScope;
 import baritone.api.pathing.goals.GoalBlock;
 import baritone.api.pathing.goals.GoalGetToBlock;
 import baritone.api.utils.RayTraceUtils;
@@ -36,8 +39,10 @@ import java.util.Set;
 // Ostinato: tick-owned bridge between the protocol body, path executor and PlayerSim intents.
 final class HeadlessLiveDriver implements HeadlessMovement.Driver {
     private static final boolean BOT_TRACE = Boolean.getBoolean("ostinato.botTrace");
+    private final HeadlessBot bot;
     private final HeadlessPlayer player;
     private final HeadlessLevel level;
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet legitSeen = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
     private final HeadlessPlayerController controller;
     private final HeadlessPlayerContext context;
     private final HeadlessInputOverrideHandler input = new HeadlessInputOverrideHandler();
@@ -78,16 +83,20 @@ final class HeadlessLiveDriver implements HeadlessMovement.Driver {
     };
 
     HeadlessLiveDriver(HeadlessBot bot, HeadlessPlayer player, HeadlessLevel level) {
+        this.bot = bot;
         this.player = player;
         this.level = level;
         controller = new HeadlessPlayerController(bot, player, level);
         context = new HeadlessPlayerContext(player, level, controller);
         look = new HeadlessLookBehavior(player);
-        // Ostinato parity: the same Baritone settings the real 26.3 client bot runs with, i.e. Ostinato defaults
-        // plus TenorClef's AltoClef.initializeBaritoneSettings (TenorClef-swarm-beta @ 5c18e626). No parkour.
+        // Ostinato parity: apply settings only to the current BotContext (never mutating another bot's Settings).
         applyClientBotSettings();
         if (BOT_TRACE) Baritone.settings().kinematicTrace.value = true; // Ostinato parity diagnostics only
         host = new HeadlessBaritone(context, new HeadlessBlockStateInterface(bot.chunks()), input, look);
+        BotContext ctx = BotContextScope.currentOrNull();
+        if (ctx != null) {
+            ctx.setBaritone(host);
+        }
         combat = new HeadlessCombat(bot, player, controller, host, bot.entities());
         craft = new HeadlessCraft(bot, player, controller, host, this);
     }
@@ -98,12 +107,16 @@ final class HeadlessLiveDriver implements HeadlessMovement.Driver {
      * placement) live in its own mixins and have no setting here.
      */
     static void applyClientBotSettings() {
-        var s = Baritone.settings();
+        Settings s = Baritone.settings();
         s.freeLook.value = false;
         s.overshootTraverse.value = false;
         s.allowOvershootDiagonalDescend.value = true;
         s.allowInventory.value = true;
-        s.allowParkour.value = false;
+        // Ostinato: preserve per-bot allowParkour overrides when a BotContext is bound
+        // (Settings.allowParkour already defaults to false on fresh BotContext instances).
+        if (!BotContextScope.isBound()) {
+            s.allowParkour.value = false;
+        }
         s.sprintJump.value = false;
         s.kinematicTravel.value = !"false".equals(System.getProperty("tenorclef.kinematic"));
         s.allowParkourAscend.value = false;
@@ -306,30 +319,47 @@ final class HeadlessLiveDriver implements HeadlessMovement.Driver {
         placeStatus = "placing " + placing;
     }
 
-    // Ostinato: a bounded nearest-loaded-block operation, not the client #mine process.
+    // Ostinato: a bounded nearest-loaded-block operation, respecting legitMine line-of-sight when enabled.
     void mine(String block) {
         cancel();
         String id = block.contains(":") ? block : "minecraft:" + block;
         BlockPos feet = player.blockPosition();
-        double best = Double.POSITIVE_INFINITY;
+        java.util.List<BlockPos> candidates = new java.util.ArrayList<>();
+        BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos();
+        int minY = level.getMinY();
+        int maxY = minY + level.getHeight() - 1;
         for (int x = feet.getX() - 16; x <= feet.getX() + 16; x++) {
             for (int z = feet.getZ() - 16; z <= feet.getZ() + 16; z++) {
-                for (int y = Math.max(level.getMinY(), feet.getY() - 8);
-                     y <= Math.min(level.getMinY() + level.getHeight() - 1, feet.getY() + 8); y++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    if (!level.isLoaded(pos)) continue;
-                    var state = level.getBlockState(pos);
+                if (!level.isLoaded(probe.set(x, feet.getY(), z))) continue;
+                for (int y = Math.max(minY, feet.getY() - 8);
+                     y <= Math.min(maxY, feet.getY() + 8); y++) {
+                    probe.set(x, y, z);
+                    var state = level.getBlockState(probe);
                     if (state.isAir() || !BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString().equals(id)
-                            || state.getDestroySpeed(level, pos) < 0) continue;
-                    double distance = pos.distSqr(feet);
-                    if (distance < best) {
-                        mining = pos;
-                        best = distance;
-                    }
+                            || state.getDestroySpeed(level, probe) < 0) continue;
+                    candidates.add(probe.immutable());
                 }
             }
         }
-        if (mining == null) throw new IllegalArgumentException("No breakable loaded " + id + " within 16 horizontal / 8 vertical blocks");
+        if (Baritone.settings().legitMine.value || baritone.legit.LegitTargets.active()) {
+            Vec3 eye = player.getEyePosition(1.0F);
+            candidates = baritone.legit.LegitTargets.select(
+                    candidates, legitSeen, new HeadlessSeenView(bot.chunks()), eye.x, eye.y, eye.z, true);
+        }
+        double best = Double.POSITIVE_INFINITY;
+        BlockPos bestPos = null;
+        for (BlockPos cand : candidates) {
+            double dx = cand.getX() - feet.getX();
+            double dy = cand.getY() - feet.getY();
+            double dz = cand.getZ() - feet.getZ();
+            double distance = dx * dx + dy * dy + dz * dz;
+            if (distance < best) {
+                best = distance;
+                bestPos = cand;
+            }
+        }
+        if (bestPos == null) throw new IllegalArgumentException("No breakable loaded " + id + " within 16 horizontal / 8 vertical blocks");
+        mining = bestPos;
         miningTicks = 0;
         miningStatus = "approaching " + mining;
         host.getPathingBehavior().gotoGoal(new GoalGetToBlock(mining));
@@ -337,7 +367,16 @@ final class HeadlessLiveDriver implements HeadlessMovement.Driver {
 
     @Override
     public HeadlessMovement.Step tick(HeadlessBot bot, HeadlessMovement movement) {
+        // Ostinato: activeAgent.onTick() ran earlier in HeadlessBot.tickOnce() and may have called
+        // look.updateTarget(...). Snapshot that pending quantized look before sync(movement) copies
+        // the previous tick's movement yaw/pitch back onto player.
+        boolean agentLookUpdated = look.isUpdated();
+        float agentYaw = player.getYRot();
+        float agentPitch = player.getXRot();
         sync(movement);
+        if (agentLookUpdated) {
+            look.restoreRawPose(agentYaw, agentPitch);
+        }
         controller.tickPendingPlace();
         bot.applyAttributeUpdates(player);
         // Ostinato: Player is never ticked, so the vanilla attack-strength ticker must advance here.
@@ -350,7 +389,31 @@ final class HeadlessLiveDriver implements HeadlessMovement.Driver {
         }
         boolean owns = host.getPathingBehavior().isPathing() || mining != null || placing != null
                 || combat.active() || craft.active();
-        if (!owns) return null;
+        if (!owns) {
+            Rotation desiredLook = new Rotation(player.getYRot(), player.getXRot());
+            boolean lookUpdated = look.consumeUpdated();
+            if (down(Input.CLICK_LEFT)) {
+                boolean restoredSentLook = false;
+                if (!movement.lookMatchesLastSent(desiredLook.getYaw(), desiredLook.getPitch())
+                        && !Float.isNaN(movement.lastSentYaw())) {
+                    look.restoreRawPose(movement.lastSentYaw(), movement.lastSentPitch());
+                    restoredSentLook = true;
+                }
+                tickAttack();
+                if (restoredSentLook) {
+                    look.restoreRawPose(desiredLook.getYaw(), desiredLook.getPitch());
+                }
+            } else {
+                controller.resetBlockRemoving();
+            }
+            if (input.hasForcedInput() || lookUpdated) {
+                return new HeadlessMovement.Step(1, desiredLook.getYaw(), desiredLook.getPitch(),
+                        key(Input.MOVE_FORWARD) - key(Input.MOVE_BACK),
+                        key(Input.MOVE_LEFT) - key(Input.MOVE_RIGHT),
+                        down(Input.SPRINT), down(Input.JUMP), down(Input.SNEAK), "agent");
+            }
+            return null;
+        }
         try {
             boolean sprintBefore = player.isSprinting();
             host.getPathingBehavior().tick();
@@ -386,7 +449,7 @@ final class HeadlessLiveDriver implements HeadlessMovement.Driver {
             boolean restoredSentLook = false;
             if (!movement.lookMatchesLastSent(desiredLook.getYaw(), desiredLook.getPitch())
                     && !Float.isNaN(movement.lastSentYaw())) {
-                look.updateTarget(new Rotation(movement.lastSentYaw(), movement.lastSentPitch()), true);
+                look.restoreRawPose(movement.lastSentYaw(), movement.lastSentPitch());
                 restoredSentLook = true;
             }
             if (mining != null) tickMining();
@@ -401,12 +464,13 @@ final class HeadlessLiveDriver implements HeadlessMovement.Driver {
             // movement packet. Step used to keep the pre-tickUse look, so the
             // rotation never landed and canSendPlace waited forever.
             if (pendingPlaceLook != null) {
-                desiredLook = pendingPlaceLook;
+                desiredLook = new Rotation(player.getYRot(), player.getXRot());
                 look.updateTarget(pendingPlaceLook, true);
+                desiredLook = new Rotation(player.getYRot(), player.getXRot());
             } else if (placing != null) {
                 desiredLook = new Rotation(player.getYRot(), player.getXRot());
             } else if (restoredSentLook) {
-                look.updateTarget(desiredLook, true);
+                look.restoreRawPose(desiredLook.getYaw(), desiredLook.getPitch());
             }
             holdSneakIfHanging(movement);
             String why = placing != null ? "place" : craft.active() ? "craft" : combat.active() ? "combat" : "pathing";

@@ -88,7 +88,7 @@ public class MazeBarrelFillTask extends Task {
             if (!cursor.isEmpty()) {
                 for (net.minecraft.screen.slot.Slot s : h.slots) {
                     if (!(s.inventory instanceof net.minecraft.entity.player.PlayerInventory) && s.getStack().isEmpty()) {
-                        MinecraftClient.getInstance().interactionManager.clickSlot(h.syncId, s.id, 0, SlotActionType.PICKUP, mod.getPlayer());
+                        adris.altoclef.headless.BotClientBridge.clickSlot(h.syncId, s.id, 0, SlotActionType.PICKUP, mod.getPlayer());
                         System.out.println("MAZETEST FURNISH fill-move cursor " + cursor.getItem() + " -> window " + s.id + " into " + target.toShortString());
                         return stay("Placing cursor stack");
                     }
@@ -97,7 +97,7 @@ public class MazeBarrelFillTask extends Task {
             for (ItemTarget t : toStore) {
                 for (net.minecraft.screen.slot.Slot s : h.slots) {
                     if (s.inventory instanceof net.minecraft.entity.player.PlayerInventory && !s.getStack().isEmpty() && t.matches(s.getStack().getItem())) {
-                        MinecraftClient.getInstance().interactionManager.clickSlot(h.syncId, s.id, 0, SlotActionType.QUICK_MOVE, mod.getPlayer());
+                        adris.altoclef.headless.BotClientBridge.clickSlot(h.syncId, s.id, 0, SlotActionType.QUICK_MOVE, mod.getPlayer());
                         System.out.println("MAZETEST FURNISH fill-move " + s.getStack().getItem() + " window " + s.id + " sync " + h.syncId + " into " + target.toShortString());
                         return stay("Moving fill item");
                     }
@@ -118,11 +118,11 @@ public class MazeBarrelFillTask extends Task {
         if (point != null && eye.distanceTo(point) <= REACH) {
             stopPath(mod);
             look(mod, point);
-            HitResult hr = MinecraftClient.getInstance().crosshairTarget;
+            HitResult hr = adris.altoclef.headless.BotClientBridge.crosshairTarget();
             if (hr instanceof BlockHitResult bhr && bhr.getBlockPos().equals(target)) {
                 if (++clickTicks % 10 == 1) {
                     mod.getSlotHandler().forceDeequipRightClickableItem();
-                    MinecraftClient.getInstance().interactionManager.interactBlock(mod.getPlayer(), Hand.MAIN_HAND, bhr);
+                    adris.altoclef.headless.BotClientBridge.interactBlock(Hand.MAIN_HAND, bhr);
                     mod.getPlayer().swingHand(Hand.MAIN_HAND);
                     System.out.println("MAZETEST FURNISH fill-click " + target.toShortString() + " face=" + bhr.getSide() + " feet=" + mod.getPlayer().getBlockPos().toShortString());
                 }

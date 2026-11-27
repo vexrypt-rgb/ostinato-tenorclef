@@ -4,6 +4,7 @@ import adris.altoclef.multiversion.CBlocks;
 
 import adris.altoclef.AltoClef;
 import adris.altoclef.Debug;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.tasks.movement.GetOutOfWaterTask;
 import adris.altoclef.util.WaterEscapeTrace;
 import adris.altoclef.tasks.movement.RunAwayFromPositionTask;
@@ -311,7 +312,7 @@ public class DestroyBlockTask extends Task implements ITaskRequiresGrounded {
         // Check if there is white wool at the specified position
         if (mod.getWorld().getBlockState(pos).getBlock() == CBlocks.WHITE_WOOL) {
             // Iterate over all entities in the world
-            Iterable<Entity> entities = mod.getWorld().getEntities();
+            Iterable<Entity> entities = BotClientBridge.entities();
             for (Entity entity : entities) {
                 // Check if the entity is a PillagerEntity and is within a distance of 144 blocks from the position
                 if (entity instanceof PillagerEntity && pos.isWithinDistance(entity.getPos(), 144)) {

@@ -85,10 +85,11 @@ public class ConstructNetherPortalObsidianTask extends Task {
     private static BlockPos getBuildableAreaNearby(AltoClef mod) {
         BlockPos checkOrigin = mod.getPlayer().getBlockPos();
         for (BlockPos toCheck : WorldHelper.scanRegion(checkOrigin, checkOrigin.add(PORTALABLE_REGION_SIZE))) {
-            if (MinecraftClient.getInstance().world == null) {
+            var world = adris.altoclef.headless.BotClientBridge.world();
+            if (world == null) {
                 return null;
             }
-            BlockState state = MinecraftClient.getInstance().world.getBlockState(toCheck);
+            BlockState state = world.getBlockState(toCheck);
             boolean validToWorld = (WorldHelper.canPlace(toCheck) || WorldHelper.canBreak(toCheck));
             if (!validToWorld || state.getBlock() == Blocks.LAVA || state.getBlock() == Blocks.WATER || state.getBlock() == Blocks.BEDROCK) {
                 return null;

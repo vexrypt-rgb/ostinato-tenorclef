@@ -43,6 +43,7 @@ import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.enchantment.EnchantmentHelper;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
+import net.minecraft.entity.player.PlayerEntity;
 //#if MC < 260000
 import net.minecraft.entity.mob.*;
 //#else
@@ -110,8 +111,8 @@ public class BeatMinecraftTask extends Task {
     private static final Predicate<ItemStack> noCurseOfBinding = stack -> !EnchantmentHelper.hasAnyEnchantmentsWith(stack, net.minecraft.component.EnchantmentEffectComponentTypes.PREVENT_ARMOR_CHANGE);
 
     private static BeatMinecraftConfig config;
-    private static GoToStrongholdPortalTask locateStrongholdTask;
-    private static boolean openingEndPortal = false;
+    private GoToStrongholdPortalTask locateStrongholdTask;
+    private boolean openingEndPortal = false;
 
     static {
         ConfigHelper.loadConfig("configs/beat_minecraft.json", BeatMinecraftConfig::new, BeatMinecraftConfig.class, newConfig -> config = newConfig);
@@ -381,7 +382,7 @@ public class BeatMinecraftTask extends Task {
     }
 
     public static boolean hasItem(AltoClef mod, Item item) {
-        ClientPlayerEntity player = mod.getPlayer();
+        PlayerEntity player = mod.getPlayer();
         PlayerInventory inv = player.getInventory();
         List<DefaultedList<ItemStack>> combinedInventory = List.of(inv.main, inv.armor, inv.offHand);
 
@@ -1191,7 +1192,7 @@ public class BeatMinecraftTask extends Task {
         Optional<BlockPos> nearestTracking = mod.getBlockScanner().getNearestBlock(block);
 
         if (nearestTracking.isPresent()) {
-            Iterable<Entity> entities = mod.getWorld().getEntities();
+            Iterable<Entity> entities = adris.altoclef.headless.BotClientBridge.entities();
             for (Entity entity : entities) {
 
                 if (mod.getBlockScanner().isUnreachable(nearestTracking.get()) || !(entity instanceof HostileEntity))
@@ -1309,7 +1310,7 @@ public class BeatMinecraftTask extends Task {
         List<BlockPos> logs = mod.getBlockScanner().getKnownLocations(ItemHelper.itemsToBlocks(ItemHelper.LOG));
 
         for (BlockPos log : logs) {
-            Iterable<Entity> entities = mod.getWorld().getEntities();
+            Iterable<Entity> entities = adris.altoclef.headless.BotClientBridge.entities();
             for (Entity entity : entities) {
                 if (entity instanceof PillagerEntity && !mod.getBlockScanner().isUnreachable(log) && log.isWithinDistance(entity.getPos(), 40)) {
                     Debug.logMessage("Blacklisting pillage log.");

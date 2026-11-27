@@ -198,6 +198,43 @@ tasks.register('runHeadlessBot', JavaExec) {
 
 }
 
+tasks.register('runHeadlessMulti', JavaExec) {
+    group = 'headless'
+    description = 'Run N isolated headless bots inside a single JVM.'
+    classpath = sourceSets.headless.runtimeClasspath
+    mainClass = 'baritone.headless.HeadlessMultiLauncher'
+    standardInput = System.in
+    def parsedMultiArgs = project.hasProperty('multiArgs')
+            ? (project.property('multiArgs').toString().trim().isEmpty() ? [] : project.property('multiArgs').toString().trim().split(/\s+/) as List)
+            : []
+    if (!parsedMultiArgs.isEmpty()) {
+        args parsedMultiArgs
+    }
+    def tcJarProp = project.findProperty('tenorclefJar')
+    def tcJarFile = tcJarProp ? file(tcJarProp.toString()) : null
+    if (tcJarFile == null && parsedMultiArgs.contains('--with-tenorclef')) {
+        def tcLibs = file('../tenorclef/versions/26.3/build/libs')
+        if (tcLibs.isDirectory()) {
+            tcJarFile = tcLibs.listFiles()?.findAll {
+                it.name.endsWith('.jar') && !it.name.endsWith('-slim.jar') && !it.name.endsWith('-sources.jar')
+            }?.sort { -it.lastModified() }?.find { true }
+        }
+    }
+    if (tcJarFile != null && tcJarFile.isFile()) {
+        def fabricLoaderJars = project(':fabric').configurations.compileClasspath.files.findAll {
+            it.name.startsWith('fabric-loader-') && it.name.endsWith('.jar') && !it.name.endsWith('-sources.jar')
+        }
+        classpath += files(tcJarFile) + files(fabricLoaderJars)
+    }
+    maxHeapSize = project.findProperty('multiXmx') ?: '2g'
+    jvmArgs '--enable-native-access=ALL-UNNAMED', '-Djava.awt.headless=true'
+    System.properties.each { k, v ->
+        if (k.toString().startsWith("ostinato.")) {
+            systemProperty k.toString(), v.toString()
+        }
+    }
+}
+
 jar {
     from sourceSets.main.output, sourceSets.launch.output, sourceSets.api.output
 }

@@ -19,6 +19,8 @@ package baritone.cache;
 
 import baritone.Baritone;
 import baritone.api.cache.IWorldProvider;
+import baritone.api.context.BotContext;
+import baritone.api.context.BotContextScope;
 import baritone.api.utils.IPlayerContext;
 import baritone.api.utils.Pair;
 import net.minecraft.client.multiplayer.ServerData;
@@ -91,8 +93,16 @@ public class WorldProvider implements IWorldProvider {
             } catch (IOException ignored) {}
 
             System.out.println("Baritone world data dir: " + worldDataDir);
-            synchronized (worldCache) {
-                this.currentWorld = worldCache.computeIfAbsent(worldDataDir, d -> new WorldData(d, world.dimensionType(), world.dimension()));
+            BotContext scoped = BotContextScope.currentOrNull();
+            if (scoped != null) {
+                Map<Path, Object> scopedCache = scoped.worldCache();
+                synchronized (scopedCache) {
+                    this.currentWorld = (WorldData) scopedCache.computeIfAbsent(worldDataDir, d -> new WorldData(d, world.dimensionType(), world.dimension()));
+                }
+            } else {
+                synchronized (worldCache) {
+                    this.currentWorld = worldCache.computeIfAbsent(worldDataDir, d -> new WorldData(d, world.dimensionType(), world.dimension()));
+                }
             }
             this.mcWorld = ctx.world();
         });

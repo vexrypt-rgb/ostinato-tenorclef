@@ -166,10 +166,10 @@ public class MazeFeaturePlaceTask extends Task {
         }
         Vec3d hit = Vec3d.ofCenter(against).add(face.getOffsetX() * 0.49, face.getOffsetY() * 0.49, face.getOffsetZ() * 0.49);
         look(mod, hit);
-        HitResult lookHit = MinecraftClient.getInstance().crosshairTarget;
+        HitResult lookHit = adris.altoclef.headless.BotClientBridge.crosshairTarget();
         if (!(lookHit instanceof BlockHitResult bhr) || !bhr.getBlockPos().equals(against) || bhr.getSide() != face) return;
         if (ticks % 4 != 0) return;
-        ActionResult res = MinecraftClient.getInstance().interactionManager.interactBlock(mod.getPlayer(), Hand.MAIN_HAND, bhr);
+        ActionResult res = adris.altoclef.headless.BotClientBridge.interactBlock(Hand.MAIN_HAND, bhr);
         if (res == ActionResult.SUCCESS) mod.getPlayer().swingHand(Hand.MAIN_HAND);
         else if (ticks == 80) {
             System.out.println("MAZETEST FURNISH feature-refused " + feature + " " + target.toShortString() + " res=" + res);

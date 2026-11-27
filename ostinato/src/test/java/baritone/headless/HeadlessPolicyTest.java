@@ -208,6 +208,37 @@ public class HeadlessPolicyTest {
         assertFalse(HeadlessPolicy.skipGpuWorkNow());
     }
 
+    @Test
+    public void chunkRadiusCapAndLightSkipRespectHeadlessAndLegitMode() {
+        clearProperty();
+        RunMode.resetForTests();
+        BaritoneAPI.getSettings().legitMode.value = baritone.api.legit.LegitMode.Value.AUTO;
+        System.clearProperty(HeadlessPolicy.CHUNK_RADIUS_PROPERTY);
+        System.clearProperty(HeadlessPolicy.KEEP_LIGHT_PROPERTY);
+
+        // Normal & hidden never clamp radius or skip lighting.
+        assertEquals(12, HeadlessPolicy.chunkRadiusCap(RunMode.Value.NORMAL, 12));
+        assertEquals(12, HeadlessPolicy.chunkRadiusCap(RunMode.Value.HIDDEN, 12));
+        assertFalse(HeadlessPolicy.skipClientLightUpdates(RunMode.Value.NORMAL));
+        assertFalse(HeadlessPolicy.skipClientLightUpdates(RunMode.Value.HIDDEN));
+
+        // Headless caps server radius down to default 6 (or configured property, clamped >= 3).
+        assertEquals(6, HeadlessPolicy.chunkRadiusCap(RunMode.Value.HEADLESS, 12));
+        assertEquals(4, HeadlessPolicy.chunkRadiusCap(RunMode.Value.HEADLESS, 4));
+        System.setProperty(HeadlessPolicy.CHUNK_RADIUS_PROPERTY, "1");
+        assertEquals(HeadlessPolicy.MIN_HEADLESS_CHUNK_RADIUS, HeadlessPolicy.chunkRadiusCap(RunMode.Value.HEADLESS, 12));
+        System.clearProperty(HeadlessPolicy.CHUNK_RADIUS_PROPERTY);
+
+        // Light updates skip in headless unless legitMode=ON or keepLight=true.
+        assertTrue(HeadlessPolicy.skipClientLightUpdates(RunMode.Value.HEADLESS));
+        BaritoneAPI.getSettings().legitMode.value = baritone.api.legit.LegitMode.Value.ON;
+        assertFalse(HeadlessPolicy.skipClientLightUpdates(RunMode.Value.HEADLESS));
+        BaritoneAPI.getSettings().legitMode.value = baritone.api.legit.LegitMode.Value.AUTO;
+        System.setProperty(HeadlessPolicy.KEEP_LIGHT_PROPERTY, "true");
+        assertFalse(HeadlessPolicy.skipClientLightUpdates(RunMode.Value.HEADLESS));
+        System.clearProperty(HeadlessPolicy.KEEP_LIGHT_PROPERTY);
+    }
+
     private static void assertNotHeadless(RunMode.Value mode) {
         assertFalse(HeadlessPolicy.active(mode));
         assertFalse(HeadlessPolicy.skipWorldDraw(mode));

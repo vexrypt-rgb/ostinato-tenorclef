@@ -6,6 +6,7 @@ import adris.altoclef.multiversion.ScreenVer;
 import adris.altoclef.AltoClef;
 import adris.altoclef.Debug;
 import adris.altoclef.TaskCatalogue;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.mixins.AbstractFurnaceScreenHandlerAccessor;
 import adris.altoclef.multiversion.item.ItemVer;
 import adris.altoclef.multiversion.ToolMaterialVer;
@@ -23,12 +24,11 @@ import adris.altoclef.util.slots.PlayerSlot;
 import adris.altoclef.util.slots.Slot;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.option.GameOptionsScreen;
-import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.player.PlayerInventory;
 //#if MC < 260000
 import net.minecraft.item.*;
@@ -72,21 +72,26 @@ public class StorageHelper {
     private static final int OFF_HAND_SLOT = 40;
 
     public static void closeScreen() {
-        if (MinecraftClient.getInstance().player == null)
+        PlayerEntity player = BotClientBridge.player();
+        if (player == null)
             return;
-        Screen screen = ScreenVer.current(MinecraftClient.getInstance());
+        if (BotClientBridge.isHeadless()) {
+            BotClientBridge.closeScreen();
+            return;
+        }
+        Screen screen = BotClientBridge.currentScreenOrNull();
         if (
                 screen != null &&
                         !(screen instanceof GameMenuScreen) &&
                         !(screen instanceof GameOptionsScreen) &&
                         !(screen instanceof ChatScreen)) {
             // Close the screen if we're in-game
-            MinecraftClient.getInstance().player.closeHandledScreen();
+            BotClientBridge.closeScreen();
         }
     }
 
     public static ItemStack getItemStackInSlot(Slot slot) {
-        ClientPlayerEntity player = MinecraftClient.getInstance().player;
+        PlayerEntity player = BotClientBridge.player();
         if (player == null)
             return ItemStack.EMPTY;
         // Cursor slot
@@ -503,7 +508,7 @@ public class StorageHelper {
     }
 
     public static boolean isArmorEquipped(Item... any) {
-        ClientPlayerEntity player = AltoClef.getInstance().getPlayer();
+        PlayerEntity player = AltoClef.getInstance().getPlayer();
 
         for (Item item : any) {
             //#if MC < 12102
@@ -572,7 +577,7 @@ public class StorageHelper {
     }
 
     private static boolean isScreenOpenInner(Predicate<ScreenHandler> pNotNull) {
-        ClientPlayerEntity player = MinecraftClient.getInstance().player;
+        PlayerEntity player = BotClientBridge.player();
         if (player != null)
             return pNotNull.test(player.currentScreenHandler);
         return false;
@@ -750,16 +755,16 @@ public class StorageHelper {
     }
 
     public static ItemStack getItemStackInCursorSlot() {
-        if (MinecraftClient.getInstance().player != null) {
-            if (MinecraftClient.getInstance().player.currentScreenHandler != null) {
-                return MinecraftClient.getInstance().player.currentScreenHandler.getCursorStack();
-            }
+        PlayerEntity player = BotClientBridge.player();
+        if (player != null && player.currentScreenHandler != null) {
+            return player.currentScreenHandler.getCursorStack();
         }
         return ItemStack.EMPTY;
     }
 
     public static int getBrewingStandFuel() {
-        if (MinecraftClient.getInstance().player != null && MinecraftClient.getInstance().player.currentScreenHandler instanceof BrewingStandScreenHandler stand)
+        PlayerEntity player = BotClientBridge.player();
+        if (player != null && player.currentScreenHandler instanceof BrewingStandScreenHandler stand)
             return getBrewingStandFuel(stand);
         return -1;
     }
@@ -784,19 +789,22 @@ public class StorageHelper {
     }
 
     public static double getFurnaceFuel() {
-        if (MinecraftClient.getInstance().player != null && MinecraftClient.getInstance().player.currentScreenHandler instanceof AbstractFurnaceScreenHandler furnace)
+        PlayerEntity player = BotClientBridge.player();
+        if (player != null && player.currentScreenHandler instanceof AbstractFurnaceScreenHandler furnace)
             return getFurnaceFuel(furnace);
         return -1;
     }
 
     public static double getSmokerFuel() {
-        if (MinecraftClient.getInstance().player != null && MinecraftClient.getInstance().player.currentScreenHandler instanceof AbstractFurnaceScreenHandler smoker)
+        PlayerEntity player = BotClientBridge.player();
+        if (player != null && player.currentScreenHandler instanceof AbstractFurnaceScreenHandler smoker)
             return getSmokerFuel(smoker);
         return -1;
     }
 
     public static double getBlastFurnaceFuel() {
-        if (MinecraftClient.getInstance().player != null && MinecraftClient.getInstance().player.currentScreenHandler instanceof AbstractFurnaceScreenHandler blastFurnace)
+        PlayerEntity player = BotClientBridge.player();
+        if (player != null && player.currentScreenHandler instanceof AbstractFurnaceScreenHandler blastFurnace)
             return getBlastFurnaceFuel(blastFurnace);
         return -1;
     }
@@ -814,19 +822,22 @@ public class StorageHelper {
     }
 
     public static double getFurnaceCookPercent() {
-        if (MinecraftClient.getInstance().player != null && MinecraftClient.getInstance().player.currentScreenHandler instanceof AbstractFurnaceScreenHandler furnace)
+        PlayerEntity player = BotClientBridge.player();
+        if (player != null && player.currentScreenHandler instanceof AbstractFurnaceScreenHandler furnace)
             return getFurnaceCookPercent(furnace);
         return -1;
     }
 
     public static double getSmokerCookPercent() {
-        if (MinecraftClient.getInstance().player != null && MinecraftClient.getInstance().player.currentScreenHandler instanceof AbstractFurnaceScreenHandler smoker)
+        PlayerEntity player = BotClientBridge.player();
+        if (player != null && player.currentScreenHandler instanceof AbstractFurnaceScreenHandler smoker)
             return getSmokerCookPercent(smoker);
         return -1;
     }
 
     public static double getBlastFurnaceCookPercent() {
-        if (MinecraftClient.getInstance().player != null && MinecraftClient.getInstance().player.currentScreenHandler instanceof AbstractFurnaceScreenHandler blastFurnace)
+        PlayerEntity player = BotClientBridge.player();
+        if (player != null && player.currentScreenHandler instanceof AbstractFurnaceScreenHandler blastFurnace)
             return getBlastFurnaceCookPercent(blastFurnace);
         return -1;
     }

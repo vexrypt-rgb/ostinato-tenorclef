@@ -46,7 +46,15 @@ import net.minecraft.client.network.ClientPlayerInteractionManager;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.item.Item;
 import net.minecraft.item.Items;
+import adris.altoclef.headless.BotClientBridge;
+import adris.altoclef.headless.TenorClefBotContext;
 import adris.altoclef.multiversion.input.KeyCodes;
+//#if MC >= 260000
+//$$ import baritone.api.context.BotContext;
+//$$ import baritone.api.headless.IHeadlessHost;
+//#endif
+import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.world.World;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -63,6 +71,7 @@ public class AltoClef implements ModInitializer {
 
     // Central Managers
     private static CommandExecutor commandExecutor;
+    private CommandExecutor instanceCommandExecutor;
     private TaskRunner taskRunner;
     private TrackerManager trackerManager;
     private BotBehaviour botBehaviour;
@@ -105,13 +114,17 @@ public class AltoClef implements ModInitializer {
 
     // Are we in game (playing in a server/world)
     public static boolean inGame() {
-        return MinecraftClient.getInstance().player != null && MinecraftClient.getInstance().getNetworkHandler() != null;
+        return BotClientBridge.inGame();
     }
 
     /**
      * Executes commands (ex. `@get`/`@gamer`)
      */
     public static CommandExecutor getCommandExecutor() {
+        TenorClefBotContext tc = TenorClefBotContext.currentOrNull();
+        if (tc != null && tc.mod() != null && tc.mod().instanceCommandExecutor != null) {
+            return tc.mod().instanceCommandExecutor;
+        }
         return commandExecutor;
     }
 
@@ -148,7 +161,8 @@ public class AltoClef implements ModInitializer {
         hookFreecamStatus();
 
         // Central Managers
-        commandExecutor = new CommandExecutor(this);
+        instanceCommandExecutor = new CommandExecutor(this);
+        commandExecutor = instanceCommandExecutor;
         taskRunner = new TaskRunner(this);
         trackerManager = new TrackerManager(this);
         botBehaviour = new BotBehaviour(this);
@@ -253,6 +267,90 @@ public class AltoClef implements ModInitializer {
         runEnqueuedPostInits();
     }
 
+    //#if MC >= 260000
+    //$$ /**
+    //$$  * Headless single-JVM multi-instance bootstrap (bypasses MinecraftClient UI/screen singletons).
+    //$$  */
+    //$$ public void initializeHeadless(BotContext context, IHeadlessHost host) {
+    //$$     TenorClefBotContext tc = context.computeAttachmentIfAbsent(TenorClefBotContext.class, TenorClefBotContext::new);
+    //$$     tc.setMod(this);
+    //$$     tc.setHeadlessHost(host);
+    //$$     tc.setLoadStarted(true);
+    //$$     initializeHeadlessBody();
+    //$$ }
+    //#endif
+
+    private void initializeHeadlessBody() {
+        initializeBaritoneSettings();
+        hookFreecamStatus();
+
+        instanceCommandExecutor = new CommandExecutor(this);
+        taskRunner = new TaskRunner(this);
+        trackerManager = new TrackerManager(this);
+        botBehaviour = new BotBehaviour(this);
+        extraController = new PlayerExtraController(this);
+
+        userTaskChain = new UserTaskChain(taskRunner);
+        mobDefenseChain = new MobDefenseChain(taskRunner);
+        new DeathMenuChain(taskRunner);
+        new PlayerInteractionFixChain(taskRunner);
+        mlgBucketChain = new MLGBucketFallChain(taskRunner);
+        new UnstuckChain(taskRunner);
+        new PreEquipItemChain(taskRunner);
+        new WorldSurvivalChain(taskRunner);
+        foodChain = new FoodChain(taskRunner);
+
+        storageTracker = new ItemStorageTracker(this, trackerManager, container -> containerSubTracker = container);
+        entityTracker = new EntityTracker(trackerManager);
+        blockScanner = new BlockScanner(this);
+        chunkTracker = new SimpleChunkTracker(this);
+        miscBlockTracker = new MiscBlockTracker(this);
+        craftingRecipeTracker = new CraftingRecipeTracker(trackerManager);
+
+        messageSender = new MessageSender();
+        inputControls = new InputControls();
+        slotHandler = new SlotHandler(this);
+        butler = new Butler(this);
+
+        worldKnowledge = new AltoClefWorldKnowledge(this);
+        movementController = AdapterMovementController.INSTANCE;
+        coreServices = new CoreServices(worldKnowledge, movementController);
+        threatMonitor = new ThreatMonitor();
+
+        initializeCommands();
+
+        adris.altoclef.Settings.load(newSettings -> {
+            settings = newSettings;
+            List<Item> baritoneCanPlace = Arrays.stream(settings.getThrowawayItems(true))
+                    .filter(item -> item != Items.SOUL_SAND && item != Items.MAGMA_BLOCK && item != Items.SAND && item != Items.GRAVEL).toList();
+            getClientBaritoneSettings().acceptableThrowawayItems.value.addAll(baritoneCanPlace);
+            getClientBaritoneSettings().acceptableThrowawayItems.value
+                    .removeIf(item -> item == null || item == net.minecraft.item.Items.AIR);
+            if ((!getUserTaskChain().isActive() || getUserTaskChain().isRunningIdleTask()) && getModSettings().shouldRunIdleCommandWhenNotActive()) {
+                getUserTaskChain().signalNextTaskToBeIdleTask();
+                getCommandExecutor().executeWithPrefix(getModSettings().getIdleCommand());
+            }
+            getExtraBaritoneSettings().avoidBlockBreak(blockPos -> settings.isPositionExplicitlyProtected(blockPos));
+            getExtraBaritoneSettings().avoidBlockPlace(blockPos -> settings.isPositionExplicitlyProtected(blockPos));
+            getExtraBaritoneSettings().getForceSaveToolPredicates().add((state, item) -> StorageHelper.shouldSaveStack(this, state.getBlock(), item));
+        });
+
+        EventBus.subscribe(SendChatEvent.class, evt -> {
+            String line = evt.message;
+            if (getCommandExecutor().isClientCommand(line)) {
+                evt.cancel();
+                getCommandExecutor().execute(line);
+            }
+        });
+
+        TaskCatalogue.init();
+        runEnqueuedPostInits();
+    }
+
+    public void onHeadlessTick() {
+        onClientTick();
+    }
+
     // Client tick
     private boolean tickErrorLogged = false;
 
@@ -271,19 +369,21 @@ public class AltoClef implements ModInitializer {
 
         inputControls.onTickPre();
 
-        // Cancel shortcut
-        if (InputHelper.isKeyPressed(KeyCodes.LEFT_CONTROL) && InputHelper.isKeyPressed(KeyCodes.K)) {
-            stopTasks();
+        if (!BotClientBridge.isHeadless()) {
+            // Cancel shortcut
+            if (InputHelper.isKeyPressed(KeyCodes.LEFT_CONTROL) && InputHelper.isKeyPressed(KeyCodes.K)) {
+                stopTasks();
+            }
+            try {
+                adris.altoclef.tasks.speedrun.testrun2.gui.T2MenuKeys.tick();
+            } catch (Throwable ignored) {}
+            try {
+                adris.altoclef.tasks.speedrun.testrun2.dj.DjPlayer.tick();
+            } catch (Throwable ignored) {}
+            try {
+                adris.altoclef.tasks.speedrun.testrun2.util.QueueWatch.tick(this);
+            } catch (Throwable ignored) {}
         }
-        try {
-            adris.altoclef.tasks.speedrun.testrun2.gui.T2MenuKeys.tick();
-        } catch (Throwable ignored) {}
-        try {
-            adris.altoclef.tasks.speedrun.testrun2.dj.DjPlayer.tick();
-        } catch (Throwable ignored) {}
-        try {
-            adris.altoclef.tasks.speedrun.testrun2.util.QueueWatch.tick(this);
-        } catch (Throwable ignored) {}
 
         // TODO: should this go here?
         storageTracker.setDirty();
@@ -348,8 +448,7 @@ public class AltoClef implements ModInitializer {
         // A world saved with a dead player boots to the death screen; respawn so the run isn't stuck on it.
         if (getPlayer().getHealth() <= 0) {
             if (autoRunRespawnTick++ % 40 == 0) {
-                getPlayer().requestRespawn();
-                MinecraftClient.getInstance().setScreen(null);
+                BotClientBridge.respawn();
             }
             return;
         }
@@ -400,21 +499,26 @@ public class AltoClef implements ModInitializer {
         if (taskRunner.getCurrentTaskChain() != null) {
             taskRunner.getCurrentTaskChain().stop();
         }
-        commandStatusOverlay.resetTimer();
+        if (commandStatusOverlay != null) {
+            commandStatusOverlay.resetTimer();
+        }
     }
 
     /// GETTERS AND SETTERS
 
     private void onClientRenderOverlay(DrawContextWrapper context) {
+        if (BotClientBridge.isHeadless()) {
+            return;
+        }
         context.setRenderLayer(RenderLayerVer.getGuiOverlay());
-        if (settings.shouldShowTaskChain()) {
+        if (settings.shouldShowTaskChain() && commandStatusOverlay != null) {
             commandStatusOverlay.render(this, context);
         }
         try {
             adris.altoclef.tasks.speedrun.testrun2.gui.SegnoOverlay.render(context);
         } catch (Throwable ignored) {}
 
-        if (settings.shouldShowDebugTickMs()) {
+        if (settings.shouldShowDebugTickMs() && altoClefTickChart != null) {
             altoClefTickChart.render(this, context, 1, context.getScaledWindowWidth() / 2 - 124);
         }
     }
@@ -491,6 +595,10 @@ public class AltoClef implements ModInitializer {
      * @return the instance of this class or null if it has not been initialized yet
      */
     public static AltoClef getInstance() {
+        TenorClefBotContext tc = TenorClefBotContext.currentOrNull();
+        if (tc != null && tc.mod() != null) {
+            return tc.mod();
+        }
         return instance;
     }
 
@@ -634,10 +742,15 @@ public class AltoClef implements ModInitializer {
      * Baritone access (could just be static honestly)
      */
     public IBaritone getClientBaritone() {
-        if (getPlayer() == null) {
-            return BaritoneAPI.getProvider().getPrimaryBaritone();
+        IBaritone headless = BotClientBridge.headlessBaritoneOrNull();
+        if (headless != null) {
+            return headless;
         }
-        return BaritoneAPI.getProvider().getBaritoneForPlayer(getPlayer());
+        PlayerEntity p = getPlayer();
+        if (p instanceof ClientPlayerEntity cpe) {
+            return BaritoneAPI.getProvider().getBaritoneForPlayer(cpe);
+        }
+        return BaritoneAPI.getProvider().getPrimaryBaritone();
     }
 
     /**
@@ -683,24 +796,24 @@ public class AltoClef implements ModInitializer {
     }
 
     /**
-     * Minecraft player client access (could just be static honestly)
+     * Minecraft player access (polymorphic across ClientPlayerEntity and headless PlayerEntity)
      */
-    public ClientPlayerEntity getPlayer() {
-        return MinecraftClient.getInstance().player;
+    public PlayerEntity getPlayer() {
+        return BotClientBridge.player();
     }
 
     /**
-     * Minecraft world access (could just be static honestly)
+     * Minecraft world access (polymorphic across ClientWorld and headless World)
      */
-    public ClientWorld getWorld() {
-        return MinecraftClient.getInstance().world;
+    public World getWorld() {
+        return BotClientBridge.world();
     }
 
     /**
-     * Minecraft client interaction controller access (could just be static honestly)
+     * Minecraft client interaction controller access (null in headless mode; prefer {@link BotClientBridge}).
      */
     public ClientPlayerInteractionManager getController() {
-        return MinecraftClient.getInstance().interactionManager;
+        return BotClientBridge.interactionManagerOrNull();
     }
 
     /**

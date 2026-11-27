@@ -3001,9 +3001,26 @@ public final class Settings {
      */
     public final Setting<Boolean> secondoCombatAssist = new Setting<>(false);
 
+    /**
+     * Ostinato: maximum client chunk retention radius when running in headless mode (clamped >= 3).
+     * Ignored in normal and hidden graphical modes.
+     */
+    public final Setting<Integer> headlessChunkRadiusCap = new Setting<>(6);
+
+    /**
+     * Ostinato: maximum CachedRegion instances retained in RAM per world in headless mode.
+     * Ignored in normal and hidden graphical modes.
+     */
+    public final Setting<Integer> headlessMaxCachedRegions = new Setting<>(4);
+
+    /**
+     * Ostinato: prune distance (in blocks) for CachedWorld regions in headless mode (normal mode uses 1024).
+     */
+    public final Setting<Integer> headlessPruneDistance = new Setting<>(256);
+
     // here be dragons
 
-    Settings() {
+    public Settings() {
         Field[] temp = getClass().getFields();
 
         Map<String, Setting<?>> tmpByName = new HashMap<>();

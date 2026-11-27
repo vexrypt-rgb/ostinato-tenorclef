@@ -149,6 +149,10 @@ public final class AllBlocks {
 
     /** "sp-&lt;world name&gt;" in singleplayer, "mp-&lt;address&gt;" on a server. */
     static String worldKey() {
+        String headlessId = adris.altoclef.headless.BotClientBridge.botIdOrNull();
+        if (headlessId != null) {
+            return "headless-" + headlessId;
+        }
         MinecraftClient mc = MinecraftClient.getInstance();
         if (mc.getCurrentServerEntry() != null) return "mp-" + mc.getCurrentServerEntry().address;
         if (mc.getServer() != null) return "sp-" + mc.getServer().getSaveProperties().getLevelName();
@@ -262,7 +266,7 @@ public final class AllBlocks {
     public static String reset() {
         if (running()) return "allblocks: stop the run first";
         try {
-            Path f = AllBlocksProgress.file(MinecraftClient.getInstance().runDirectory.toPath(), worldKey());
+            Path f = AllBlocksProgress.file(adris.altoclef.headless.BotClientBridge.runDirectory(), worldKey());
             Files.deleteIfExists(f);
             return "allblocks: progress for " + worldKey() + " deleted (chests and grid stay in the world)";
         } catch (Exception e) {
@@ -271,7 +275,7 @@ public final class AllBlocks {
     }
 
     private static AllBlocksProgress loadSaved() {
-        Path f = AllBlocksProgress.file(MinecraftClient.getInstance().runDirectory.toPath(), worldKey());
+        Path f = AllBlocksProgress.file(adris.altoclef.headless.BotClientBridge.runDirectory(), worldKey());
         return Files.exists(f) ? AllBlocksProgress.load(f, worldKey()) : null;
     }
 

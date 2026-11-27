@@ -68,7 +68,7 @@ public class GetToBlockTask extends CustomBaritoneGoalTask implements ITaskRequi
     protected Task onTick() {
         AltoClef modEarly = AltoClef.getInstance();
         WorldKnowledge knowledgeEarly = modEarly.getWorldKnowledge();
-        ClientWorld world = knowledgeEarly.getWorld();
+        net.minecraft.world.World world = knowledgeEarly.getWorld();
         // Phase 5: portal presence as KnowledgeFact (SENSOR); fall back to direct world read shim.
         KnowledgeFact<Boolean> portalFact = knowledgeEarly.blockPresentFact(_position, Blocks.NETHER_PORTAL);
         boolean isPortal = Boolean.TRUE.equals(portalFact.getValue())
@@ -192,7 +192,7 @@ public class GetToBlockTask extends CustomBaritoneGoalTask implements ITaskRequi
     @Override
     protected boolean shouldWanderOnFail(AltoClef mod) {
         // Never wander-abandon a live nether portal goal (post-death reportal).
-        ClientWorld world = mod.getWorldKnowledge().getWorld();
+        net.minecraft.world.World world = mod.getWorldKnowledge().getWorld();
         return world == null
                 || world.getBlockState(_position).getBlock() != Blocks.NETHER_PORTAL;
     }
@@ -202,7 +202,7 @@ public class GetToBlockTask extends CustomBaritoneGoalTask implements ITaskRequi
         super.onWander(mod);
         // Never blacklist nether portal blocks — EnterNetherPortalTask goals them, and
         // blacklisting causes post-death GetToBlock thrash (Try 1..4) that abandons a live portal.
-        ClientWorld world = mod.getWorldKnowledge().getWorld();
+        net.minecraft.world.World world = mod.getWorldKnowledge().getWorld();
         if (world != null && world.getBlockState(_position).getBlock() == Blocks.NETHER_PORTAL) {
             return;
         }

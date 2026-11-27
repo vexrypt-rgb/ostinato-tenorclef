@@ -35,8 +35,7 @@ public class HeroTask extends Task {
             setDebugState("Getting experience.");
             return new GetToEntityTask(experienceOrb.get());
         }
-        assert MinecraftClient.getInstance().world != null;
-        Iterable<Entity> hostiles = MinecraftClient.getInstance().world.getEntities();
+        Iterable<Entity> hostiles = adris.altoclef.headless.BotClientBridge.entities();
         if (hostiles != null) {
             for (Entity hostile : hostiles) {
                 if (hostile instanceof HostileEntity || hostile instanceof SlimeEntity) {

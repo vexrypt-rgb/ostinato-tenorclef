@@ -74,8 +74,8 @@ public class CollectBucketLiquidTask extends ResourceTask {
         mod.getBehaviour().setRayTracingFluidHandling(RaycastContext.FluidHandling.SOURCE_ONLY);
 
         // Avoid breaking / placing blocks at our liquid
-        mod.getBehaviour().avoidBlockBreaking((pos) -> MinecraftClient.getInstance().world.getBlockState(pos).getBlock() == toCollect);
-        mod.getBehaviour().avoidBlockPlacing((pos) -> MinecraftClient.getInstance().world.getBlockState(pos).getBlock() == toCollect);
+        mod.getBehaviour().avoidBlockBreaking((pos) -> mod.getWorld().getBlockState(pos).getBlock() == toCollect);
+        mod.getBehaviour().avoidBlockPlacing((pos) -> mod.getWorld().getBlockState(pos).getBlock() == toCollect);
 
         mod.getClientBaritoneSettings().avoidUpdatingFallingBlocks.value = true;
         //_blacklist.clear();
@@ -145,7 +145,7 @@ public class CollectBucketLiquidTask extends ResourceTask {
             if (blacklist.contains(blockPos)) return false;
             if (!WorldHelper.canReach(blockPos)) return false;
             if (!WorldHelper.canReach(blockPos.up())) return false; // We may try reaching the block above.
-            assert MinecraftClient.getInstance().world != null;
+            assert mod.getWorld() != null;
 
             Block above = mod.getWorld().getBlockState(blockPos.up()).getBlock();
             // We break the block above. If it's bedrock, ignore.

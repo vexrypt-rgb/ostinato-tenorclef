@@ -2,6 +2,7 @@ package adris.altoclef.butler;
 
 import adris.altoclef.AltoClef;
 import adris.altoclef.Debug;
+import adris.altoclef.headless.TenorClefBotContext;
 import adris.altoclef.util.time.TimerGame;
 
 import java.util.*;
@@ -51,14 +52,20 @@ public class WhisperChecker {
         String foundMiddlePart = "";
         int index = -1;
 
-        boolean duplicate = (msg.equals(_lastMessage));
+        TenorClefBotContext tc = TenorClefBotContext.currentOrNull();
+        String prevMsg = tc != null ? tc.whisperLastMessage : _lastMessage;
+        boolean duplicate = (msg.equals(prevMsg));
         if (duplicate && !_repeatTimer.elapsed()) {
             _repeatTimer.reset();
             // It's probably an actual duplicate. IDK why we get those but yeah.
             return null;
         }
 
-        _lastMessage = msg;
+        if (tc != null) {
+            tc.whisperLastMessage = msg;
+        } else {
+            _lastMessage = msg;
+        }
 
         for (String format : ButlerConfig.getInstance().whisperFormats) {
             MessageResult check = tryParse(ourUsername, format, msg);

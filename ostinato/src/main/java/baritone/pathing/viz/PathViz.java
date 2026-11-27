@@ -92,28 +92,36 @@ public final class PathViz {
         instance = v;
     }
 
+    private static boolean isHeadlessSuppressed() {
+        if (baritone.api.headless.HeadlessPolicy.skipGpuWorkNow()) {
+            return true;
+        }
+        baritone.api.context.BotContext ctx = baritone.api.context.BotContextScope.currentOrNull();
+        return ctx != null && ctx.headless();
+    }
+
     public boolean corridorOn() {
-        return corridorOn.getAsBoolean();
+        return !isHeadlessSuppressed() && corridorOn.getAsBoolean();
     }
 
     public boolean rolloutsOn() {
-        return rolloutsOn.getAsBoolean();
+        return !isHeadlessSuppressed() && rolloutsOn.getAsBoolean();
     }
 
     public boolean jumpsOn() {
-        return jumpsOn.getAsBoolean();
+        return !isHeadlessSuppressed() && jumpsOn.getAsBoolean();
     }
 
     public boolean speedOn() {
-        return speedOn.getAsBoolean();
+        return !isHeadlessSuppressed() && speedOn.getAsBoolean();
     }
 
     public boolean inputsOn() {
-        return inputsOn.getAsBoolean();
+        return !isHeadlessSuppressed() && inputsOn.getAsBoolean();
     }
 
     public boolean searchOn() {
-        return searchOn.getAsBoolean();
+        return !isHeadlessSuppressed() && searchOn.getAsBoolean();
     }
 
     public boolean physOn() {
@@ -202,17 +210,17 @@ public final class PathViz {
 
     /** Start a tick's fan; false when rollouts are not drawn. */
     public boolean beginRollouts() {
-        rolloutCount = 0;
         if (!rolloutsOn()) {
             return false;
         }
+        rolloutCount = 0;
         rolloutStamp = now();
         return true;
     }
 
     /** A fresh rollout slot, or null when off or the pool is full. */
     public Rollout startRollout(float yawOffset, int delay) {
-        if (rolloutCount >= MAX_ROLLOUTS || !rolloutsOn()) {
+        if (!rolloutsOn() || rolloutCount >= MAX_ROLLOUTS) {
             return null;
         }
         Rollout r = rolloutPool[rolloutCount++];
@@ -227,9 +235,13 @@ public final class PathViz {
 
     /** Mark rollout {@code index} (as counted by {@link #rolloutCount} before it started) chosen, and build the summary. */
     public void chooseRollout(int index) {
+        if (!rolloutsOn()) {
+            return;
+        }
         StringBuilder sb = new StringBuilder();
         java.util.Map<String, Integer> counts = new java.util.TreeMap<>();
-        for (int i = 0; i < rolloutCount; i++) {
+        int count = Math.min(rolloutCount, MAX_ROLLOUTS);
+        for (int i = 0; i < count; i++) {
             Rollout r = rolloutPool[i];
             r.chosen = i == index;
             if (r.rejected()) {

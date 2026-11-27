@@ -227,7 +227,7 @@ public class PlaceBedAndSetSpawnTask extends Task {
             setDebugState("Going to the overworld first.");
             return new DefaultGoToDimensionTask(Dimension.OVERWORLD);
         }
-        Screen screen = ScreenVer.current(MinecraftClient.getInstance());
+        Screen screen = adris.altoclef.headless.BotClientBridge.currentScreenOrNull();
         if (screen instanceof SleepingChatScreen) {
             progressChecker.reset();
             setDebugState("Sleeping...");

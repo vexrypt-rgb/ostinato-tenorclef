@@ -5,16 +5,19 @@ import adris.altoclef.AltoClef;
 import adris.altoclef.Debug;
 import adris.altoclef.eventbus.EventBus;
 import adris.altoclef.eventbus.events.BlockPlaceEvent;
+import adris.altoclef.headless.BotClientBridge;
+import adris.altoclef.headless.TenorClefBotContext;
 import adris.altoclef.multiversion.blockpos.BlockPosVer;
 import adris.altoclef.trackers.blacklisting.WorldLocateBlacklist;
 import adris.altoclef.util.Dimension;
 import adris.altoclef.util.helpers.BaritoneHelper;
 import adris.altoclef.util.helpers.WorldHelper;
 import adris.altoclef.util.time.TimerGame;
+//#if MC >= 260000
+//$$ import baritone.api.context.BotContextScope;
+//#endif
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.world.ClientWorld;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Vec3d;
@@ -22,6 +25,9 @@ import net.minecraft.world.World;
 import net.minecraft.world.chunk.WorldChunk;
 
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 
 public class BlockScanner {
@@ -29,6 +35,17 @@ public class BlockScanner {
     private static final boolean LOG = false;
     private static final int RESCAN_TICK_DELAY = 4 * 20;
     private static final int CACHED_POSITIONS_PER_BLOCK = 40;
+    private static final int CLOSE_SCAN_INTERVAL_TICKS = 4;
+
+    private static final AtomicInteger SCAN_THREAD_ID = new AtomicInteger(1);
+    private static final ExecutorService SCAN_EXECUTOR = Executors.newFixedThreadPool(
+            Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors())),
+            r -> {
+                Thread t = new Thread(r, "Altoclef-BlockScanner-" + SCAN_THREAD_ID.getAndIncrement());
+                t.setDaemon(true);
+                t.setPriority(Thread.NORM_PRIORITY - 1);
+                return t;
+            });
 
 
     private final AltoClef mod;
@@ -46,12 +63,22 @@ public class BlockScanner {
     private volatile boolean scanning = false;
     private volatile boolean forceStop = false;
     private volatile Thread scanThread;
+    private int closeScanTicks = CLOSE_SCAN_INTERVAL_TICKS;
+    private int lastCloseScanX = Integer.MIN_VALUE;
+    private int lastCloseScanY = Integer.MIN_VALUE;
+    private int lastCloseScanZ = Integer.MIN_VALUE;
+    private boolean closeScanDirty = true;
+    private boolean cachedScannedUpdated = true;
+    private final BlockPos.Mutable closeProbe = new BlockPos.Mutable();
 
 
     public BlockScanner(AltoClef mod) {
         this.mod = mod;
 
-        EventBus.subscribe(BlockPlaceEvent.class, evt -> addBlock(evt.blockState.getBlock(), evt.blockPos));
+        EventBus.subscribe(BlockPlaceEvent.class, evt -> {
+            closeScanDirty = true;
+            addBlock(evt.blockState.getBlock(), evt.blockPos);
+        });
     }
 
 
@@ -60,6 +87,7 @@ public class BlockScanner {
             Debug.logInternal("INVALID SET: " + block + " " + pos);
             return;
         }
+        closeScanDirty = true;
 
         if (trackedBlocks.containsKey(block)) {
             trackedBlocks.get(block).add(pos);
@@ -95,8 +123,16 @@ public class BlockScanner {
     // cleared, so room 3's diorite hunt cannot strip room 1's cladding after a clearBlacklist().
     public static volatile Predicate<BlockPos> protectedCells = p -> false;
 
+    private static boolean isCellProtected(BlockPos pos) {
+        TenorClefBotContext tc = TenorClefBotContext.currentOrNull();
+        if (tc != null) {
+            return tc.protectedCells.contains(pos.asLong());
+        }
+        return protectedCells.test(pos);
+    }
+
     public List<BlockPos> getKnownLocations(Block... blocks) {
-        List<BlockPos> locations = new LinkedList<>();
+        List<BlockPos> locations = new ArrayList<>();
 
         for (Block block : blocks) {
             if (!trackedBlocks.containsKey(block)) continue;
@@ -138,7 +174,7 @@ public class BlockScanner {
             if (!trackedBlocks.containsKey(block)) continue;
 
             for (BlockPos pos : trackedBlocks.get(block)) {
-                if (isValidTest.test(pos) && mod.getWorld().getBlockState(pos).getBlock().equals(block) && !this.isUnreachable(pos) && !protectedCells.test(pos))
+                if (isValidTest.test(pos) && mod.getWorld().getBlockState(pos).getBlock().equals(block) && !this.isUnreachable(pos) && !isCellProtected(pos))
                     return true;
             }
         }
@@ -196,7 +232,7 @@ public class BlockScanner {
         for (BlockPos p : trackedBlocks.get(block)) {
             //ensure the block is there (can change upon rescan)
             if (!mod.getWorld().getBlockState(p).getBlock().equals(block)) continue;
-            if (!isValidTest.test(p) || isUnreachable(p) || protectedCells.test(p)) continue; // Ostinato: run101
+            if (!isValidTest.test(p) || isUnreachable(p) || isCellProtected(p)) continue; // Ostinato: run101
 
             double dist = adris.altoclef.util.helpers.NearestBlockSelector.squaredDistanceBlock(
                     fromPos.x, fromPos.y, fromPos.z, p.getX(), p.getY(), p.getZ());
@@ -241,7 +277,7 @@ public class BlockScanner {
             return false;
         }
 
-        ClientWorld world = MinecraftClient.getInstance().world;
+        World world = BotClientBridge.world();
         if (world == null) {
             return false;
         }
@@ -279,6 +315,8 @@ public class BlockScanner {
         scannedChunks.clear();
         rescanTimer.forceElapse();
         blacklist.clear();
+        closeScanDirty = true;
+        cachedScannedUpdated = true;
         forceStop = true;
     }
 
@@ -302,6 +340,7 @@ public class BlockScanner {
         for (Map.Entry<Block, HashSet<BlockPos>> entry : scannedBlocks.entrySet()) {
             cachedScannedBlocks.put(entry.getKey(), (HashSet<BlockPos>) entry.getValue().clone());
         }
+        cachedScannedUpdated = true;
 
         if (LOG) {
             mod.log("Updating BlockScanner.. size: " + trackedBlocks.size() + " : " + cachedScannedBlocks.size());
@@ -309,7 +348,8 @@ public class BlockScanner {
 
         scanning = true;
         forceStop = false;
-        scanThread = new Thread(() -> {
+        Runnable scanTask = () -> {
+            scanThread = Thread.currentThread();
             try {
                 rescan(Integer.MAX_VALUE, Integer.MAX_VALUE);
             } catch (Exception e) {
@@ -319,44 +359,65 @@ public class BlockScanner {
                     reset();
                     forceStop = false;
                 }
-                rescanTimer.reset();
+                if (AltoClef.inGame()) {
+                    rescanTimer.reset();
+                }
                 scanning = false;
+                scanThread = null;
             }
-        });
-        scanThread.start();
+        };
+        //#if MC >= 260000
+        //$$ scanTask = BotContextScope.wrapCurrent(scanTask);
+        //#endif
+        SCAN_EXECUTOR.execute(scanTask);
     }
 
     private void scanCloseBlocks() {
-        for (Map.Entry<Block, HashSet<BlockPos>> entry : cachedScannedBlocks.entrySet()) {
-            HashSet<BlockPos> tracked = trackedBlocks.computeIfAbsent(entry.getKey(), k -> new HashSet<>());
-            tracked.clear();
-            tracked.addAll(entry.getValue());
-        }
-
         BlockPos pos = mod.getPlayer().getBlockPos();
-        World world = mod.getPlayer().getWorld();
+        World world = mod.getWorld();
         Vec3d playerPos = mod.getPlayer().getPos();
-        // This runs on every client tick over the 17x16x17 box around the player. It used to ask the world for the
-        // state of every cell twice (once for the block, once for the air test); one lookup now answers both.
         int cx = pos.getX(), cy = pos.getY(), cz = pos.getZ();
 
-        // Collect the CACHED_POSITIONS_PER_BLOCK nearest cells per block type directly, in one pass.
-        // This used to build a HashMap<Block, HashSet<BlockPos>> holding EVERY non-air cell of the box (stone, dirt,
-        // gravel... thousands of positions and hash nodes, with the dominant type's set resized to a 4096-slot array
-        // every tick), and then throw away all but 40 of each type. The retained result is the same 40-nearest set.
-        // The metric is the one the previous selection used: WorldHelper.toVec3d(pos), i.e. the block centre.
+        boolean moved = cx != lastCloseScanX || cy != lastCloseScanY || cz != lastCloseScanZ;
+        closeScanTicks++;
+        boolean fullSweep = moved || closeScanDirty || cachedScannedUpdated || closeScanTicks >= CLOSE_SCAN_INTERVAL_TICKS;
+
+        if (fullSweep) {
+            for (Map.Entry<Block, HashSet<BlockPos>> entry : cachedScannedBlocks.entrySet()) {
+                HashSet<BlockPos> tracked = trackedBlocks.computeIfAbsent(entry.getKey(), k -> new HashSet<>());
+                tracked.clear();
+                tracked.addAll(entry.getValue());
+            }
+            cachedScannedUpdated = false;
+            closeScanDirty = false;
+            closeScanTicks = 0;
+            lastCloseScanX = cx;
+            lastCloseScanY = cy;
+            lastCloseScanZ = cz;
+        }
+
+        int rx = fullSweep ? 8 : 2;
+        int ryLow = fullSweep ? 8 : 2;
+        int ryHigh = fullSweep ? 8 : 3;
+
+        // Collect the CACHED_POSITIONS_PER_BLOCK nearest cells per block type directly, in one pass,
+        // reusing closeProbe so only retained cells allocate an immutable BlockPos.
         NearestPerKey<Block> nearest = new NearestPerKey<>(CACHED_POSITIONS_PER_BLOCK,
                 (x, y, z) -> BaritoneHelper.calculateGenericHeuristic(playerPos.x, playerPos.y, playerPos.z,
                         x + 0.5, y + 0.5, z + 0.5));
 
-        for (int x = cx - 8; x <= cx + 8; x++) {
-            for (int y = cy - 8; y < cy + 8; y++) {
-                for (int z = cz - 8; z <= cz + 8; z++) {
-                    BlockPos p = new BlockPos(x, y, z);
-                    BlockState state = world.getBlockState(p);
+        for (int x = cx - rx; x <= cx + rx; x++) {
+            for (int y = cy - ryLow; y < cy + ryHigh; y++) {
+                for (int z = cz - rx; z <= cz + rx; z++) {
+                    //#if MC >= 260000
+                    //$$ closeProbe.set(x, y, z);
+                    //#else
+                    closeProbe.set(x, y, z);
+                    //#endif
+                    BlockState state = world.getBlockState(closeProbe);
                     if (state.isAir()) continue;
 
-                    nearest.offer(state.getBlock(), p);
+                    nearest.offer(state.getBlock(), closeProbe);
                 }
             }
         }
@@ -432,14 +493,14 @@ public class BlockScanner {
 
             void offer(BlockPos p, double d) {
                 if (size < pos.length) {
-                    pos[size] = p;
+                    pos[size] = p.toImmutable();
                     dist[size] = d;
                     siftUp(size);
                     size++;
                 } else if (d < dist[0]) {
                     // Strictly nearer than the farthest kept one; on a tie the incumbent stays, so the result is
                     // deterministic in scan order (the priority queue this replaced broke ties arbitrarily).
-                    pos[0] = p;
+                    pos[0] = p.toImmutable();
                     dist[0] = d;
                     siftDown(0);
                 }
@@ -484,6 +545,9 @@ public class BlockScanner {
     }
 
     private void rescan(int maxCount, int cutOffRadius) {
+        if (!AltoClef.inGame() || mod.getPlayer() == null || mod.getWorld() == null) {
+            return;
+        }
         long ms = System.currentTimeMillis();
 
         ChunkPos playerChunkPos = mod.getPlayer().getChunkPos();
@@ -496,11 +560,13 @@ public class BlockScanner {
         while (!queue.isEmpty() && visited.size() < maxCount && !forceStop) {
             Node node = queue.poll();
 
-            if (node.distance > cutOffRadius || visited.contains(node.pos) || !mod.getWorld().getChunkManager().isChunkLoaded(ChunkPosVer.x(node.pos), ChunkPosVer.z(node.pos)))
+            if (node.distance > cutOffRadius || visited.contains(node.pos) || !BotClientBridge.isChunkLoaded(ChunkPosVer.x(node.pos), ChunkPosVer.z(node.pos)))
                 continue;
 
+            World w = mod.getWorld();
+            if (w == null) break;
             boolean isPriorityChunk = getChunkDist(node.pos, playerChunkPos) <= 2;
-            if (!isPriorityChunk && scannedChunks.containsKey(node.pos) && mod.getWorld().getTime() - scannedChunks.get(node.pos) < RESCAN_TICK_DELAY)
+            if (!isPriorityChunk && scannedChunks.containsKey(node.pos) && w.getTime() - scannedChunks.get(node.pos) < RESCAN_TICK_DELAY)
                 continue;
 
             visited.add(node.pos);
@@ -582,18 +648,28 @@ public class BlockScanner {
      */
     private void scanChunk(ChunkPos chunkPos, ChunkPos playerChunkPos) {
         World world = mod.getWorld();
-        WorldChunk chunk = mod.getWorld().getChunk(ChunkPosVer.x(chunkPos), ChunkPosVer.z(chunkPos));
+        int chunkX = ChunkPosVer.x(chunkPos);
+        int chunkZ = ChunkPosVer.z(chunkPos);
+        if (!BotClientBridge.isChunkLoaded(chunkX, chunkZ)) {
+            return;
+        }
+        WorldChunk chunk = world.getChunk(chunkX, chunkZ);
         scannedChunks.put(chunkPos, world.getTime());
 
         boolean isPriorityChunk = getChunkDist(chunkPos, playerChunkPos) <= 2;
+        BlockPos.Mutable probe = new BlockPos.Mutable();
 
         for (int x = chunkPos.getStartX(); x <= chunkPos.getEndX(); x++) {
             for (int y = world.getBottomY(); y < world.getTopY(); y++) {
                 for (int z = chunkPos.getStartZ(); z <= chunkPos.getEndZ(); z++) {
-                    BlockPos p = new BlockPos(x, y, z);
-                    if (this.isUnreachable(p) || world.isOutOfHeightLimit(p)) continue;
+                    //#if MC >= 260000
+                    //$$ probe.set(x, y, z);
+                    //#else
+                    probe.set(x, y, z);
+                    //#endif
+                    if (this.isUnreachable(probe) || world.isOutOfHeightLimit(probe)) continue;
 
-                    BlockState state = chunk.getBlockState(p);
+                    BlockState state = chunk != null ? chunk.getBlockState(probe) : world.getBlockState(probe);
                     if (state.isAir()) continue;
 
                     Block block = state.getBlock();
@@ -602,10 +678,10 @@ public class BlockScanner {
 
                         if ((set.size() > CACHED_POSITIONS_PER_BLOCK * 750 && !isPriorityChunk)) continue;
 
-                        set.add(p);
+                        set.add(probe.toImmutable());
                     } else {
                         HashSet<BlockPos> set = new HashSet<>();
-                        set.add(p);
+                        set.add(probe.toImmutable());
                         scannedBlocks.put(block, set);
                     }
                 }

@@ -1,12 +1,8 @@
 /*
- * Ostinato: fully headless 26.3 protocol bot (Phase 2/3). New file, replaces no Baritone code.
+ * Ostinato: fully headless 26.3 protocol bot (Phase 2/3, Phase A fast path).
  *
  * Adapts the bot's own decoded chunk store to the real BlockStateInterface API, so BsiWorld,
  * CalculationContext and Ostinato's A* can run unchanged with no ClientLevel / Minecraft instance.
- *
- * This is the headless counterpart of the client's BlockStateInterface(IPlayerContext); it uses the
- * protected headless constructor (no world, no chunk provider) and overrides every method that
- * would otherwise dereference one.
  */
 package baritone.headless;
 
@@ -20,6 +16,10 @@ public final class HeadlessBlockStateInterface extends BlockStateInterface {
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
     private final HeadlessChunkStore store;
+    private int prevChunkX = Integer.MIN_VALUE;
+    private int prevChunkZ = Integer.MIN_VALUE;
+    private int prevLayoutVersion = Integer.MIN_VALUE;
+    private HeadlessChunkStore.Chunk prevChunk;
 
     public HeadlessBlockStateInterface(HeadlessChunkStore store, int minY, int height) {
         // A world border wide enough that it never constrains a bot on a normal survival world.
@@ -36,7 +36,21 @@ public final class HeadlessBlockStateInterface extends BlockStateInterface {
         if (y < minY() || y >= minY() + height()) {
             return AIR;
         }
-        BlockState state = store.getBlockState(x, y, z);
+        int cx = x >> 4;
+        int cz = z >> 4;
+        int version = store.layoutVersion();
+        HeadlessChunkStore.Chunk chunk = prevChunk;
+        if (cx != prevChunkX || cz != prevChunkZ || version != prevLayoutVersion) {
+            chunk = store.getChunkDirect(cx, cz);
+            prevChunkX = cx;
+            prevChunkZ = cz;
+            prevLayoutVersion = version;
+            prevChunk = chunk;
+        }
+        if (chunk == null) {
+            return AIR;
+        }
+        BlockState state = chunk.get(x & 15, y, z & 15, store.minSection());
         // VOID_AIR marks a cell whose chunk was never sent. For collision and pathing that is air,
         // not an unbreakable void block.
         return state.is(Blocks.VOID_AIR) ? AIR : state;

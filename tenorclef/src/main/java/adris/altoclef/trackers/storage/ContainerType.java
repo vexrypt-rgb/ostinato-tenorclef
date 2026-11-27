@@ -16,7 +16,8 @@ import net.minecraft.block.*;
 //$$ import net.minecraft.world.level.block.HopperBlock;
 //$$ import net.minecraft.world.level.block.ShulkerBoxBlock;
 //#endif
-import net.minecraft.client.MinecraftClient;
+import adris.altoclef.headless.BotClientBridge;
+import net.minecraft.entity.player.PlayerEntity;
 //#if MC < 260000
 import net.minecraft.screen.*;
 //#else
@@ -79,8 +80,9 @@ public enum ContainerType {
     }
 
     public static boolean screenHandlerMatches(ContainerType type) {
-        if (MinecraftClient.getInstance().player != null) {
-            ScreenHandler h = MinecraftClient.getInstance().player.currentScreenHandler;
+        PlayerEntity player = BotClientBridge.player();
+        if (player != null) {
+            ScreenHandler h = player.currentScreenHandler;
             if (h != null)
                 return screenHandlerMatches(type, h);
         }

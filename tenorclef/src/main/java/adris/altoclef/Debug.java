@@ -1,6 +1,6 @@
 package adris.altoclef;
 
-import net.minecraft.client.MinecraftClient;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.multiversion.TextVer;
 import net.minecraft.text.Text;
 
@@ -53,11 +53,11 @@ public class Debug {
     }
 
     public static void logMessage(String message, boolean prefix) {
-        if (MinecraftClient.getInstance() != null && MinecraftClient.getInstance().player != null) {
+        if (BotClientBridge.player() != null && !BotClientBridge.isHeadless()) {
             if (prefix) {
                 message = "\u00A7e\u00A7l\u00A7o" + getLogPrefix() + "\u00A7r" + message;
             }
-            adris.altoclef.multiversion.entity.PlayerVer.sendClientMessage(MinecraftClient.getInstance().player, TextVer.literal(message), false);
+            BotClientBridge.sendClientMessage(TextVer.literal(message), false);
 
         } else {
             logInternal(message);
@@ -79,9 +79,9 @@ public class Debug {
 
         AltoClef altoClef = AltoClef.getInstance();
         if (altoClef != null && !altoClef.getModSettings().shouldHideAllWarningLogs()) {
-            if (MinecraftClient.getInstance() != null && MinecraftClient.getInstance().player != null) {
+            if (BotClientBridge.player() != null) {
                 String msg = "\u00A7e\u00A7l\u00A7o" + getLogPrefix() + "\u00A7c" + message + "\u00A7r";
-                adris.altoclef.multiversion.entity.PlayerVer.sendClientMessage(MinecraftClient.getInstance().player, TextVer.literal(msg), false);
+                BotClientBridge.sendClientMessage(TextVer.literal(msg), false);
 
             }
         }
@@ -100,9 +100,9 @@ public class Debug {
             System.err.println(stacktrace);
         }
 
-        if (MinecraftClient.getInstance() != null && MinecraftClient.getInstance().player != null) {
+        if (BotClientBridge.player() != null) {
             String msg = "\u00A7e\u00A7l\u00A7c" + getLogPrefix() + "[ERROR] " + message + "\nat:\n" + stacktrace + "\u00A7r";
-            adris.altoclef.multiversion.entity.PlayerVer.sendClientMessage(MinecraftClient.getInstance().player, TextVer.literal(msg), false);
+            BotClientBridge.sendClientMessage(TextVer.literal(msg), false);
         }
     }
 

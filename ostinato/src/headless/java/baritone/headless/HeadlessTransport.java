@@ -29,6 +29,19 @@ public interface HeadlessTransport {
 
     void setupCompression(int threshold, boolean rejectBadPackets);
 
+    default void setupEncryption(javax.crypto.Cipher decryptCipher, javax.crypto.Cipher encryptCipher) {
+    }
+
+    default void sendWithEncryption(net.minecraft.network.protocol.Packet<?> keyPacket,
+                                    javax.crypto.Cipher decryptCipher,
+                                    javax.crypto.Cipher encryptCipher) {
+        send(keyPacket);
+        setupEncryption(decryptCipher, encryptCipher);
+    }
+
+    default void disconnect(String reason) {
+    }
+
     void tick();
 
     boolean isConnected();
@@ -73,6 +86,24 @@ public interface HeadlessTransport {
         @Override
         public void setupCompression(int threshold, boolean rejectBadPackets) {
             connection.setupCompression(threshold, rejectBadPackets);
+        }
+
+        @Override
+        public void setupEncryption(javax.crypto.Cipher decryptCipher, javax.crypto.Cipher encryptCipher) {
+            connection.setEncryptionKey(decryptCipher, encryptCipher);
+        }
+
+        @Override
+        public void sendWithEncryption(net.minecraft.network.protocol.Packet<?> keyPacket,
+                                       javax.crypto.Cipher decryptCipher,
+                                       javax.crypto.Cipher encryptCipher) {
+            connection.send(keyPacket, net.minecraft.network.PacketSendListener.thenRun(
+                    () -> connection.setEncryptionKey(decryptCipher, encryptCipher)));
+        }
+
+        @Override
+        public void disconnect(String reason) {
+            connection.disconnect(net.minecraft.network.chat.Component.literal(reason == null ? "disconnected" : reason));
         }
 
         @Override

@@ -2,14 +2,13 @@ package adris.altoclef.util.helpers;
 
 import adris.altoclef.AltoClef;
 import adris.altoclef.Debug;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.util.slots.Slot;
 import baritone.api.BaritoneAPI;
 import baritone.api.utils.IPlayerContext;
 import baritone.api.utils.RayTraceUtils;
 import baritone.api.utils.Rotation;
 import baritone.api.utils.RotationUtils;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.passive.MerchantEntity;
 import net.minecraft.entity.player.PlayerEntity;
@@ -57,7 +56,11 @@ public interface LookHelper {
         // Check if the side is null
         if (side == null) {
             // Calculate the reachable rotation from the player's position to the target position
+            //#if MC >= 260000
+            //$$ reachableRotation = RotationUtils.reachable(context, target, context.playerController().getBlockReachDistance());
+            //#else
             reachableRotation = RotationUtils.reachable(context.player(), target, context.playerController().getBlockReachDistance());
+            //#endif
         } else {
             // Calculate the center offset vector based on the side direction
             Vec3i sideVector = side.getVector();
@@ -68,13 +71,22 @@ public interface LookHelper {
             Vec3d sidePoint = centerOffset.add(target.getX(), target.getY(), target.getZ());
 
             // Calculate the reachable rotation from the player's position to the side point
+            //#if MC >= 260000
+            //$$ reachableRotation = RotationUtils.reachableOffset(context.entity(), target, sidePoint,
+            //$$         context.playerController().getBlockReachDistance(), false);
+            //#else
             reachableRotation = RotationUtils.reachableOffset(context.player(), target, sidePoint,
                     context.playerController().getBlockReachDistance(), false);
+            //#endif
 
             // Check if the reachable rotation is present
             if (reachableRotation.isPresent()) {
                 // Calculate the camera position and vector to player position
+                //#if MC >= 260000
+                //$$ Vec3 cameraPos = cameraPos(context.entity(), 1.0F);
+                //#else
                 Vec3d cameraPos = cameraPos(context.player(), 1.0F);
+                //#endif
                 Vec3d vecToPlayerPos = cameraPos.subtract(sidePoint);
 
                 // Calculate the dot product between the vector to player position and the side vector
@@ -201,8 +213,7 @@ public interface LookHelper {
      * @return True if there is a clear line of sight, false otherwise.
      */
     static boolean cleanLineOfSight(Vec3d end, double maxRange) {
-        MinecraftClient minecraftClient = MinecraftClient.getInstance();
-        PlayerEntity playerEntity = minecraftClient.player;
+        PlayerEntity playerEntity = BotClientBridge.player();
         return cleanLineOfSight(playerEntity, end, maxRange);
     }
 
@@ -328,7 +339,7 @@ public interface LookHelper {
      */
     static Rotation getLookRotation() {
         // Retrieve the player instance
-        PlayerEntity player = MinecraftClient.getInstance().player;
+        PlayerEntity player = BotClientBridge.player();
 
         // If the player is null, return a default rotation
         if (player == null) {
@@ -378,7 +389,11 @@ public interface LookHelper {
         IPlayerContext playerContext = BaritoneAPI.getProvider().getPrimaryBaritone().getPlayerContext();
 
         // Get the camera position vector from the player context
+        //#if MC >= 260000
+        //$$ return cameraPos(playerContext.entity(), 1);
+        //#else
         return cameraPos(playerContext.player(), 1);
+        //#endif
     }
 
     /**
@@ -478,7 +493,7 @@ public interface LookHelper {
         }
 
         // Get the crosshair target
-        HitResult result = MinecraftClient.getInstance().crosshairTarget;
+        HitResult result = BotClientBridge.crosshairTarget();
 
         // Check if the crosshair target is null
         if (result == null) {
@@ -546,6 +561,10 @@ public interface LookHelper {
      * @param withBaritone Whether to use Baritone to look.
      */
     static void lookAt(AltoClef mod, Rotation rotation, boolean withBaritone) {
+        if (BotClientBridge.isHeadless()) {
+            mod.getClientBaritone().getLookBehavior().updateTarget(rotation, true);
+            return;
+        }
         if (withBaritone) {
             // Update the target rotation in the LookBehavior
             mod.getClientBaritone().getLookBehavior().updateTarget(rotation, true);
@@ -562,11 +581,15 @@ public interface LookHelper {
      * @param rotation The desired rotation to look at.
      */
     static void lookAt(Rotation rotation) {
+        if (BotClientBridge.isHeadless()) {
+            AltoClef.getInstance().getClientBaritone().getLookBehavior().updateTarget(rotation, true);
+            return;
+        }
         // Update the target rotation in the LookBehavior
         AltoClef.getInstance().getClientBaritone().getLookBehavior().updateTarget(rotation, true);
 
         // Set the player's yaw and pitch
-        ClientPlayerEntity player = AltoClef.getInstance().getPlayer();
+        PlayerEntity player = AltoClef.getInstance().getPlayer();
 
         player.setYaw(rotation.getYaw());
         player.setPitch(rotation.getPitch());

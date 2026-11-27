@@ -25,6 +25,7 @@ import net.minecraft.block.*;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.mob.MobEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.screen.slot.SlotActionType;
 import net.minecraft.util.math.BlockPos;
@@ -265,7 +266,7 @@ public class TimeoutWanderTask extends Task implements ITaskRequiresGrounded {
             return true;
         }
 
-        ClientPlayerEntity player = AltoClef.getInstance().getPlayer();
+        net.minecraft.entity.player.PlayerEntity player = AltoClef.getInstance().getPlayer();
 
         // Ostinato: run31 crashed the client: MazeFurnishTask polls isFinished() before the first tick, while origin is unset.
         if (origin == null) return false;

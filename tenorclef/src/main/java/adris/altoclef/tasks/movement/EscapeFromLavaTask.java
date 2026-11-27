@@ -14,6 +14,7 @@ import baritone.api.utils.input.Input;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.entity.player.PlayerEntity;
 //#if MC < 260000
 import net.minecraft.item.*;
 //#else
@@ -171,7 +172,7 @@ public class EscapeFromLavaTask extends CustomBaritoneGoalTask {
     private Optional<Item> calculateFood(AltoClef mod) {
         Item bestFood = null;
         double bestFoodScore = Double.NEGATIVE_INFINITY;
-        ClientPlayerEntity player = mod.getPlayer();
+        net.minecraft.entity.player.PlayerEntity player = mod.getPlayer();
 
         float hunger = player != null ? player.getHungerManager().getFoodLevel() : 20;
         float saturation = player != null ? player.getHungerManager().getSaturationLevel() : 20;
@@ -220,7 +221,7 @@ public class EscapeFromLavaTask extends CustomBaritoneGoalTask {
 
 
     public HitResult raycast(AltoClef mod,double maxDistance, float pitch, float yaw) {
-        Vec3d cameraPos = LookHelper.cameraPos(mod.getPlayer(), MinecraftClient.getInstance().getRenderTickCounter().getTickDelta(true));
+        Vec3d cameraPos = LookHelper.cameraPos(mod.getPlayer(), adris.altoclef.headless.BotClientBridge.tickDelta());
         Vec3d rotationVector = getRotationVector(pitch,yaw);
 
         Vec3d vec3d3 = cameraPos.add(rotationVector.x * maxDistance, rotationVector.y * maxDistance, rotationVector.z * maxDistance);
@@ -270,7 +271,7 @@ public class EscapeFromLavaTask extends CustomBaritoneGoalTask {
 
     @Override
     public boolean isFinished() {
-        ClientPlayerEntity player = AltoClef.getInstance().getPlayer();
+        net.minecraft.entity.player.PlayerEntity player = AltoClef.getInstance().getPlayer();
 
         return !player.isInLava() && !player.isOnFire();
     }
@@ -283,8 +284,9 @@ public class EscapeFromLavaTask extends CustomBaritoneGoalTask {
     private class EscapeFromLavaGoal implements Goal {
 
         private static boolean isLava(int x, int y, int z) {
-            if (MinecraftClient.getInstance().world == null) return false;
-            return BaritoneQueries.get().isLava(MinecraftClient.getInstance().world.getBlockState(new BlockPos(x, y, z)));
+            var w = adris.altoclef.headless.BotClientBridge.world();
+            if (w == null) return false;
+            return BaritoneQueries.get().isLava(w.getBlockState(new BlockPos(x, y, z)));
         }
 
         private static boolean isLavaAdjacent(int x, int y, int z) {
@@ -294,8 +296,9 @@ public class EscapeFromLavaTask extends CustomBaritoneGoalTask {
         }
 
         private static boolean isWater(int x, int y, int z) {
-            if (MinecraftClient.getInstance().world == null) return false;
-            return BaritoneQueries.get().isWater(MinecraftClient.getInstance().world.getBlockState(new BlockPos(x, y, z)));
+            var w = adris.altoclef.headless.BotClientBridge.world();
+            if (w == null) return false;
+            return BaritoneQueries.get().isWater(w.getBlockState(new BlockPos(x, y, z)));
         }
 
         @Override

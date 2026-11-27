@@ -25,7 +25,7 @@ final class T2MenuLook {
     private T2MenuLook() {}
 
     static void paint(T2MenuScreen s, adris.altoclef.multiversion.DrawContextWrapper g, int mx, int my) {
-        if (g == null) return;
+        if (g == null || adris.altoclef.headless.BotClientBridge.isHeadless()) return;
         s.layout();
         fillV(g, 0, 0, s.width, s.height, C_SCRIM_TOP, C_SCRIM_BOT);
         g.fill(s.px0 + 4, s.py1, s.px1 + 5, s.py1 + 5, 0x50000000);

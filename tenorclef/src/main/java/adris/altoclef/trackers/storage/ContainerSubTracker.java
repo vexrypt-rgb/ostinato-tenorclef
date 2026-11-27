@@ -4,6 +4,9 @@ import adris.altoclef.Debug;
 import adris.altoclef.eventbus.EventBus;
 import adris.altoclef.eventbus.events.BlockInteractEvent;
 import adris.altoclef.eventbus.events.ScreenOpenEvent;
+import adris.altoclef.headless.BotClientBridge;
+import adris.altoclef.headless.TenorClefBotContext;
+import net.minecraft.entity.player.PlayerEntity;
 import adris.altoclef.multiversion.blockpos.BlockPosVer;
 import adris.altoclef.trackers.Tracker;
 import adris.altoclef.trackers.TrackerManager;
@@ -112,14 +115,21 @@ public class ContainerSubTracker extends Tracker {
     public static volatile String debugState = "";
 
     public void onServerTick() {
-        if (MinecraftClient.getInstance().player == null)
+        PlayerEntity player = BotClientBridge.player();
+        if (player == null)
             return;
-        debugState = "containerOpen=" + containerOpen + " lastPos=" + lastBlockPosInteraction + " lastBlock=" + lastBlockInteraction
-                + " screen=" + adris.altoclef.multiversion.ScreenVer.current(MinecraftClient.getInstance()) + " handler=" + MinecraftClient.getInstance().player.currentScreenHandler;
+        String stateLine = "containerOpen=" + containerOpen + " lastPos=" + lastBlockPosInteraction + " lastBlock=" + lastBlockInteraction
+                + " screen=" + BotClientBridge.currentScreenOrNull() + " handler=" + player.currentScreenHandler;
+        TenorClefBotContext tc = TenorClefBotContext.currentOrNull();
+        if (tc != null) {
+            tc.setTaskState("containerSubTracker.debugState", stateLine);
+        } else {
+            debugState = stateLine;
+        }
         // Ostinato: #allblocks. On 26.3 the screen-open hook never marked a chest screen as a container, so nothing
         // was ever stored: also trust the open menu when it matches the block we last clicked.
         // The close hook does not fire there either: with only the player's own inventory open, nothing is open.
-        ScreenHandler openHandler = MinecraftClient.getInstance().player.currentScreenHandler;
+        ScreenHandler openHandler = player.currentScreenHandler;
         if (openHandler == null || openHandler instanceof PlayerScreenHandler) {
             if (containerOpen) onScreenClose();
         } else if (!containerOpen && lastBlockInteraction != null
@@ -128,7 +138,7 @@ public class ContainerSubTracker extends Tracker {
         }
         // If we haven't registered interacting with a block, try the currently "looking at" block
         if (containerOpen && lastBlockPosInteraction == null && lastBlockInteraction == null) {
-            if (MinecraftClient.getInstance().crosshairTarget instanceof BlockHitResult bhit) {
+            if (BotClientBridge.crosshairTarget() instanceof BlockHitResult bhit) {
                 Debug.logWarning("Screen open but no block interaction detected, using the block we're currently looking at.");
                 lastBlockPosInteraction = bhit.getBlockPos();
                 lastBlockInteraction = mod.getWorld().getBlockState(lastBlockPosInteraction).getBlock();

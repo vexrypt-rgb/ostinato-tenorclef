@@ -181,13 +181,13 @@ public abstract class DoStuffInContainerTask extends Task {
         //return new GetToBlockTask(nearest, true);
     }
 
-    private static BlockPos waterTarget;
-    private static int waterEntries;
-    private static long waterFirstMs;
-    private static boolean wasWet;
+    private BlockPos waterTarget;
+    private int waterEntries;
+    private long waterFirstMs;
+    private boolean wasWet;
 
     /** True once heading to {@code target} has put us in water twice within 60s. */
-    private static boolean walkedIntoWater(AltoClef mod, BlockPos target) {
+    private boolean walkedIntoWater(AltoClef mod, BlockPos target) {
         boolean wet = mod.getPlayer().isTouchingWater();
         boolean entered = wet && !wasWet;
         wasWet = wet;

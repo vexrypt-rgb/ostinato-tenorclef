@@ -186,12 +186,12 @@ public class AnyWeaponCombatTask extends Task {
     private void raiseShield(AltoClef mod) {
         mod.getSlotHandler().forceEquipItemToOffhand(Items.SHIELD);
         try {
-            var opts = mod.getPlayer().input;
-            // 1.21 PlayerInput is a record; older is PlayerInput with holdingBackwards etc.
-        } catch (Throwable ignored) {}
-        try {
-            var mc = net.minecraft.client.MinecraftClient.getInstance();
-            mc.options.useKey.setPressed(true);
+            if (adris.altoclef.headless.BotClientBridge.isHeadless()) {
+                adris.altoclef.headless.BotClientBridge.setInputOverride(baritone.api.utils.input.Input.CLICK_RIGHT, true);
+            } else {
+                var mc = net.minecraft.client.MinecraftClient.getInstance();
+                mc.options.useKey.setPressed(true);
+            }
         } catch (Throwable ignored) {}
     }
 
@@ -205,9 +205,13 @@ public class AnyWeaponCombatTask extends Task {
 
     private void attack(AltoClef mod, LivingEntity e) {
         try {
-            var mc = net.minecraft.client.MinecraftClient.getInstance();
-            if (mc.interactionManager != null) {
-                mc.interactionManager.attackEntity(mod.getPlayer(), e);
+            if (adris.altoclef.headless.BotClientBridge.isHeadless()) {
+                adris.altoclef.headless.BotClientBridge.attackEntity(e);
+            } else {
+                var mc = net.minecraft.client.MinecraftClient.getInstance();
+                if (mc.interactionManager != null) {
+                    mc.interactionManager.attackEntity(mod.getPlayer(), e);
+                }
                 mod.getPlayer().swingHand(Hand.MAIN_HAND);
             }
         } catch (Throwable t) {

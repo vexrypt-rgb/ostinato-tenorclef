@@ -17,6 +17,8 @@
 
 package baritone.api.event.events;
 
+import baritone.api.context.BotContext;
+import baritone.api.context.BotContextScope;
 import baritone.api.event.events.type.EventState;
 import net.minecraft.client.Minecraft;
 
@@ -57,7 +59,8 @@ public final class TickEvent {
     }
 
     public static synchronized BiFunction<EventState, Type, TickEvent> createNextProvider() {
-        final int count = overallTickCount++;
+        BotContext ctx = BotContextScope.currentOrNull();
+        final int count = ctx != null ? ctx.nextOverallTickCount() : overallTickCount++;
         return (state, type) -> new TickEvent(state, type, count);
     }
 

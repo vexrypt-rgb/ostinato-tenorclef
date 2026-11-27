@@ -92,6 +92,31 @@ public class CloseBlockScanCostTest {
         assertEquals(5, got.get(7).length);
     }
 
+    @Test
+    public void mutableProbeCapturesDistinctImmutablePositions() {
+        Box box = new Box(new Random(42), 0, 0, 0);
+        BlockScanner.NearestPerKey<Integer> collector = new BlockScanner.NearestPerKey<>(4, box);
+        BlockPos.Mutable probe = new BlockPos.Mutable();
+        for (int i = 1; i <= 6; i++) {
+            //#if MC >= 260000
+            //$$ probe.set(i, 0, 0);
+            //#else
+            probe.set(i, 0, 0);
+            //#endif
+            collector.offer(1, probe);
+        }
+        //#if MC >= 260000
+        //$$ probe.set(999, 999, 999);
+        //#else
+        probe.set(999, 999, 999);
+        //#endif
+        BlockPos[] retained = collector.drain().get(1);
+        assertEquals(4, retained.length);
+        for (BlockPos p : retained) {
+            assertTrue(p.getX() >= 1 && p.getX() <= 4, "retained pos must be immutable copy, got " + p);
+        }
+    }
+
     // ------------------------------------------------------------------ cost
 
     @Test

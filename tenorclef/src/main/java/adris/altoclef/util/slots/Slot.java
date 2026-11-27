@@ -3,7 +3,7 @@ package adris.altoclef.util.slots;
 import adris.altoclef.multiversion.ScreenVer;
 
 import adris.altoclef.Debug;
-import net.minecraft.client.MinecraftClient;
+import adris.altoclef.headless.BotClientBridge;
 import net.minecraft.client.gui.screen.Screen;
 //#if MC < 260000
 import net.minecraft.client.gui.screen.ingame.*;
@@ -16,10 +16,18 @@ import net.minecraft.client.gui.screen.ingame.*;
 //$$ import net.minecraft.client.gui.screens.inventory.SmithingScreen;
 //$$ import net.minecraft.client.gui.screens.inventory.SmokerScreen;
 //#endif
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.screen.GenericContainerScreenHandler;
-import net.minecraft.screen.PlayerScreenHandler;
-import net.minecraft.screen.ScreenHandler;
+import net.minecraft.entity.player.PlayerEntity;
+//#if MC < 260000
+import net.minecraft.screen.*;
+//#else
+//$$ import net.minecraft.world.inventory.AbstractFurnaceMenu;
+//$$ import net.minecraft.world.inventory.CraftingMenu;
+//$$ import net.minecraft.world.inventory.EnchantmentMenu;
+//$$ import net.minecraft.world.inventory.ChestMenu;
+//$$ import net.minecraft.world.inventory.InventoryMenu;
+//$$ import net.minecraft.world.inventory.AbstractContainerMenu;
+//$$ import net.minecraft.world.inventory.SmithingMenu;
+//#endif
 
 import java.util.Iterator;
 import java.util.Objects;
@@ -82,7 +90,24 @@ public abstract class Slot {
     }
 
     private static ContainerType getCurrentType() {
-        Screen screen = ScreenVer.current(MinecraftClient.getInstance());
+        if (BotClientBridge.isHeadless()) {
+            PlayerEntity player = BotClientBridge.player();
+            ScreenHandler handler = player != null ? player.currentScreenHandler : null;
+            if (handler instanceof AbstractFurnaceScreenHandler || handler instanceof SmithingScreenHandler) {
+                return ContainerType.FURNACE_OR_SMITH_OR_SMOKER_OR_BLAST;
+            }
+            if (handler instanceof GenericContainerScreenHandler gch) {
+                return gch.getRows() == 6 ? ContainerType.CHEST_LARGE : ContainerType.CHEST_SMALL;
+            }
+            if (handler instanceof CraftingScreenHandler) {
+                return ContainerType.CRAFTING_TABLE;
+            }
+            if (handler instanceof EnchantmentScreenHandler) {
+                return ContainerType.ENCHANTING_TABLE;
+            }
+            return ContainerType.PLAYER;
+        }
+        Screen screen = BotClientBridge.currentScreenOrNull();
         if (screen instanceof FurnaceScreen || screen instanceof SmithingScreen || screen instanceof SmokerScreen ||
                 screen instanceof BlastFurnaceScreen) {
             return ContainerType.FURNACE_OR_SMITH_OR_SMOKER_OR_BLAST;
@@ -107,7 +132,7 @@ public abstract class Slot {
 
     public static Iterable<Slot> getCurrentScreenSlots() {
         return () -> new Iterator<>() {
-            final ClientPlayerEntity player = MinecraftClient.getInstance().player;
+            final PlayerEntity player = BotClientBridge.player();
             final ScreenHandler handler = player != null ? player.currentScreenHandler : null;
             final int MAX = handler != null ? handler.slots.size() : 0;
             int i = -1;
@@ -175,7 +200,8 @@ public abstract class Slot {
      * @return Whether this slot exists within the player's inventory or in a container that's disconnected from the player's inventory.
      */
     public boolean isSlotInPlayerInventory() {
-        ScreenHandler handler = MinecraftClient.getInstance().player != null ? MinecraftClient.getInstance().player.currentScreenHandler : null;
+        PlayerEntity player = BotClientBridge.player();
+        ScreenHandler handler = player != null ? player.currentScreenHandler : null;
         int windowSlot = getWindowSlot();
         if (handler instanceof PlayerScreenHandler) {
             // Everything visible is player inventory.

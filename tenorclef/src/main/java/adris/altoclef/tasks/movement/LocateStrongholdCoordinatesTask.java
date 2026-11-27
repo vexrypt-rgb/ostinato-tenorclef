@@ -172,16 +172,13 @@ public class LocateStrongholdCoordinatesTask extends Task {
             }
             // Throw it
             if (mod.getSlotHandler().forceEquipItem(Items.ENDER_EYE)) {
-                assert MinecraftClient.getInstance().interactionManager != null;
                 if (_throwTimer.elapsed()) {
                     if (LookHelper.tryAvoidingInteractable(mod)) {
-                        MinecraftClient.getInstance().interactionManager.interactItem(mod.getPlayer(),Hand.MAIN_HAND);
-                        //MinecraftClient.getInstance().options.keyUse.setPressed(true);
+                        adris.altoclef.headless.BotClientBridge.interactItem(Hand.MAIN_HAND);
                         _throwTimer.reset();
                     }
                 } else {
-                    MinecraftClient.getInstance().interactionManager.stopUsingItem(mod.getPlayer());
-                    //MinecraftClient.getInstance().options.keyUse.setPressed(false);
+                    adris.altoclef.headless.BotClientBridge.stopUsingItem();
                 }
             } else {
                 Debug.logWarning("Failed to equip eye of ender to throw.");

@@ -69,6 +69,8 @@
     "MixinHeadlessClock",
     "MixinHeadlessQuirks",
     "MixinHeadlessBootstrap",
+    "MixinHeadlessChunkCache",
+    "MixinHeadlessLightEngine",
     "MixinLegitSounds",
     "MixinProfilerPie",
     "MixinSpectatePackets",

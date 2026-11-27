@@ -225,7 +225,7 @@ public class ConstructNetherPortalBucketTask extends Task {
         if (refreshTimer.elapsed()) {
             // NEVER refresh while a container/craft screen is open - double-clicking every
             // inventory slot desyncs the handler and causes "Ignoring click in mismatching container".
-            if (ScreenVer.current(MinecraftClient.getInstance()) == null && !mod.getControllerExtras().isBreakingBlock()) {
+            if (adris.altoclef.headless.BotClientBridge.currentScreenOrNull() == null && !mod.getControllerExtras().isBreakingBlock()) {
                 Debug.logMessage("Duct tape: Refreshing inventory again just in case");
                 mod.getSlotHandler().refreshInventory();
             }
@@ -525,8 +525,9 @@ public class ConstructNetherPortalBucketTask extends Task {
         // Now, clear the inside.
         for (Vec3i offs : PORTAL_INTERIOR) {
             BlockPos p = portalOrigin.add(offs);
-            assert MinecraftClient.getInstance().world != null;
-            if (!MinecraftClient.getInstance().world.getBlockState(p).isAir()) {
+            var w = adris.altoclef.headless.BotClientBridge.world();
+            assert w != null;
+            if (!w.getBlockState(p).isAir()) {
                 setDebugState("Clearing inside of portal");
                 currentDestroyTarget = p;
                 return null;
@@ -711,7 +712,7 @@ public class ConstructNetherPortalBucketTask extends Task {
 
     // Ostinato: S308. Climb the column (was 24) so a deep scanned block is judged by its open top.
     private static LavaSurface openLavaSurface(BlockPos start) {
-        var world = MinecraftClient.getInstance().world;
+        var world = adris.altoclef.headless.BotClientBridge.world();
         if (world == null) return LavaSurface.NONE;
         BlockPos top = start;
         for (int i = 0; i < 128 && world.getBlockState(top.up()).getBlock() == Blocks.LAVA; i++) top = top.up();
@@ -797,8 +798,9 @@ public class ConstructNetherPortalBucketTask extends Task {
             alreadyExplored.add(origin);
 
             // Base case: We hit a non-full lava block.
-            assert MinecraftClient.getInstance().world != null;
-            BlockState s = MinecraftClient.getInstance().world.getBlockState(origin);
+            var world = adris.altoclef.headless.BotClientBridge.world();
+            assert world != null;
+            BlockState s = world.getBlockState(origin);
             if (s.getBlock() != Blocks.LAVA) {
                 continue;
             } else {
@@ -841,8 +843,9 @@ public class ConstructNetherPortalBucketTask extends Task {
                     for (int dz = -1; dz < sizeAllocation.getZ() + 1; ++dz) {
                         for (int dy = -1; dy < sizeAllocation.getY(); ++dy) {
                             BlockPos toCheck = lava.add(offset).add(sizeOffset).add(dx,dy,dz);
-                            assert MinecraftClient.getInstance().world != null;
-                            BlockState state = MinecraftClient.getInstance().world.getBlockState(toCheck);
+                            var world = adris.altoclef.headless.BotClientBridge.world();
+                            assert world != null;
+                            BlockState state = world.getBlockState(toCheck);
                             if (state.getBlock() == Blocks.LAVA || state.getBlock() == Blocks.WATER || state.getBlock() == Blocks.BEDROCK) {
                                 found = false;
                                 break moveAlongLine;
@@ -863,7 +866,8 @@ public class ConstructNetherPortalBucketTask extends Task {
                         for (int dz = -LAVA_GAP; dz < sizeAllocation.getZ() + LAVA_GAP; ++dz) {
                             for (int dy = -1; dy <= 1; ++dy) {
                                 BlockPos toCheck = lava.add(offset).add(sizeOffset).add(dx, dy, dz);
-                                if (MinecraftClient.getInstance().world.getBlockState(toCheck).getBlock() == Blocks.LAVA) {
+                                var world = adris.altoclef.headless.BotClientBridge.world();
+                                if (world != null && world.getBlockState(toCheck).getBlock() == Blocks.LAVA) {
                                     found = false;
                                     break lavaGap;
                                 }

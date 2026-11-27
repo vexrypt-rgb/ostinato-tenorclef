@@ -137,7 +137,7 @@ public class AllBlocksTask extends Task {
             return;
         }
         String world = AllBlocks.worldKey();
-        file = AllBlocksProgress.file(MinecraftClient.getInstance().runDirectory.toPath(), world);
+        file = AllBlocksProgress.file(adris.altoclef.headless.BotClientBridge.runDirectory(), world);
         progress = AllBlocksProgress.load(file, world);
         // Crops used to be skipped for want of farmland; the place step tills it now.
         progress.placeSkipped.values().removeIf(r -> r.startsWith("crop:") || r.equals("needs farmland")
@@ -913,6 +913,9 @@ public class AllBlocksTask extends Task {
      * first update it gets, so ours goes out before the screen's own (blank) one when it closes.
      */
     private boolean handleSignScreen() {
+        if (adris.altoclef.headless.BotClientBridge.isHeadless()) {
+            return false;
+        }
         Screen screen = adris.altoclef.multiversion.ScreenVer.current(MinecraftClient.getInstance());
         //#if MC >= 12000
         if (screen instanceof net.minecraft.client.gui.screen.ingame.AbstractSignEditScreen) {

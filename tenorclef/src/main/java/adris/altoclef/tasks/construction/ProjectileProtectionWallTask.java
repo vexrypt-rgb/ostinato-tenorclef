@@ -3,6 +3,7 @@ package adris.altoclef.tasks.construction;
 import java.util.Optional;
 
 import adris.altoclef.AltoClef;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.tasksystem.ITaskRequiresGrounded;
 import adris.altoclef.tasksystem.Task;
 import adris.altoclef.util.helpers.EntityHelper;
@@ -99,7 +100,7 @@ public class ProjectileProtectionWallTask extends Task implements ITaskRequiresG
 	
 	@Override
     public boolean isFinished() {
-        assert MinecraftClient.getInstance().world != null;
+        assert adris.altoclef.headless.BotClientBridge.world() != null;
         
         Optional<Entity> entity = mod.getEntityTracker().getClosestEntity((e) -> {
         	if(e instanceof SkeletonEntity 
@@ -193,7 +194,7 @@ public class ProjectileProtectionWallTask extends Task implements ITaskRequiresG
         mod.getPlayer().input.sneaking = false;
         //#endif
 
-        ActionResult result = mod.getController().interactBlock(mod.getPlayer(),hand, blockHitResult);
+        ActionResult result = BotClientBridge.interactBlock(hand, blockHitResult);
 
         //#if MC >= 260000
         //$$ if (result instanceof net.minecraft.world.InteractionResult.Success success && success.shouldSwing()) {

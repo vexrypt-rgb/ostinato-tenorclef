@@ -137,7 +137,7 @@ public class PvpBenchTask extends Task {
         Debug.logHarness("PVPBENCH SUMMARY wins=" + wins + "/" + rows.size());
         if (Boolean.getBoolean("tenorclef.pathbench.exit")) {
             Debug.logHarness("PVPBENCH exit requested");
-            MinecraftClient.getInstance().scheduleStop();
+            adris.altoclef.headless.BotClientBridge.requestStop();
         }
     }
 

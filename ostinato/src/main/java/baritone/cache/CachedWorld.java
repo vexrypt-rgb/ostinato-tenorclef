@@ -22,6 +22,8 @@ import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.cache.ICachedWorld;
 import baritone.api.cache.IWorldData;
+import baritone.api.headless.HeadlessPolicy;
+import baritone.api.run.RunMode;
 import baritone.api.utils.Helper;
 import com.google.common.cache.CacheBuilder;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
@@ -186,12 +188,14 @@ public final class CachedWorld implements ICachedWorld, Helper {
     }
 
     /**
-     * Delete regions that are too far from the player
+     * Delete regions that are too far from the player (and cap total RAM regions in headless mode).
      */
     private synchronized void prune() {
         if (!Baritone.settings().pruneRegionsFromRAM.value) {
             return;
         }
+        boolean headless = HeadlessPolicy.active(RunMode.current());
+        double maxDist = headless ? Math.max(128, Baritone.settings().headlessPruneDistance.value) : 1024;
         BlockPos pruneCenter = guessPosition();
         for (CachedRegion region : allRegions()) {
             if (region == null) {
@@ -200,9 +204,32 @@ public final class CachedWorld implements ICachedWorld, Helper {
             int distX = ((region.getX() << 9) + 256) - pruneCenter.getX();
             int distZ = ((region.getZ() << 9) + 256) - pruneCenter.getZ();
             double dist = Math.sqrt(distX * distX + distZ * distZ);
-            if (dist > 1024) {
+            if (dist > maxDist) {
                 logDebug("Deleting cached region from ram");
                 cachedRegions.remove(getRegionID(region.getX(), region.getZ()));
+            }
+        }
+        if (headless) {
+            int maxRegions = Math.max(1, Baritone.settings().headlessMaxCachedRegions.value);
+            while (cachedRegions.size() > maxRegions) {
+                CachedRegion furthest = null;
+                double furthestDistSq = -1.0;
+                for (CachedRegion region : cachedRegions.values()) {
+                    if (region == null) {
+                        continue;
+                    }
+                    double dx = ((region.getX() << 9) + 256) - pruneCenter.getX();
+                    double dz = ((region.getZ() << 9) + 256) - pruneCenter.getZ();
+                    double dSq = dx * dx + dz * dz;
+                    if (dSq > furthestDistSq) {
+                        furthestDistSq = dSq;
+                        furthest = region;
+                    }
+                }
+                if (furthest == null) {
+                    break;
+                }
+                cachedRegions.remove(getRegionID(furthest.getX(), furthest.getZ()));
             }
         }
     }

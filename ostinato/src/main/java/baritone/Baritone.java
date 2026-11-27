@@ -21,6 +21,7 @@ import baritone.api.BaritoneAPI;
 import baritone.api.IBaritone;
 import baritone.api.Settings;
 import baritone.api.behavior.IBehavior;
+import baritone.api.context.BotContextScope;
 import baritone.api.event.listener.IEventBus;
 import baritone.api.process.IBaritoneProcess;
 import baritone.api.process.IElytraProcess;
@@ -487,7 +488,9 @@ public class Baritone implements IBaritone, baritone.pathing.IPathingHost {
         return BaritoneAPI.getSettings();
     }
 
+    private static final Executor SCOPED_EXECUTOR = command -> threadPool.execute(BotContextScope.wrapCurrent(command));
+
     public static Executor getExecutor() {
-        return threadPool;
+        return SCOPED_EXECUTOR;
     }
 }

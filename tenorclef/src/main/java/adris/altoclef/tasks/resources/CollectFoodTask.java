@@ -3,6 +3,7 @@ package adris.altoclef.tasks.resources;
 import adris.altoclef.AltoClef;
 import adris.altoclef.Debug;
 import adris.altoclef.TaskCatalogue;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.multiversion.item.ItemVer;
 import adris.altoclef.tasks.CraftInInventoryTask;
 import adris.altoclef.tasks.DoToClosestBlockTask;
@@ -403,7 +404,7 @@ public class CollectFoodTask extends Task {
         if (mod.getEntityTracker().entityFound(ChickenEntity.class)) {
             Optional<Entity> chickens = mod.getEntityTracker().getClosestEntity(ChickenEntity.class);
             if (chickens.isPresent()) {
-                Iterable<Entity> entities = mod.getWorld().getEntities();
+                Iterable<Entity> entities = BotClientBridge.entities();
                 for (Entity entity : entities) {
                     if (entity instanceof HostileEntity || entity instanceof SlimeEntity) {
                         if (chickens.get().hasPassenger(entity)) {

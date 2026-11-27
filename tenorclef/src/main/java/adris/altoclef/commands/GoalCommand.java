@@ -8,6 +8,7 @@ import adris.altoclef.commandsystem.Command;
 import adris.altoclef.commandsystem.args.IntArg;
 import adris.altoclef.commandsystem.args.StringArg;
 import adris.altoclef.commandsystem.exception.CommandException;
+import adris.altoclef.headless.TenorClefBotContext;
 import adris.altoclef.planner.AcquireItemGoal;
 import adris.altoclef.planner.CatalogueInventoryView;
 import adris.altoclef.planner.GoalManager;
@@ -33,12 +34,21 @@ public class GoalCommand extends Command {
     }
 
     public static GoalManager getActiveManager() {
+        TenorClefBotContext tc = TenorClefBotContext.currentOrNull();
+        if (tc != null) {
+            return tc.getTaskState("goalCommand.activeManager", (GoalManager) null);
+        }
         return activeManager;
     }
 
     /** Used by Phase 9 AgentProtocol / AltoClefAgentRuntime. */
     public static void setActiveManager(GoalManager manager) {
-        activeManager = manager;
+        TenorClefBotContext tc = TenorClefBotContext.currentOrNull();
+        if (tc != null) {
+            tc.setTaskState("goalCommand.activeManager", manager);
+        } else {
+            activeManager = manager;
+        }
     }
 
     @Override

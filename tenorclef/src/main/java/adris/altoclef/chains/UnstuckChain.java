@@ -14,12 +14,10 @@ import adris.altoclef.util.time.TimerGame;
 import baritone.api.utils.input.Input;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.EndPortalFrameBlock;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
+import net.minecraft.world.World;
 
 import java.util.LinkedList;
 import java.util.Optional;
@@ -41,8 +39,8 @@ public class UnstuckChain extends SingleTaskChain {
     private void checkStuckInWater() {
         if (posHistory.size() < 100) return;
 
-        ClientWorld world = AltoClef.getInstance().getWorld();
-        ClientPlayerEntity player = AltoClef.getInstance().getPlayer();
+        World world = AltoClef.getInstance().getWorld();
+        PlayerEntity player = AltoClef.getInstance().getPlayer();
 
         // is not in water
         BlockPos steppingPos = player.getSteppingPos();
@@ -77,7 +75,7 @@ public class UnstuckChain extends SingleTaskChain {
         AltoClef mod = AltoClef.getInstance();
 
         PlayerEntity player = mod.getPlayer();
-        ClientWorld world = mod.getWorld();
+        World world = mod.getWorld();
 
         if (PlayerVer.inPowderedSnow(player)) {
             isProbablyStuck = true;
@@ -153,7 +151,9 @@ public class UnstuckChain extends SingleTaskChain {
 
         AltoClef mod = AltoClef.getInstance();
 
-        if (!AltoClef.inGame() || MinecraftClient.getInstance().isPaused() || !mod.getUserTaskChain().isActive())
+        if (!AltoClef.inGame()
+                || (!adris.altoclef.headless.BotClientBridge.isHeadless() && net.minecraft.client.MinecraftClient.getInstance().isPaused())
+                || !mod.getUserTaskChain().isActive())
             return Float.NEGATIVE_INFINITY;
 
         if (StorageHelper.isBlastFurnaceOpen() || StorageHelper.isSmokerOpen() || StorageHelper.isChestOpen() || StorageHelper.isBigCraftingOpen()) {

@@ -2,6 +2,7 @@ package adris.altoclef.util.helpers;
 
 import adris.altoclef.util.baritone.BaritoneQueries;
 import adris.altoclef.AltoClef;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.mixins.ClientConnectionAccessor;
 import adris.altoclef.multiversion.MethodWrapper;
 import adris.altoclef.multiversion.world.WorldVer;
@@ -31,11 +32,9 @@ import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.block.entity.MobSpawnerBlockEntity;
 import net.minecraft.block.enums.BedPart;
 import net.minecraft.block.enums.ChestType;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.network.ClientConnection;
 //#if MC < 260000
 import net.minecraft.util.math.*;
@@ -68,8 +67,7 @@ public interface WorldHelper {
      * Get the number of in-game ticks the game/world has been active for.
      */
     static int getTicks() {
-        ClientConnection con = Objects.requireNonNull(MinecraftClient.getInstance().getNetworkHandler()).getConnection();
-        return ((ClientConnectionAccessor) con).getTicks();
+        return BotClientBridge.tickCount();
     }
 
     static Vec3d toVec3d(BlockPos pos) {
@@ -91,7 +89,7 @@ public interface WorldHelper {
     }
 
     static boolean isSourceBlock(BlockPos pos, boolean onlyAcceptStill) {
-        ClientWorld world = AltoClef.getInstance().getWorld();
+        World world = AltoClef.getInstance().getWorld();
 
         BlockState s = world.getBlockState(pos);
         if (s.getBlock() instanceof FluidBlock) {
@@ -138,7 +136,7 @@ public interface WorldHelper {
     }
 
     static Dimension getCurrentDimension() {
-        ClientWorld world = MinecraftClient.getInstance().world;
+        World world = BotClientBridge.world();
         if (world == null) return Dimension.OVERWORLD;
         if (world.getDimension().ultrawarm()) return Dimension.NETHER;
         if (world.getDimension().natural()) return Dimension.OVERWORLD;
@@ -154,7 +152,7 @@ public interface WorldHelper {
      * better method for blocks that can be walked on should be created instead
      */
     static boolean isSolidBlock(BlockPos pos) {
-        ClientWorld world = AltoClef.getInstance().getWorld();
+        World world = AltoClef.getInstance().getWorld();
 
         return world.getBlockState(pos).isSolidBlock(world, pos);
     }
@@ -163,7 +161,7 @@ public interface WorldHelper {
      * Get the "head" of a block with a bed, if the block is a bed.
      */
     static BlockPos getBedHead(BlockPos posWithBed) {
-        ClientWorld world = AltoClef.getInstance().getWorld();
+        World world = AltoClef.getInstance().getWorld();
 
         BlockState state = world.getBlockState(posWithBed);
         if (state.getBlock() instanceof BedBlock) {
@@ -180,7 +178,7 @@ public interface WorldHelper {
      * Get the "foot" of a block with a bed, if the block is a bed.
      */
     static BlockPos getBedFoot(BlockPos posWithBed) {
-        ClientWorld world = AltoClef.getInstance().getWorld();
+        World world = AltoClef.getInstance().getWorld();
 
         BlockState state = world.getBlockState(posWithBed);
         if (state.getBlock() instanceof BedBlock) {
@@ -219,7 +217,7 @@ public interface WorldHelper {
     }
 
     static int getGroundHeight(int x, int z) {
-        ClientWorld world = AltoClef.getInstance().getWorld();
+        World world = AltoClef.getInstance().getWorld();
 
         for (int y = world.getTopY(); y >= world.getBottomY(); --y) {
             BlockPos check = new BlockPos(x, y, z);
@@ -229,7 +227,7 @@ public interface WorldHelper {
     }
 
     static BlockPos getADesertTemple() {
-        ClientWorld world = AltoClef.getInstance().getWorld();
+        World world = AltoClef.getInstance().getWorld();
 
         List<BlockPos> stonePressurePlates = AltoClef.getInstance().getBlockScanner().getKnownLocations(Blocks.STONE_PRESSURE_PLATE);
         if (!stonePressurePlates.isEmpty()) {
@@ -249,7 +247,7 @@ public interface WorldHelper {
     }
 
     static int getGroundHeight(int x, int z, Block... groundBlocks) {
-        ClientWorld world = AltoClef.getInstance().getWorld();
+        World world = AltoClef.getInstance().getWorld();
 
         Set<Block> possibleBlocks = new HashSet<>(Arrays.asList(groundBlocks));
         for (int y = world.getTopY(); y >= world.getBottomY(); --y) {
@@ -280,7 +278,7 @@ public interface WorldHelper {
     }
 
     static boolean isInNetherPortal() {
-        ClientPlayerEntity player = AltoClef.getInstance().getPlayer();
+        PlayerEntity player = AltoClef.getInstance().getPlayer();
 
         if (player == null)
             return false;
@@ -417,7 +415,7 @@ public interface WorldHelper {
 
     static boolean fallingBlockSafeToBreak(BlockPos pos) {
         baritone.api.utils.IWorldQueries q = BaritoneQueries.get(); // Ostinato: driver API
-        World w = MinecraftClient.getInstance().world;
+        World w = BotClientBridge.world();
         assert w != null;
         while (isFallingBlock(pos)) {
             if (q.avoidBreaking(pos))
@@ -428,13 +426,13 @@ public interface WorldHelper {
     }
 
     static boolean isFallingBlock(BlockPos pos) {
-        World w = MinecraftClient.getInstance().world;
+        World w = BotClientBridge.world();
         assert w != null;
         return w.getBlockState(pos).getBlock() instanceof FallingBlock;
     }
 
     static Entity getSpawnerEntity(BlockPos pos) {
-        ClientWorld world = AltoClef.getInstance().getWorld();
+        World world = AltoClef.getInstance().getWorld();
 
         BlockState state = world.getBlockState(pos);
         if (state.getBlock() instanceof SpawnerBlock) {
@@ -474,7 +472,7 @@ public interface WorldHelper {
     }
 
     static boolean canSleep() {
-        ClientWorld world = MinecraftClient.getInstance().world;
+        World world = BotClientBridge.world();
         if (world != null) {
             // You can sleep during thunderstorms
             if (world.isThundering() && world.isRaining())
@@ -489,7 +487,7 @@ public interface WorldHelper {
     }
 
     static int getTimeOfDay() {
-        ClientWorld world = MinecraftClient.getInstance().world;
+        World world = BotClientBridge.world();
         if (world != null) {
             // You can sleep during thunderstorms
             return (int) (world.getTimeOfDay() % 24000);
@@ -498,7 +496,7 @@ public interface WorldHelper {
     }
 
     static boolean isVulnerable() {
-        ClientPlayerEntity player = AltoClef.getInstance().getPlayer();
+        PlayerEntity player = AltoClef.getInstance().getPlayer();
 
         int armor = player.getArmor();
         float health = player.getHealth();
@@ -516,7 +514,7 @@ public interface WorldHelper {
 
     // Function to check if the player is surrounded on two or more sides
     static boolean isSurrounded(List<LivingEntity> entities) {
-        ClientPlayerEntity player = AltoClef.getInstance().getPlayer();
+        PlayerEntity player = AltoClef.getInstance().getPlayer();
 
         BlockPos playerPos = player.getBlockPos();
 

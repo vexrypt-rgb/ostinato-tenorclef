@@ -39,6 +39,23 @@ public class PickupDroppedItemTask extends AbstractDoToClosestObjectTask<ItemEnt
     private static final Task getPickaxeFirstTask = new SatisfyMiningRequirementTask(MiningRequirement.STONE);
     // Not clean practice, but it helps keep things self contained I think.
     private static boolean isGettingPickaxeFirstFlag = false;
+
+    private static boolean getGettingPickaxeFirstFlag() {
+        adris.altoclef.headless.TenorClefBotContext tc = adris.altoclef.headless.TenorClefBotContext.currentOrNull();
+        if (tc != null) {
+            return tc.getTaskState("pickup.gettingPickaxeFirst", Boolean.FALSE);
+        }
+        return isGettingPickaxeFirstFlag;
+    }
+
+    private static void setGettingPickaxeFirstFlag(boolean value) {
+        adris.altoclef.headless.TenorClefBotContext tc = adris.altoclef.headless.TenorClefBotContext.currentOrNull();
+        if (tc != null) {
+            tc.setTaskState("pickup.gettingPickaxeFirst", value);
+        } else {
+            isGettingPickaxeFirstFlag = value;
+        }
+    }
     private final TimeoutWanderTask wanderTask = new TimeoutWanderTask(5, true);
     private final MovementProgressChecker stuckCheck = new MovementProgressChecker();
     private final MovementProgressChecker progressChecker = new MovementProgressChecker();
@@ -99,7 +116,7 @@ public class PickupDroppedItemTask extends AbstractDoToClosestObjectTask<ItemEnt
     }
 
     public static boolean isIsGettingPickaxeFirst(AltoClef mod) {
-        return isGettingPickaxeFirstFlag && mod.getModSettings().shouldCollectPickaxeFirst();
+        return getGettingPickaxeFirstFlag() && mod.getModSettings().shouldCollectPickaxeFirst();
     }
 
     private boolean isAnnoying(AltoClef mod, BlockPos pos) {
@@ -190,7 +207,7 @@ public class PickupDroppedItemTask extends AbstractDoToClosestObjectTask<ItemEnt
             return getPickaxeFirstTask;
         } else {
             if (StorageHelper.miningRequirementMetInventory(MiningRequirement.STONE)) {
-                isGettingPickaxeFirstFlag = false;
+                setGettingPickaxeFirstFlag(false);
             }
             _collectingPickaxeForThisResource = false;
         }
@@ -199,10 +216,10 @@ public class PickupDroppedItemTask extends AbstractDoToClosestObjectTask<ItemEnt
             mod.getClientBaritone().getPathingBehavior().forceCancel();
             if (_currentDrop != null && !_currentDrop.getStack().isEmpty()) {
                 // We might want to get a pickaxe first.
-                if (!isGettingPickaxeFirstFlag && mod.getModSettings().shouldCollectPickaxeFirst() && !StorageHelper.miningRequirementMetInventory(MiningRequirement.STONE)) {
+                if (!getGettingPickaxeFirstFlag() && mod.getModSettings().shouldCollectPickaxeFirst() && !StorageHelper.miningRequirementMetInventory(MiningRequirement.STONE)) {
                     Debug.logMessage("Failed to pick up drop, will try to collect a stone pickaxe first and try again!");
                     _collectingPickaxeForThisResource = true;
-                    isGettingPickaxeFirstFlag = true;
+                    setGettingPickaxeFirstFlag(true);
                     return getPickaxeFirstTask;
                 }
                 Debug.logMessage(StlHelper.toString(_blacklist, element -> element == null ? "(null)" : element.getStack().getItem().getTranslationKey()));
@@ -271,10 +288,10 @@ public class PickupDroppedItemTask extends AbstractDoToClosestObjectTask<ItemEnt
         if (!itemEntity.equals(_currentDrop)) {
             _currentDrop = itemEntity;
             progressChecker.reset();
-            if (isGettingPickaxeFirstFlag && _collectingPickaxeForThisResource) {
+            if (getGettingPickaxeFirstFlag() && _collectingPickaxeForThisResource) {
                 Debug.logMessage("New goal, no longer collecting a pickaxe.");
                 _collectingPickaxeForThisResource = false;
-                isGettingPickaxeFirstFlag = false;
+                setGettingPickaxeFirstFlag(false);
             }
         }
         // Ensure our inventory is free if we're close

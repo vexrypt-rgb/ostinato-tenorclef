@@ -4,6 +4,7 @@ import adris.altoclef.multiversion.ScreenVer;
 
 import adris.altoclef.AltoClef;
 import adris.altoclef.Debug;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.tasksystem.TaskChain;
 import adris.altoclef.tasksystem.TaskRunner;
 import adris.altoclef.util.helpers.ItemHelper;
@@ -197,7 +198,7 @@ public class PlayerInteractionFixChain extends TaskChain {
     }
 
     private boolean shouldCloseOpenScreen() {
-        if (!AltoClef.getInstance().getModSettings().shouldCloseScreenWhenLookingOrMining())
+        if (BotClientBridge.isHeadless() || !AltoClef.getInstance().getModSettings().shouldCloseScreenWhenLookingOrMining())
             return false;
 
         // Only check look if we've had the same screen open for a while

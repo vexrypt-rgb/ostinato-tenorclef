@@ -2,6 +2,7 @@ package adris.altoclef.control;
 
 import adris.altoclef.AltoClef;
 import adris.altoclef.Debug;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.util.ItemTarget;
 import adris.altoclef.util.helpers.ItemHelper;
 import adris.altoclef.util.helpers.StorageHelper;
@@ -9,8 +10,7 @@ import adris.altoclef.util.slots.CursorSlot;
 import adris.altoclef.util.slots.PlayerSlot;
 import adris.altoclef.util.slots.Slot;
 import adris.altoclef.util.time.TimerGame;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.entity.player.PlayerEntity;
 //#if MC < 260000
 import net.minecraft.item.*;
 //#else
@@ -83,7 +83,7 @@ public class SlotHandler {
     }
 
     private void clickWindowSlot(int windowSlot, int mouseButton, SlotActionType type) {
-        ClientPlayerEntity player = MinecraftClient.getInstance().player;
+        PlayerEntity player = BotClientBridge.player();
         if (player == null) {
             return;
         }
@@ -105,7 +105,7 @@ public class SlotHandler {
         }
 
         try {
-            mod.getController().clickSlot(syncId, windowSlot, mouseButton, type, player);
+            BotClientBridge.clickSlot(syncId, windowSlot, mouseButton, type, player);
         } catch (Exception e) {
             Debug.logWarning("Slot Click Error (ignored)");
             e.printStackTrace();
@@ -132,7 +132,7 @@ public class SlotHandler {
         // Already equipped
         if (StorageHelper.getItemStackInSlot(PlayerSlot.getEquipSlot()).getItem() == toEquip) return true;
 
-        ClientPlayerEntity player = mod.getPlayer();
+        PlayerEntity player = mod.getPlayer();
         if (player == null) return false;
 
         // Fast path: item already in hotbar — just select that slot.
@@ -293,9 +293,10 @@ public class SlotHandler {
     }
 
     public void refreshInventory() {
-        if (MinecraftClient.getInstance().player == null)
+        PlayerEntity p = BotClientBridge.player();
+        if (p == null)
             return;
-        for (int i = 0; i < MinecraftClient.getInstance().player.getInventory().main.size(); ++i) {
+        for (int i = 0; i < p.getInventory().main.size(); ++i) {
             Slot slot = Slot.getFromCurrentScreenInventory(i);
             clickSlotForce(slot, 0, SlotActionType.PICKUP);
             clickSlotForce(slot, 0, SlotActionType.PICKUP);

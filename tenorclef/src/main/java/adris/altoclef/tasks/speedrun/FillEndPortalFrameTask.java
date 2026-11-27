@@ -71,9 +71,8 @@ public class FillEndPortalFrameTask extends Task {
             if (mod.getWorld() != null && mod.getControllerExtras() != null) {
                 // Fallback: many forks expose interact via player or input
             }
-            // Standard client interact
-            net.minecraft.client.MinecraftClient.getInstance().interactionManager.interactBlock(
-                    mod.getPlayer(),
+            // Standard interact
+            adris.altoclef.headless.BotClientBridge.interactBlock(
                     Hand.MAIN_HAND,
                     bhr
             );

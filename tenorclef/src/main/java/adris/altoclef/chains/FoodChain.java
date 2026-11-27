@@ -8,13 +8,13 @@ import adris.altoclef.tasks.resources.CollectFoodTask;
 import adris.altoclef.tasks.speedrun.DragonBreathTracker;
 import adris.altoclef.tasksystem.TaskRunner;
 import adris.altoclef.util.helpers.*;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.util.slots.PlayerSlot;
 import baritone.api.utils.input.Input;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.entity.mob.HostileEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -27,7 +27,7 @@ import java.util.Optional;
 @SuppressWarnings("OptionalUsedAsFieldOrParameterType")
 public class FoodChain extends SingleTaskChain {
     private static FoodChainConfig config;
-    private static boolean hasFood;
+    private boolean hasFood;
 
     static {
         ConfigHelper.loadConfig("configs/food_chain_settings.json", FoodChainConfig::new, FoodChainConfig.class, newConfig -> config = newConfig);
@@ -217,7 +217,7 @@ public class FoodChain extends SingleTaskChain {
         }
 
 
-        ClientPlayerEntity player = MinecraftClient.getInstance().player;
+        PlayerEntity player = BotClientBridge.player();
         assert player != null;
         int foodLevel = player.getHungerManager().getFoodLevel();
         float health = player.getHealth();
@@ -261,7 +261,7 @@ public class FoodChain extends SingleTaskChain {
         Item bestFood = null;
         double bestFoodScore = Double.NEGATIVE_INFINITY;
         int foodTotal = 0;
-        ClientPlayerEntity player = mod.getPlayer();
+        PlayerEntity player = mod.getPlayer();
         float health = player != null ? player.getHealth() : 20;
         //float toHeal = player != null? 20 - player.getHealth() : 0;
         float hunger = player != null ? player.getHungerManager().getFoodLevel() : 20;

@@ -1,9 +1,14 @@
 package adris.altoclef.control;
 
+import adris.altoclef.headless.BotClientBridge;
+import baritone.api.BaritoneAPI;
+import baritone.api.IBaritone;
+import baritone.api.utils.Rotation;
 import baritone.api.utils.input.Input;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.GameOptions;
 import net.minecraft.client.option.KeyBinding;
+import net.minecraft.entity.player.PlayerEntity;
 
 import java.util.ArrayDeque;
 import java.util.HashSet;
@@ -46,14 +51,22 @@ public class InputControls {
         if (_waitForRelease.contains(input)) {
             return;
         }
-        inputToKeyBinding(input).setPressed(true);
-        // Also necessary to ensure the game registers the input as "pressed"
-        KeyBinding.onKeyPressed(inputToKeyBinding(input).getDefaultKey());
+        if (BotClientBridge.isHeadless()) {
+            BotClientBridge.setInputOverride(input, true);
+        } else {
+            inputToKeyBinding(input).setPressed(true);
+            // Also necessary to ensure the game registers the input as "pressed"
+            KeyBinding.onKeyPressed(inputToKeyBinding(input).getDefaultKey());
+        }
         toUnpress.add(input);
         _waitForRelease.add(input);
     }
 
     public void hold(Input input) {
+        if (BotClientBridge.isHeadless()) {
+            BotClientBridge.setInputOverride(input, true);
+            return;
+        }
         if (!inputToKeyBinding(input).isPressed()) {
             KeyBinding.onKeyPressed(inputToKeyBinding(input).getDefaultKey());
         }
@@ -61,14 +74,28 @@ public class InputControls {
     }
 
     public void release(Input input) {
+        if (BotClientBridge.isHeadless()) {
+            BotClientBridge.setInputOverride(input, false);
+            return;
+        }
         inputToKeyBinding(input).setPressed(false);
     }
 
     public boolean isHeldDown(Input input) {
+        if (BotClientBridge.isHeadless()) {
+            return BotClientBridge.isInputPressed(input);
+        }
         return inputToKeyBinding(input).isPressed();
     }
 
     public void forceLook(float yaw, float pitch) {
+        if (BotClientBridge.isHeadless()) {
+            IBaritone b = BaritoneAPI.getProvider().getPrimaryBaritone();
+            if (b != null) {
+                b.getLookBehavior().updateTarget(new Rotation(yaw, pitch), false);
+            }
+            return;
+        }
         if (MinecraftClient.getInstance().player != null) {
             MinecraftClient.getInstance().player.setYaw(yaw);
             MinecraftClient.getInstance().player.setPitch(pitch);
@@ -78,7 +105,12 @@ public class InputControls {
     // Before the user calls input commands for the frame
     public void onTickPre() {
         while (!toUnpress.isEmpty()) {
-            inputToKeyBinding(toUnpress.remove()).setPressed(false);
+            Input input = toUnpress.remove();
+            if (BotClientBridge.isHeadless()) {
+                BotClientBridge.setInputOverride(input, false);
+            } else {
+                inputToKeyBinding(input).setPressed(false);
+            }
         }
     }
 

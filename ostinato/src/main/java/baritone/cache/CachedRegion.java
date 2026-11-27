@@ -49,9 +49,9 @@ public final class CachedRegion implements ICachedRegion {
     private static final int CACHED_REGION_MAGIC = 456022911;
 
     /**
-     * All of the chunks in this region: A 32x32 array of them.
+     * All of the chunks in this region: A 32x32 grid with lazily allocated rows.
      */
-    private final CachedChunk[][] chunks = new CachedChunk[32][32];
+    private final CachedChunk[][] chunks = new CachedChunk[32][];
 
     /**
      * The region x coordinate
@@ -83,7 +83,8 @@ public final class CachedRegion implements ICachedRegion {
     @Override
     public final BlockState getBlock(int x, int y, int z) {
         int adjY = y - dimension.minY();
-        CachedChunk chunk = chunks[x >> 4][z >> 4];
+        CachedChunk[] row = chunks[x >> 4];
+        CachedChunk chunk = row == null ? null : row[z >> 4];
         if (chunk != null) {
             return chunk.getBlock(x & 15, adjY, z & 15, dimension, dimensionId);
         }
@@ -92,7 +93,8 @@ public final class CachedRegion implements ICachedRegion {
 
     /** Ostinato: Phase 3 terrain feed. The cached chunk at region-local chunk (x, z), 0 to 31, or null. Read only. */
     public final CachedChunk chunkAt(int chunkX, int chunkZ) {
-        return chunks[chunkX][chunkZ];
+        CachedChunk[] row = chunks[chunkX];
+        return row == null ? null : row[chunkZ];
     }
 
     /** Ostinato: Phase 3 terrain feed. The dimension floor that cached heights are measured from. */
@@ -102,17 +104,22 @@ public final class CachedRegion implements ICachedRegion {
 
     @Override
     public final boolean isCached(int x, int z) {
-        return chunks[x >> 4][z >> 4] != null;
+        CachedChunk[] row = chunks[x >> 4];
+        return row != null && row[z >> 4] != null;
     }
 
     public final ArrayList<BlockPos> getLocationsOf(String block) {
         ArrayList<BlockPos> res = new ArrayList<>();
         for (int chunkX = 0; chunkX < 32; chunkX++) {
+            CachedChunk[] row = chunks[chunkX];
+            if (row == null) {
+                continue;
+            }
             for (int chunkZ = 0; chunkZ < 32; chunkZ++) {
-                if (chunks[chunkX][chunkZ] == null) {
+                if (row[chunkZ] == null) {
                     continue;
                 }
-                ArrayList<BlockPos> locs = chunks[chunkX][chunkZ].getAbsoluteBlocks(block);
+                ArrayList<BlockPos> locs = row[chunkZ].getAbsoluteBlocks(block);
                 if (locs != null) {
                     res.addAll(locs);
                 }
@@ -122,6 +129,9 @@ public final class CachedRegion implements ICachedRegion {
     }
 
     public final synchronized void updateCachedChunk(int chunkX, int chunkZ, CachedChunk chunk) {
+        if (this.chunks[chunkX] == null) {
+            this.chunks[chunkX] = new CachedChunk[32];
+        }
         this.chunks[chunkX][chunkZ] = chunk;
         hasUnsavedChanges = true;
     }
@@ -150,8 +160,9 @@ public final class CachedRegion implements ICachedRegion {
             ) {
                 out.writeInt(CACHED_REGION_MAGIC);
                 for (int x = 0; x < 32; x++) {
+                    CachedChunk[] row = this.chunks[x];
                     for (int z = 0; z < 32; z++) {
-                        CachedChunk chunk = this.chunks[x][z];
+                        CachedChunk chunk = row == null ? null : row[z];
                         if (chunk == null) {
                             out.write(CHUNK_NOT_PRESENT);
                         } else {
@@ -164,18 +175,22 @@ public final class CachedRegion implements ICachedRegion {
                     }
                 }
                 for (int x = 0; x < 32; x++) {
+                    CachedChunk[] row = chunks[x];
+                    if (row == null) continue;
                     for (int z = 0; z < 32; z++) {
-                        if (chunks[x][z] != null) {
+                        if (row[z] != null) {
                             for (int i = 0; i < 256; i++) {
-                                out.writeUTF(BlockUtils.blockToString(chunks[x][z].getOverview()[i].getBlock()));
+                                out.writeUTF(BlockUtils.blockToString(row[z].getOverview()[i].getBlock()));
                             }
                         }
                     }
                 }
                 for (int x = 0; x < 32; x++) {
+                    CachedChunk[] row = chunks[x];
+                    if (row == null) continue;
                     for (int z = 0; z < 32; z++) {
-                        if (chunks[x][z] != null) {
-                            Map<String, List<BlockPos>> locs = chunks[x][z].getRelativeBlocks();
+                        if (row[z] != null) {
+                            Map<String, List<BlockPos>> locs = row[z].getRelativeBlocks();
                             out.writeShort(locs.entrySet().size());
                             for (Map.Entry<String, List<BlockPos>> entry : locs.entrySet()) {
                                 out.writeUTF(entry.getKey());
@@ -189,9 +204,11 @@ public final class CachedRegion implements ICachedRegion {
                     }
                 }
                 for (int x = 0; x < 32; x++) {
+                    CachedChunk[] row = chunks[x];
+                    if (row == null) continue;
                     for (int z = 0; z < 32; z++) {
-                        if (chunks[x][z] != null) {
-                            out.writeLong(chunks[x][z].cacheTimestamp);
+                        if (row[z] != null) {
+                            out.writeLong(row[z].cacheTimestamp);
                         }
                     }
                 }
@@ -308,6 +325,9 @@ public final class CachedRegion implements ICachedRegion {
                             int regionZ = this.z;
                             int chunkX = x + 32 * regionX;
                             int chunkZ = z + 32 * regionZ;
+                            if (this.chunks[x] == null) {
+                                this.chunks[x] = new CachedChunk[32];
+                            }
                             this.chunks[x][z] = new CachedChunk(chunkX, chunkZ, dimension.height(), bitSets[x][z], overview[x][z], location[x][z], cacheTimestamp[x][z]);
                         }
                     }
@@ -330,11 +350,22 @@ public final class CachedRegion implements ICachedRegion {
         long now = System.currentTimeMillis();
         long oldestAcceptableAge = now - expiry * 1000L;
         for (int x = 0; x < 32; x++) {
+            CachedChunk[] row = this.chunks[x];
+            if (row == null) {
+                continue;
+            }
+            boolean any = false;
             for (int z = 0; z < 32; z++) {
-                if (this.chunks[x][z] != null && this.chunks[x][z].cacheTimestamp < oldestAcceptableAge) {
-                    System.out.println("Removing chunk " + (x + 32 * this.x) + "," + (z + 32 * this.z) + " because it was cached " + (now - this.chunks[x][z].cacheTimestamp) / 1000L + " seconds ago, and max age is " + expiry);
-                    this.chunks[x][z] = null;
+                if (row[z] != null && row[z].cacheTimestamp < oldestAcceptableAge) {
+                    System.out.println("Removing chunk " + (x + 32 * this.x) + "," + (z + 32 * this.z) + " because it was cached " + (now - row[z].cacheTimestamp) / 1000L + " seconds ago, and max age is " + expiry);
+                    row[z] = null;
                 }
+                if (row[z] != null) {
+                    any = true;
+                }
+            }
+            if (!any) {
+                this.chunks[x] = null;
             }
         }
     }
@@ -342,12 +373,16 @@ public final class CachedRegion implements ICachedRegion {
     public synchronized final CachedChunk mostRecentlyModified() {
         CachedChunk recent = null;
         for (int x = 0; x < 32; x++) {
+            CachedChunk[] row = this.chunks[x];
+            if (row == null) {
+                continue;
+            }
             for (int z = 0; z < 32; z++) {
-                if (this.chunks[x][z] == null) {
+                if (row[z] == null) {
                     continue;
                 }
-                if (recent == null || this.chunks[x][z].cacheTimestamp > recent.cacheTimestamp) {
-                    recent = this.chunks[x][z];
+                if (recent == null || row[z].cacheTimestamp > recent.cacheTimestamp) {
+                    recent = row[z];
                 }
             }
         }

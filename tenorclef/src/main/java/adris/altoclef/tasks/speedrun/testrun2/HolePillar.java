@@ -902,13 +902,20 @@ public final class HolePillar {
         }
         holding = true;
         lookDown();
-        MinecraftClient mc = MinecraftClient.getInstance();
-        try { mc.options.jumpKey.setPressed(true); } catch (Throwable ignored) {}
+        if (adris.altoclef.headless.BotClientBridge.isHeadless()) {
+            adris.altoclef.headless.BotClientBridge.setInputOverride(baritone.api.utils.input.Input.JUMP, true);
+        } else {
+            try { MinecraftClient.getInstance().options.jumpKey.setPressed(true); } catch (Throwable ignored) {}
+        }
         step++;
         // place on the even ticks while airborne so the block goes under the player
         boolean air = true;
         try { air = !mod.getPlayer().isOnGround(); } catch (Throwable ignored) {}
-        try { mc.options.useKey.setPressed(air && (step % 2 == 0)); } catch (Throwable ignored) {}
+        if (adris.altoclef.headless.BotClientBridge.isHeadless()) {
+            adris.altoclef.headless.BotClientBridge.setInputOverride(baritone.api.utils.input.Input.CLICK_RIGHT, air && (step % 2 == 0));
+        } else {
+            try { MinecraftClient.getInstance().options.useKey.setPressed(air && (step % 2 == 0)); } catch (Throwable ignored) {}
+        }
         if (step % 20 == 1) {
             T2Log.force("S130", "tick y=" + y + " slot=" + slot + " air=" + air + " " + snap(mod));
         }
@@ -948,11 +955,19 @@ public final class HolePillar {
 
     private static void lookDown() {
         try {
-            MinecraftClient.getInstance().player.setPitch(90f);
+            var p = adris.altoclef.headless.BotClientBridge.player();
+            if (p != null) {
+                p.setPitch(90f);
+            }
         } catch (Throwable ignored) {}
     }
 
     private static void release() {
+        if (adris.altoclef.headless.BotClientBridge.isHeadless()) {
+            adris.altoclef.headless.BotClientBridge.setInputOverride(baritone.api.utils.input.Input.JUMP, false);
+            adris.altoclef.headless.BotClientBridge.setInputOverride(baritone.api.utils.input.Input.CLICK_RIGHT, false);
+            return;
+        }
         try {
             var opt = MinecraftClient.getInstance().options;
             opt.jumpKey.setPressed(false);

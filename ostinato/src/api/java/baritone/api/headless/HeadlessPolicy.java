@@ -4,6 +4,8 @@
  */
 package baritone.api.headless;
 
+import baritone.api.BaritoneAPI;
+import baritone.api.legit.LegitMode;
 import baritone.api.run.RunMode;
 
 /**
@@ -166,5 +168,44 @@ public final class HeadlessPolicy {
     /** Report sound volume 0. Pairs with {@link #skipSoundDeviceOpen}. */
     public static boolean silenceSound(RunMode.Value mode) {
         return active(mode);
+    }
+
+    public static final String CHUNK_RADIUS_PROPERTY = "ostinato.headless.chunkRadius";
+    public static final String KEEP_LIGHT_PROPERTY = "ostinato.headless.keepLight";
+    public static final int DEFAULT_HEADLESS_CHUNK_RADIUS = 6;
+    public static final int MIN_HEADLESS_CHUNK_RADIUS = 3;
+
+    /** Cap chunk cache radius in headless mode; normal and hidden keep the server/caller radius. */
+    public static int chunkRadiusCap(RunMode.Value mode, int serverRadius) {
+        if (!active(mode) || serverRadius <= 0) {
+            return serverRadius;
+        }
+        return Math.min(serverRadius, configuredChunkRadiusCap());
+    }
+
+    public static int configuredChunkRadiusCap() {
+        String raw = System.getProperty(CHUNK_RADIUS_PROPERTY);
+        int cap = BaritoneAPI.getSettings().headlessChunkRadiusCap.value;
+        if (raw != null && !raw.isBlank()) {
+            try {
+                cap = Integer.parseInt(raw.trim());
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return Math.max(MIN_HEADLESS_CHUNK_RADIUS, cap);
+    }
+
+    /**
+     * Skip client lighting updates in headless mode unless keepLight is requested or legitMode is forced ON
+     * (SeenOnly checks light >= 1 when legitMode is ON).
+     */
+    public static boolean skipClientLightUpdates(RunMode.Value mode) {
+        if (!active(mode)) {
+            return false;
+        }
+        if (Boolean.getBoolean(KEEP_LIGHT_PROPERTY)) {
+            return false;
+        }
+        return BaritoneAPI.getSettings().legitMode.value != LegitMode.Value.ON;
     }
 }

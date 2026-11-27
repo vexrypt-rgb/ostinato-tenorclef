@@ -16,6 +16,7 @@ import adris.altoclef.util.slots.PlayerSlot;
 import adris.altoclef.util.slots.Slot;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.screen.slot.SlotActionType;
 
@@ -169,6 +170,10 @@ public class CraftGenericWithRecipeBooksTask extends Task implements ITaskUsesCr
         //$$     // Ostinato: run102. Place one set per craft, never the max: max put all 16 logs (or every plank) in the grid,
         //$$     // the output was taken once or twice to reach the target and the rest stayed in the grid, out of the counted
         //$$     // inventory. Each barrel craft lost ~60 planks of wood (66 -> 3 in rooms 1 and 2), so every room re-chopped.
+        //$$     if (adris.altoclef.headless.BotClientBridge.isHeadless()) {
+        //$$         if (manual == null) manual = new CraftGenericManuallyTask(target);
+        //$$         return manual;
+        //$$     }
         //$$     mod.getController().handlePlaceRecipe(player.containerMenu.containerId, id, false);
         //$$     mod.getSlotHandler().registerSlotAction();
         //$$ }
@@ -179,7 +184,7 @@ public class CraftGenericWithRecipeBooksTask extends Task implements ITaskUsesCr
         Optional<WrappedRecipeEntry> recipeToSend = JankCraftingRecipeMapping.getMinecraftMappedRecipe(target.getRecipe(), target.getOutputItem());
         if (recipeToSend.isPresent()) {
             if (mod.getSlotHandler().canDoSlotAction()) {
-                ClientPlayerEntity player = MinecraftClient.getInstance().player;
+                net.minecraft.entity.player.PlayerEntity player = adris.altoclef.headless.BotClientBridge.player();
                 assert player != null;
                 // Click the recipe to send it
                 mod.getController().clickRecipe(player.currentScreenHandler.syncId, recipeToSend.get().asRecipe(), true);

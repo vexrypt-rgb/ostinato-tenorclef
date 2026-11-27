@@ -73,20 +73,45 @@ import net.minecraft.network.protocol.login.ClientboundLoginDisconnectPacket;
 import net.minecraft.network.protocol.login.ClientboundLoginFinishedPacket;
 import net.minecraft.network.protocol.login.ServerboundHelloPacket;
 import net.minecraft.network.protocol.login.ServerboundLoginAcknowledgedPacket;
+import baritone.altoclef.AltoClefSettings;
+import baritone.api.IBaritone;
+import baritone.api.Settings;
+import baritone.api.context.BotContext;
+import baritone.api.context.BotContextScope;
+import baritone.api.headless.IHeadlessAgent;
+import baritone.api.headless.IHeadlessHost;
+import baritone.api.utils.IPlayerContext;
+import baritone.api.utils.IPlayerController;
+import baritone.api.utils.RayTraceUtils;
+import baritone.api.utils.Rotation;
 import com.mojang.authlib.GameProfile;
+import net.minecraft.network.chat.LastSeenMessages;
+import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
+import net.minecraft.network.protocol.game.ServerboundChatPacket;
 import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ParticleStatus;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.entity.player.Input;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.inventory.ContainerInput;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.Level;
 import net.minecraft.util.Mth;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.player.ChatVisiblity;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
+import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -98,7 +123,7 @@ import java.util.function.Consumer;
  * serverbound packets go through {@link HeadlessTransport}, which makes the whole sequence
  * observable in a JUnit fake-server test.
  */
-public final class HeadlessBot implements HeadlessPacketListeners.Handler {
+public final class HeadlessBot implements HeadlessPacketListeners.Handler, IHeadlessHost {
 
     public enum State { NEW, LOGIN, CONFIGURATION, PLAY, DISCONNECTED }
 
@@ -124,6 +149,16 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
     private final int port;
     private final String username;
     private final UUID uuid;
+    private final String accessToken;
+    private final BotContext botContext;
+    private volatile IHeadlessAgent agent;
+    private volatile boolean agentAttached;
+    private volatile Consumer<String> chatReceiveListener;
+    private volatile Consumer<net.minecraft.network.protocol.Packet<?>> outboundObserver;
+    private volatile boolean stopRequested;
+    private volatile float lastHealth = 20.0f;
+    private volatile int lastFood = 20;
+    private volatile float lastSaturation = 5.0f;
     // Ostinato: the PLAY codec needs datapack registries that Bootstrap does not create. The
     // built-in access is a placeholder until configuration has delivered the real registry data.
     private volatile RegistryAccess.Frozen registryAccess;
@@ -194,11 +229,27 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
 
     public HeadlessBot(HeadlessTransport transport, String host, int port, String username,
                        UUID uuid, RegistryAccess.Frozen registryAccess) {
+        this(transport, host, port, username, uuid, registryAccess,
+                new BotContext(username, Path.of("headless-bots", username), true,
+                        baritone.api.BaritoneAPI.getSettings(), new AltoClefSettings()));
+    }
+
+    public HeadlessBot(HeadlessTransport transport, String host, int port, String username,
+                       UUID uuid, RegistryAccess.Frozen registryAccess, BotContext botContext) {
+        this(transport, host, port, username, uuid, registryAccess, botContext, "");
+    }
+
+    public HeadlessBot(HeadlessTransport transport, String host, int port, String username,
+                       UUID uuid, RegistryAccess.Frozen registryAccess, BotContext botContext,
+                       String accessToken) {
         this.transport = transport;
+        this.accessToken = accessToken == null ? "" : accessToken.trim();
         this.host = host;
         this.port = port;
         this.username = username;
         this.uuid = uuid;
+        this.botContext = botContext;
+        this.botContext.setHeadlessHost(this);
         this.registryAccess = registryAccess;
         this.chunks = new HeadlessChunkStore();
         this.loginListener = HeadlessPacketListeners.create(
@@ -208,6 +259,19 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
         this.gameListener = HeadlessPacketListeners.create(
                 ClientGamePacketListener.class, ConnectionProtocol.PLAY, this);
         inventory.attach(this);
+    }
+
+    public BotContext botContext() {
+        return botContext;
+    }
+
+    public void attachAgent(IHeadlessAgent agent) {
+        this.agent = agent;
+        this.agentAttached = false;
+    }
+
+    public boolean isStopRequested() {
+        return stopRequested;
     }
 
     // ------------------------------------------------------------------ startup
@@ -223,6 +287,10 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
     /** Package-private so the movement driver sends through the same observable path. */
     void send(net.minecraft.network.protocol.Packet<?> packet) {
         packetsOut.incrementAndGet();
+        Consumer<net.minecraft.network.protocol.Packet<?>> observer = outboundObserver;
+        if (observer != null) {
+            observer.accept(packet);
+        }
         if (baritone.utils.PacketLog.ON) {
             baritone.utils.PacketLog.outbound(packet);
         }
@@ -252,7 +320,7 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
             baritone.utils.PacketLog.inbound((net.minecraft.network.protocol.Packet<?>) packet);
         }
         try {
-            dispatch(packet);
+            BotContextScope.runWith(botContext, () -> dispatch(packet));
         } catch (RuntimeException e) {
             event("ERROR handling " + packet.getClass().getName() + ": " + e);
             e.printStackTrace(System.err);
@@ -311,6 +379,14 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
         if (p instanceof ClientboundSystemChatPacket) {
             String text = ((ClientboundSystemChatPacket) p).content().getString();
             event("chat: " + text);
+            Consumer<String> chatListener = chatReceiveListener;
+            if (chatListener != null) {
+                chatListener.accept(text);
+            }
+            IHeadlessAgent activeAgent = agent;
+            if (activeAgent != null) {
+                activeAgent.onChat("", text);
+            }
             // Ostinato: owner whispers and server-console system chat. Public player chat is a different packet.
             String command = HeadlessCommands.commandFromChat(text);
             if (command != null) {
@@ -318,6 +394,9 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
                 Consumer<String> sink = chatCommands;
                 if (sink != null) {
                     sink.accept(command);
+                }
+                if (activeAgent != null) {
+                    activeAgent.onCommand(command);
                 }
             }
             return;
@@ -336,8 +415,8 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
             enterConfiguration(false);
             return;
         }
-        if (p instanceof ClientboundHelloPacket) {
-            onDisconnect("server requested encryption (online mode) - out of scope for this bot");
+        if (p instanceof ClientboundHelloPacket hello) {
+            handleHelloPacket(hello);
             return;
         }
         if (p instanceof ClientboundLoginDisconnectPacket) {
@@ -384,9 +463,10 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
             }
             spawnKnown = false;
             loadedSent = false;
-            chunkRadius = login.chunkRadius();
+            chunkRadius = chunks.effectiveRetentionRadius(login.chunkRadius());
             event("play login id=" + playerId + " dim=" + dimension
-                    + " view=" + login.chunkRadius() + " sim=" + login.simulationDistance()
+                    + " view=" + login.chunkRadius() + " retainedRadius=" + chunkRadius
+                    + " sim=" + login.simulationDistance()
                     + " secureChat=" + login.enforcesSecureChat());
             return;
         }
@@ -447,7 +527,7 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
             return;
         }
         if (p instanceof ClientboundSetChunkCacheRadiusPacket) {
-            chunkRadius = ((ClientboundSetChunkCacheRadiusPacket) p).getRadius();
+            chunkRadius = chunks.effectiveRetentionRadius(((ClientboundSetChunkCacheRadiusPacket) p).getRadius());
             int dropped = chunks.retainAround(chunkCenterX, chunkCenterZ, chunkRadius);
             event("chunk radius " + chunkRadius
                     + (dropped > 0 ? " dropped=" + dropped + " remain=" + chunks.chunkCount() : ""));
@@ -544,11 +624,14 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
             return;
         }
         if (p instanceof ClientboundSetHealthPacket health) {
+            lastHealth = health.getHealth();
+            lastFood = health.getFood();
+            lastSaturation = health.getSaturation();
             HeadlessPlayer body = inventory.player();
             if (body != null) {
-                body.setHealth(health.getHealth());
-                body.getFoodData().setFoodLevel(health.getFood());
-                body.getFoodData().setSaturation(health.getSaturation());
+                body.setHealth(lastHealth);
+                body.getFoodData().setFoodLevel(lastFood);
+                body.getFoodData().setSaturation(lastSaturation);
             }
             return;
         }
@@ -590,7 +673,7 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
         // A real client advertises its render distance; 12 is vanilla's options default.
         // Paper/Moonrise will otherwise forget columns down to a 2-chunk window as we
         // walk, and a bot with no chunks rubberbands and flags Simulation.
-        send(new ServerboundClientInformationPacket(vanillaClientInformation()));
+        send(new ServerboundClientInformationPacket(vanillaClientInformation(Math.max(4, Math.min(12, chunks.maxChunkRadius())))));
         event("entered configuration" + (fromPlay ? " (re-entry)" : ""));
     }
 
@@ -654,11 +737,11 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
         }
     }
 
-    /** Vanilla options default: 12-chunk render distance, all model layers, listing allowed. */
-    private static ClientInformation vanillaClientInformation() {
+    /** Vanilla client info with bounded view distance so Paper/Moonrise only streams chunks we will retain. */
+    private static ClientInformation vanillaClientInformation(int viewDistance) {
         return new ClientInformation(
                 "en_us",
-                12,
+                viewDistance,
                 ChatVisiblity.FULL,
                 true,
                 127,
@@ -689,7 +772,7 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
             deferPongs = true;
         }
         try {
-            tickOnce();
+            BotContextScope.runWith(botContext, this::tickOnce);
         } finally {
             flushDeferredPongs();
         }
@@ -727,6 +810,37 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
         maybeMarkPlayerLoaded();
         if (state != State.PLAY || !spawnKnown || !loadedSent) {
             return;
+        }
+        IHeadlessAgent activeAgent = agent;
+        if (activeAgent != null) {
+            if (live == null) {
+                ensureHost();
+            }
+            if (movement == null) {
+                ensureMovement();
+            }
+            HeadlessLiveDriver curLive = live;
+            HeadlessMovement curMove = movement;
+            if (curLive != null && curMove != null) {
+                curLive.sync(curMove);
+                curLive.look().beginTick(curMove.lastSentYaw(), curMove.lastSentPitch());
+            } else if (curLive != null) {
+                curLive.look().beginTick(yRot, xRot);
+            }
+            try {
+                activeAgent.onTick();
+            } catch (RuntimeException e) {
+                event("ERROR agent tick: " + e);
+                e.printStackTrace(System.err);
+            }
+        } else if (live != null) {
+            HeadlessLiveDriver curLive = live;
+            HeadlessMovement curMove = movement;
+            if (curMove != null) {
+                curLive.look().beginTick(curMove.lastSentYaw(), curMove.lastSentPitch());
+            } else {
+                curLive.look().beginTick(yRot, xRot);
+            }
         }
         // Ostinato: pathing commands run here, before the single movement packet, so A* is only queued.
         drainPathing();
@@ -943,39 +1057,79 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
      * on the next tick so idle physics keep running.
      */
     public void ensureHost() {
-        if (live != null) {
-            return;
-        }
-        synchronized (hostLock) {
+        BotContextScope.runWith(botContext, () -> {
             if (live != null) {
+                if (agent != null && !agentAttached) {
+                    attachAgentInternal();
+                }
                 return;
             }
-            if (state != State.PLAY || !spawnKnown) {
-                throw new IllegalStateException("pathing host requires a spawned play session");
+            synchronized (hostLock) {
+                if (live != null) {
+                    if (agent != null && !agentAttached) {
+                        attachAgentInternal();
+                    }
+                    return;
+                }
+                if (state != State.PLAY || !spawnKnown) {
+                    throw new IllegalStateException("pathing host requires a spawned play session");
+                }
+                HeadlessLevel level = HeadlessLevel.create(chunks, registryAccess);
+                level.bindEntityTracker(entities);
+                HeadlessPlayer player = new HeadlessPlayer(level, new GameProfile(uuid, username));
+                player.setId(playerId);
+                player.setPos(x, y, z);
+                player.setYRot(yRot);
+                player.setXRot(xRot);
+                player.setOnGround(onGround);
+                player.setHealth(lastHealth);
+                player.getFoodData().setFoodLevel(lastFood);
+                player.getFoodData().setSaturation(lastSaturation);
+                inventory.bind(player);
+                HeadlessLiveDriver created = new HeadlessLiveDriver(this, player, level);
+                botContext.setBaritone(created.baritone());
+                if (movement != null) {
+                    movement.setDriver(created);
+                }
+                live = created;
+                event("pathing host attached at " + x + "," + y + "," + z);
+                if (agent != null && !agentAttached) {
+                    attachAgentInternal();
+                }
             }
-            HeadlessLevel level = HeadlessLevel.create(chunks, registryAccess);
-            HeadlessPlayer player = new HeadlessPlayer(level, new GameProfile(uuid, username));
-            player.setPos(x, y, z);
-            player.setYRot(yRot);
-            player.setXRot(xRot);
-            player.setOnGround(onGround);
-            inventory.bind(player);
-            HeadlessLiveDriver created = new HeadlessLiveDriver(this, player, level);
-            if (movement != null) {
-                movement.setDriver(created);
-            }
-            live = created;
-            event("pathing host attached at " + x + "," + y + "," + z);
+        });
+    }
+
+    private void attachAgentInternal() {
+        IHeadlessAgent active = agent;
+        if (active == null || agentAttached) {
+            return;
         }
+        agentAttached = true;
+        active.onAttach(botContext, this);
     }
 
     public void closeHost() {
-        HeadlessLiveDriver current = live;
-        if (current != null) {
-            current.close();
-            live = null;
-        }
-        resetSharedStateForTests();
+        BotContextScope.runWith(botContext, () -> {
+            IHeadlessAgent active = agent;
+            if (active != null && agentAttached) {
+                try {
+                    active.onShutdown();
+                } catch (RuntimeException e) {
+                    event("ERROR agent shutdown: " + e);
+                }
+                agentAttached = false;
+            }
+            HeadlessLiveDriver current = live;
+            if (current != null) {
+                current.close();
+                live = null;
+            }
+            botContext.setBaritone(null);
+            baritone.utils.pathing.SearchCache.releaseThreadLocal();
+            baritone.pathing.calc.PiCheap.releaseThreadLocal();
+            baritone.pathing.kinematic.BsiWorld.releaseThreadLocal();
+        });
     }
 
     /**
@@ -1080,6 +1234,181 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
         return entities;
     }
 
+    // ------------------------------------------------------------------ IHeadlessHost
+
+    @Override
+    public String botId() {
+        return botContext.botId();
+    }
+
+    @Override
+    public Player player() {
+        HeadlessLiveDriver current = live;
+        return current == null ? null : current.player();
+    }
+
+    @Override
+    public Level level() {
+        HeadlessLiveDriver current = live;
+        return current == null ? null : current.player().level();
+    }
+
+    @Override
+    public IBaritone baritone() {
+        HeadlessLiveDriver current = live;
+        return current == null ? null : current.baritone();
+    }
+
+    @Override
+    public IPlayerContext playerContext() {
+        HeadlessLiveDriver current = live;
+        return current == null ? null : current.context();
+    }
+
+    @Override
+    public IPlayerController playerController() {
+        HeadlessLiveDriver current = live;
+        return current == null ? null : current.controller();
+    }
+
+    @Override
+    public Iterable<Entity> worldEntities() {
+        return entities.commonEntities();
+    }
+
+    @Override
+    public boolean isChunkLoaded(int cx, int cz) {
+        return chunks.isChunkLoaded(cx, cz);
+    }
+
+    @Override
+    public long tickCount() {
+        return ticks.get();
+    }
+
+    @Override
+    public void sendChat(String message) {
+        if (message == null || message.isEmpty() || state != State.PLAY) {
+            return;
+        }
+        if (message.startsWith("/")) {
+            String cmd = message.substring(1);
+            if (!cmd.isEmpty()) {
+                send(new ServerboundChatCommandPacket(cmd));
+            }
+            return;
+        }
+        send(new ServerboundChatPacket(message, Instant.now(), 0L, Optional.empty(),
+                new LastSeenMessages.Update(0, new BitSet(20), LastSeenMessages.Update.IGNORE_CHECKSUM)));
+    }
+
+    @Override
+    public void setChatReceiveListener(Consumer<String> listener) {
+        this.chatReceiveListener = listener;
+    }
+
+    @Override
+    public double mouseSensitivity() {
+        return 0.5;
+    }
+
+    @Override
+    public void setInputState(boolean forward, boolean back, boolean left, boolean right,
+                              boolean jump, boolean sneak, boolean sprint) {
+        HeadlessLiveDriver current = live;
+        if (current == null) {
+            return;
+        }
+        var io = current.baritone().getInputOverrideHandler();
+        io.setInputForceState(baritone.api.utils.input.Input.MOVE_FORWARD, forward);
+        io.setInputForceState(baritone.api.utils.input.Input.MOVE_BACK, back);
+        io.setInputForceState(baritone.api.utils.input.Input.MOVE_LEFT, left);
+        io.setInputForceState(baritone.api.utils.input.Input.MOVE_RIGHT, right);
+        io.setInputForceState(baritone.api.utils.input.Input.JUMP, jump);
+        io.setInputForceState(baritone.api.utils.input.Input.SNEAK, sneak);
+        io.setInputForceState(baritone.api.utils.input.Input.SPRINT, sprint);
+    }
+
+    @Override
+    public void setInputOverride(baritone.api.utils.input.Input key, boolean pressed) {
+        HeadlessLiveDriver current = live;
+        if (current != null) {
+            current.baritone().getInputOverrideHandler().setInputForceState(key, pressed);
+        }
+    }
+
+    @Override
+    public boolean isInputPressed(baritone.api.utils.input.Input key) {
+        HeadlessLiveDriver current = live;
+        return current != null && current.baritone().getInputOverrideHandler().isInputForcedDown(key);
+    }
+
+    @Override
+    public void clickContainerSlot(int containerId, int slot, int button, String clickType) {
+        HeadlessLiveDriver current = live;
+        if (current == null) {
+            return;
+        }
+        ContainerInput type = ContainerInput.PICKUP;
+        if (clickType != null && !clickType.isBlank()) {
+            String norm = clickType.trim().toUpperCase(Locale.ROOT);
+            if ("SHIFT_CLICK".equals(norm) || "QUICK_MOVE".equals(norm)) {
+                type = ContainerInput.QUICK_MOVE;
+            } else {
+                try {
+                    type = ContainerInput.valueOf(norm);
+                } catch (IllegalArgumentException ignored) {
+                    type = ContainerInput.PICKUP;
+                }
+            }
+        }
+        current.controller().windowClick(containerId, slot, button, type, current.player());
+    }
+
+    @Override
+    public void clickContainerButton(int containerId, int buttonId) {
+        HeadlessLiveDriver current = live;
+        if (current != null) {
+            current.controller().clickButton(containerId, buttonId);
+        }
+    }
+
+    @Override
+    public void closeContainer() {
+        inventory.closeContainer();
+    }
+
+    @Override
+    public void respawn() {
+        send(new ServerboundClientCommandPacket(ServerboundClientCommandPacket.Action.PERFORM_RESPAWN));
+    }
+
+    @Override
+    public Path configDir() {
+        return botContext.configDir();
+    }
+
+    @Override
+    public void requestStop() {
+        this.stopRequested = true;
+    }
+
+    @Override
+    public HitResult rayTrace(double reach, boolean includeFluids) {
+        HeadlessLiveDriver current = live;
+        if (current == null) {
+            return null;
+        }
+        ClipContext.Fluid prev = RayTraceUtils.currentFluidHandling();
+        try {
+            RayTraceUtils.setFluidHandling(includeFluids ? ClipContext.Fluid.ANY : ClipContext.Fluid.NONE);
+            HeadlessPlayer body = current.player();
+            return RayTraceUtils.rayTraceTowards(body, new Rotation(body.getYRot(), body.getXRot()), reach);
+        } finally {
+            RayTraceUtils.setFluidHandling(prev);
+        }
+    }
+
     public State state() {
         return state;
     }
@@ -1118,6 +1447,142 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler {
 
     public long packetsOut() {
         return packetsOut.get();
+    }
+
+    public String username() {
+        return username;
+    }
+
+    public UUID uuid() {
+        return uuid;
+    }
+
+    public float health() {
+        HeadlessPlayer body = inventory.player();
+        return body != null ? body.getHealth() : lastHealth;
+    }
+
+    public int food() {
+        HeadlessPlayer body = inventory.player();
+        return body != null ? body.getFoodData().getFoodLevel() : lastFood;
+    }
+
+    public float saturation() {
+        HeadlessPlayer body = inventory.player();
+        return body != null ? body.getFoodData().getSaturationLevel() : lastSaturation;
+    }
+
+    public IHeadlessAgent agent() {
+        return agent;
+    }
+
+    public String currentTask() {
+        IHeadlessAgent active = agent;
+        if (active != null && agentAttached) {
+            try {
+                String task = active.currentTask();
+                if (task != null && !task.isBlank()) {
+                    return task;
+                }
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return pathingStatus();
+    }
+
+    public void setOutboundObserver(Consumer<net.minecraft.network.protocol.Packet<?>> observer) {
+        this.outboundObserver = observer;
+    }
+
+    public void dispatchAgentCommand(String command) {
+        if (command == null || command.isBlank()) {
+            return;
+        }
+        String trimmed = command.trim();
+        IHeadlessAgent active = agent;
+        if (active != null && (trimmed.startsWith("@") || "stop".equalsIgnoreCase(trimmed))) {
+            String forwarded = "stop".equalsIgnoreCase(trimmed) ? "@stop" : trimmed;
+            if ("@stop".equalsIgnoreCase(forwarded) || "cancel".equalsIgnoreCase(trimmed)) {
+                enqueuePathing("cancel");
+            }
+            active.onCommand(forwarded);
+            return;
+        }
+        enqueuePathing(trimmed);
+    }
+
+    private void handleHelloPacket(ClientboundHelloPacket hello) {
+        try {
+            javax.crypto.SecretKey secretKey = net.minecraft.util.Crypt.generateSecretKey();
+            java.security.PublicKey publicKey = hello.getPublicKey();
+            String serverHash = new java.math.BigInteger(
+                    net.minecraft.util.Crypt.digestData(hello.getServerId(), publicKey, secretKey)).toString(16);
+            javax.crypto.Cipher decryptCipher = net.minecraft.util.Crypt.getCipher(
+                    javax.crypto.Cipher.DECRYPT_MODE, secretKey);
+            javax.crypto.Cipher encryptCipher = net.minecraft.util.Crypt.getCipher(
+                    javax.crypto.Cipher.ENCRYPT_MODE, secretKey);
+            net.minecraft.network.protocol.login.ServerboundKeyPacket keyPacket =
+                    new net.minecraft.network.protocol.login.ServerboundKeyPacket(
+                            secretKey, publicKey, hello.getChallenge());
+            if (!hello.shouldAuthenticate()) {
+                transport.sendWithEncryption(keyPacket, decryptCipher, encryptCipher);
+                return;
+            }
+            if (accessToken.isBlank()) {
+                String msg = "server requested online-mode authentication but no accessToken was provided for " + username;
+                transport.disconnect(msg);
+                onDisconnect(msg);
+                return;
+            }
+            Thread authThread = new Thread(() -> authenticateAndEnableEncryption(
+                    serverHash, keyPacket, decryptCipher, encryptCipher), "headless-auth-" + username);
+            authThread.setDaemon(true);
+            authThread.start();
+        } catch (net.minecraft.util.CryptException | RuntimeException e) {
+            String msg = "encryption setup failed: " + e.getMessage();
+            transport.disconnect(msg);
+            onDisconnect(msg);
+        }
+    }
+
+    private void authenticateAndEnableEncryption(
+            String serverHash,
+            net.minecraft.network.protocol.login.ServerboundKeyPacket keyPacket,
+            javax.crypto.Cipher decryptCipher,
+            javax.crypto.Cipher encryptCipher) {
+        try {
+            com.google.gson.JsonObject payload = new com.google.gson.JsonObject();
+            payload.addProperty("accessToken", accessToken);
+            payload.addProperty("selectedProfile", uuid.toString().replace("-", ""));
+            payload.addProperty("serverId", serverHash);
+            String url = System.getProperty(
+                    "ostinato.sessionServerUrl",
+                    "https://sessionserver.mojang.com/session/minecraft/join");
+            java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+                    .connectTimeout(java.time.Duration.ofSeconds(10))
+                    .build();
+            java.net.http.HttpRequest req = java.net.http.HttpRequest.newBuilder(java.net.URI.create(url))
+                    .timeout(java.time.Duration.ofSeconds(10))
+                    .header("Content-Type", "application/json")
+                    .POST(java.net.http.HttpRequest.BodyPublishers.ofString(payload.toString()))
+                    .build();
+            java.net.http.HttpResponse<String> resp = client.send(
+                    req, java.net.http.HttpResponse.BodyHandlers.ofString());
+            if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
+                transport.sendWithEncryption(keyPacket, decryptCipher, encryptCipher);
+                return;
+            }
+            String msg = "sessionserver join failed (HTTP " + resp.statusCode() + ")";
+            transport.disconnect(msg);
+            onDisconnect(msg);
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            String msg = "sessionserver join error: " + e.getMessage();
+            transport.disconnect(msg);
+            onDisconnect(msg);
+        }
     }
 
     public String status() {

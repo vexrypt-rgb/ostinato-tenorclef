@@ -7,21 +7,28 @@
  */
 package baritone.headless;
 
+import com.mojang.authlib.GameProfile;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.protocol.game.ClientboundAddEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
 import net.minecraft.network.protocol.game.ClientboundMoveEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundRemoveEntitiesPacket;
+import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
 import net.minecraft.network.protocol.game.ClientboundTakeItemEntityPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket;
 import net.minecraft.network.protocol.game.ClientboundTeleportEntityPacket;
 import net.minecraft.network.protocol.game.VecDeltaCodec;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityDimensions;
+import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.entity.PositionMoveRotation;
 import net.minecraft.world.entity.PositionPath;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -52,6 +59,7 @@ public final class HeadlessEntityTracker {
         public boolean onGround;
         public boolean alive = true;
         public float health = -1f;
+        Entity entity;
 
         Tracked(int id, UUID uuid, EntityType<?> type, double x, double y, double z, float yaw, float pitch) {
             this.id = id;
@@ -71,6 +79,22 @@ public final class HeadlessEntityTracker {
             this.y = y;
             this.z = z;
             codec.setBase(new Vec3(x, y, z));
+            syncEntity();
+        }
+
+        void syncEntity() {
+            Entity e = this.entity;
+            if (e != null) {
+                e.setPosRaw(x, y, z);
+                e.setBoundingBox(e.getDimensions(e.getPose()).makeBoundingBox(x, y, z));
+                e.setYRot(yaw);
+                e.setXRot(pitch);
+                e.setDeltaMovement(vx, vy, vz);
+                e.setOnGround(onGround);
+                if (!alive && !e.isRemoved()) {
+                    e.discard();
+                }
+            }
         }
 
         public AABB box() {
@@ -101,6 +125,71 @@ public final class HeadlessEntityTracker {
     }
 
     private final Map<Integer, Tracked> entities = new ConcurrentHashMap<>();
+    private volatile Level boundLevel;
+
+    public void bindLevel(Level level) {
+        this.boundLevel = level;
+        if (level != null) {
+            for (Tracked tracked : entities.values()) {
+                if (tracked.entity == null) {
+                    tracked.entity = createEntity(level, tracked);
+                    tracked.syncEntity();
+                }
+            }
+        }
+    }
+
+    public Iterable<Entity> commonEntities() {
+        List<Entity> out = new ArrayList<>(entities.size());
+        for (Tracked tracked : entities.values()) {
+            if (tracked.alive && tracked.entity != null) {
+                out.add(tracked.entity);
+            }
+        }
+        return out;
+    }
+
+    public Entity commonEntity(int id) {
+        Tracked tracked = entities.get(id);
+        return tracked == null ? null : tracked.entity;
+    }
+
+    private static Entity createEntity(Level level, Tracked tracked) {
+        if (level == null || tracked == null) {
+            return null;
+        }
+        try {
+            Entity e;
+            if ("player".equals(tracked.typeId())) {
+                e = new RemoteHeadlessPlayer(level, new GameProfile(tracked.uuid, "player-" + tracked.id));
+            } else {
+                e = tracked.type.create(level, EntitySpawnReason.LOAD);
+            }
+            if (e != null) {
+                e.setId(tracked.id);
+                e.setUUID(tracked.uuid);
+                e.setPos(tracked.x, tracked.y, tracked.z);
+                e.setYRot(tracked.yaw);
+                e.setXRot(tracked.pitch);
+                e.setDeltaMovement(tracked.vx, tracked.vy, tracked.vz);
+                e.setOnGround(tracked.onGround);
+            }
+            return e;
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private static final class RemoteHeadlessPlayer extends Player {
+        RemoteHeadlessPlayer(Level level, GameProfile profile) {
+            super(level, profile);
+        }
+
+        @Override
+        public GameType gameMode() {
+            return GameType.SURVIVAL;
+        }
+    }
 
     /**
      * @return true when this packet is an entity-tracking packet (consumed even if it
@@ -144,6 +233,7 @@ public final class HeadlessEntityTracker {
                     tracked.yaw = change.yRot();
                     tracked.pitch = change.xRot();
                     tracked.onGround = teleport.onGround();
+                    tracked.syncEntity();
                 }
             }
             return true;
@@ -157,6 +247,7 @@ public final class HeadlessEntityTracker {
                     tracked.yaw = sync.yRot();
                     tracked.pitch = sync.xRot();
                     tracked.onGround = sync.onGround();
+                    tracked.syncEntity();
                 }
             }
             return true;
@@ -169,6 +260,19 @@ public final class HeadlessEntityTracker {
                     tracked.vx = v.x;
                     tracked.vy = v.y;
                     tracked.vz = v.z;
+                    tracked.syncEntity();
+                }
+            }
+            return true;
+        }
+        if (packet instanceof ClientboundSetEntityDataPacket data) {
+            if (data.id() != selfId) {
+                Tracked tracked = entities.get(data.id());
+                if (tracked != null && tracked.entity != null) {
+                    try {
+                        tracked.entity.getEntityData().assignValues(data.packedItems());
+                    } catch (RuntimeException ignored) {
+                    }
                 }
             }
             return true;
@@ -180,6 +284,7 @@ public final class HeadlessEntityTracker {
                 if (tracked != null) {
                     tracked.alive = false;
                     tracked.health = 0f;
+                    tracked.syncEntity();
                 }
             }
             return true;
@@ -223,6 +328,11 @@ public final class HeadlessEntityTracker {
         tracked.vx = movement.x;
         tracked.vy = movement.y;
         tracked.vz = movement.z;
+        Level level = boundLevel;
+        if (level != null) {
+            tracked.entity = createEntity(level, tracked);
+        }
+        tracked.syncEntity();
         entities.put(tracked.id, tracked);
     }
 
@@ -237,6 +347,7 @@ public final class HeadlessEntityTracker {
             tracked.pitch = packet.getXRot();
         }
         tracked.onGround = packet.isOnGround();
+        tracked.syncEntity();
     }
 
     public Tracked get(int id) {

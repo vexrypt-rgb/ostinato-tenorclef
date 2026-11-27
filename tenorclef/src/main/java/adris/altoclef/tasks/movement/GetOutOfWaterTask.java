@@ -150,8 +150,9 @@ public class GetOutOfWaterTask extends CustomBaritoneGoalTask {
     private static class EscapeFromWaterGoal implements Goal {
 
         private static boolean isWater(int x, int y, int z) {
-            if (MinecraftClient.getInstance().world == null) return false;
-            return BaritoneQueries.get().isWater(MinecraftClient.getInstance().world.getBlockState(new BlockPos(x, y, z)));
+            var w = adris.altoclef.headless.BotClientBridge.world();
+            if (w == null) return false;
+            return BaritoneQueries.get().isWater(w.getBlockState(new BlockPos(x, y, z)));
         }
 
         private static boolean isWaterAdjacent(int x, int y, int z) {

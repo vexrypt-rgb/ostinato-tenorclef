@@ -4,6 +4,7 @@ import adris.altoclef.multiversion.ScreenVer;
 
 import adris.altoclef.AltoClef;
 import adris.altoclef.Debug;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.mixins.DeathScreenAccessor;
 import adris.altoclef.multiversion.ConnectScreenVer;
 import adris.altoclef.multiversion.entity.PlayerVer;
@@ -12,6 +13,7 @@ import adris.altoclef.tasksystem.TaskRunner;
 import adris.altoclef.util.time.TimerGame;
 import adris.altoclef.util.time.TimerReal;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.entity.player.PlayerEntity;
 //#if MC < 260000
 import net.minecraft.client.gui.screen.*;
 //#else
@@ -73,8 +75,20 @@ public class DeathMenuChain extends TaskChain {
 
     @Override
     public float getPriority() {
-        //MinecraftClient.getInstance().getCurrentServerEntry().address;
-//        MinecraftClient.getInstance().
+        if (BotClientBridge.isHeadless()) {
+            PlayerEntity p = BotClientBridge.player();
+            if (p != null && !p.isAlive() && shouldAutoRespawn()) {
+                if (waitOnDeathScreenBeforeRespawnTimer.elapsed()) {
+                    waitOnDeathScreenBeforeRespawnTimer.reset();
+                    deathCount++;
+                    Debug.logMessage("RESPAWNING... (this is death #" + deathCount + ")");
+                    BotClientBridge.respawn();
+                }
+                return 90;
+            }
+            respawnAttempts = 0;
+            return Float.NEGATIVE_INFINITY;
+        }
         Screen screen = ScreenVer.current(MinecraftClient.getInstance());
 
         // This might fix Weird fail to respawn that happened only once

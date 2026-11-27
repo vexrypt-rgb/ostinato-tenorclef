@@ -77,13 +77,9 @@ public final class HeadlessBotMain {
         }
         Files.writeString(probeOut, "", StandardCharsets.UTF_8);
 
-        // Plain JVM: no client main, no Fabric loader, no render thread. Bootstrap is enough for
-        // registries, block states, voxel shapes and the network codecs (proven by the Phase 0 probe).
-        SharedConstants.tryDetectVersion();
-        Bootstrap.bootStrap();
-        RegistryAccess.Frozen access = RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
-
-        EventLoopGroupHolder holder = EventLoopGroupHolder.remote(false);
+        // Plain JVM: initialize registries, block states, and Netty event loop once via HeadlessRuntime.
+        RegistryAccess.Frozen access = HeadlessRuntime.sharedRegistries();
+        EventLoopGroupHolder holder = HeadlessRuntime.sharedEventLoop();
         Connection connection = new Connection(PacketFlow.CLIENTBOUND);
         Connection.connect(new InetSocketAddress(host, port), holder, connection);
 

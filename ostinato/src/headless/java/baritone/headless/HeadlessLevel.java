@@ -19,6 +19,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.AbortableIterationConsumer;
+import net.minecraft.util.Continuation;
 import net.minecraft.util.RandomSource;
 import net.minecraft.util.random.WeightedList;
 import net.minecraft.util.valueproviders.ConstantInt;
@@ -45,6 +46,7 @@ import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.entity.EntityTypeTest;
 import net.minecraft.world.level.entity.LevelEntityGetter;
+import net.minecraft.world.level.lighting.LevelLightEngine;
 import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.saveddata.maps.MapId;
@@ -69,6 +71,8 @@ import java.util.UUID;
 public final class HeadlessLevel extends Level {
 
     private final HeadlessChunkStore store;
+    private final HeadlessChunkSource chunkSource;
+    private volatile HeadlessEntityTracker entityTracker;
     private final Holder<DimensionType> dimensionType;
     private final RegistryAccess registryAccess;
     private final TickRateManager tickRateManager = new TickRateManager();
@@ -78,30 +82,56 @@ public final class HeadlessLevel extends Level {
     private final LevelEntityGetter<Entity> entities = new LevelEntityGetter<>() {
         @Override
         public Entity get(int id) {
-            return null;
+            return entityTracker == null ? null : entityTracker.commonEntity(id);
         }
 
         @Override
         public Entity get(UUID uuid) {
+            if (entityTracker == null || uuid == null) {
+                return null;
+            }
+            for (Entity e : entityTracker.commonEntities()) {
+                if (uuid.equals(e.getUUID())) {
+                    return e;
+                }
+            }
             return null;
         }
 
         @Override
         public Iterable<Entity> getAll() {
-            return List.of();
+            return commonEntities();
         }
 
         @Override
         public <U extends Entity> void get(EntityTypeTest<Entity, U> type, AbortableIterationConsumer<U> consumer) {
+            for (Entity e : commonEntities()) {
+                U cast = type.tryCast(e);
+                if (cast != null && consumer.accept(cast) == Continuation.ABORT) {
+                    return;
+                }
+            }
         }
 
         @Override
         public void get(AABB area, java.util.function.Consumer<Entity> consumer) {
+            for (Entity e : commonEntities()) {
+                if (e.getBoundingBox().intersects(area)) {
+                    consumer.accept(e);
+                }
+            }
         }
 
         @Override
         public <U extends Entity> void get(EntityTypeTest<Entity, U> type, AABB area,
                                            AbortableIterationConsumer<U> consumer) {
+            for (Entity e : commonEntities()) {
+                U cast = type.tryCast(e);
+                if (cast != null && e.getBoundingBox().intersects(area)
+                        && consumer.accept(cast) == Continuation.ABORT) {
+                    return;
+                }
+            }
         }
     };
     private LevelData.RespawnData respawnData = LevelData.RespawnData.DEFAULT;
@@ -135,8 +165,20 @@ public final class HeadlessLevel extends Level {
                          RegistryAccess registryAccess, Holder<DimensionType> dimensionType) {
         super(new HeadlessLevelData(), dimension, registryAccess, dimensionType, false, false, 0L, 1);
         this.store = store;
+        this.chunkSource = new HeadlessChunkSource(this, store);
         this.dimensionType = dimensionType;
         this.registryAccess = registryAccess;
+    }
+
+    public void bindEntityTracker(HeadlessEntityTracker tracker) {
+        this.entityTracker = tracker;
+        if (tracker != null) {
+            tracker.bindLevel(this);
+        }
+    }
+
+    public Iterable<Entity> commonEntities() {
+        return entityTracker == null ? List.of() : entityTracker.commonEntities();
     }
 
     /**
@@ -269,7 +311,51 @@ public final class HeadlessLevel extends Level {
 
     @Override
     public ChunkSource getChunkSource() {
-        return null;
+        return chunkSource;
+    }
+
+    private static final class HeadlessChunkSource extends ChunkSource {
+        private final HeadlessLevel level;
+        private final HeadlessChunkStore store;
+
+        HeadlessChunkSource(HeadlessLevel level, HeadlessChunkStore store) {
+            this.level = level;
+            this.store = store;
+        }
+
+        @Override
+        public BlockGetter getLevel() {
+            return level;
+        }
+
+        @Override
+        public boolean hasChunk(int chunkX, int chunkZ) {
+            return store.isChunkLoaded(chunkX, chunkZ);
+        }
+
+        @Override
+        public ChunkAccess getChunk(int chunkX, int chunkZ, ChunkStatus status, boolean load) {
+            return null;
+        }
+
+        @Override
+        public void tick(java.util.function.BooleanSupplier hasTimeLeft, boolean tickChunks) {
+        }
+
+        @Override
+        public String gatherStats() {
+            return "headless:" + store.chunkCount();
+        }
+
+        @Override
+        public int getLoadedChunksCount() {
+            return store.chunkCount();
+        }
+
+        @Override
+        public LevelLightEngine getLightEngine() {
+            return LevelLightEngine.EMPTY;
+        }
     }
 
     @Override
@@ -400,7 +486,7 @@ public final class HeadlessLevel extends Level {
 
     @Override
     public Entity getEntity(int id) {
-        return null;
+        return entityTracker == null ? null : entityTracker.commonEntity(id);
     }
 
     @Override

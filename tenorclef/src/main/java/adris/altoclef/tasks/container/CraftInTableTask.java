@@ -23,6 +23,7 @@ import adris.altoclef.util.time.TimerGame;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.screen.CraftingScreenHandler;
@@ -397,8 +398,8 @@ class DoCraftInTableTask extends DoStuffInContainerTask {
             // Get the recipe to send based on the target recipe and output item
             Optional<WrappedRecipeEntry> recipeToSend = JankCraftingRecipeMapping.getMinecraftMappedRecipe(target.getRecipe(), target.getOutputItem());
 
-            // Get the client player entity
-            ClientPlayerEntity player = MinecraftClient.getInstance().player;
+            // Get the player entity
+            net.minecraft.entity.player.PlayerEntity player = adris.altoclef.headless.BotClientBridge.player();
 
             // If crafting book is enabled, the recipe to send exists, and the player has the recipe in their recipe book, return a CraftGenericWithRecipeBooksTask
             if (mod.getModSettings().shouldUseCraftingBookToCraft() && recipeToSend.isPresent()) {

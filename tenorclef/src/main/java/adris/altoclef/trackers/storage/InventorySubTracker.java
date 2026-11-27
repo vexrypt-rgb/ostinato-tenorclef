@@ -1,5 +1,6 @@
 package adris.altoclef.trackers.storage;
 
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.multiversion.ScreenVer;
 import adris.altoclef.trackers.Tracker;
 import adris.altoclef.trackers.TrackerManager;
@@ -9,9 +10,8 @@ import adris.altoclef.util.slots.CraftingTableSlot;
 import adris.altoclef.util.slots.CursorSlot;
 import adris.altoclef.util.slots.PlayerSlot;
 import adris.altoclef.util.slots.Slot;
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -145,7 +145,7 @@ public class InventorySubTracker extends Tracker {
     }
 
     public List<ItemStack> getInventoryStacks(boolean includeCursor) {
-        ClientPlayerEntity player = MinecraftClient.getInstance().player;
+        PlayerEntity player = BotClientBridge.player();
         if (player == null || player.getInventory() == null)
             return Collections.emptyList();
         PlayerInventory inv = player.getInventory();
@@ -177,8 +177,9 @@ public class InventorySubTracker extends Tracker {
             }
         }
         // Then add air slots that can insert our item
-        if (MinecraftClient.getInstance().player != null) {
-            ScreenHandler handler = MinecraftClient.getInstance().player.currentScreenHandler;
+        PlayerEntity p = BotClientBridge.player();
+        if (p != null) {
+            ScreenHandler handler = p.currentScreenHandler;
             for (Slot airSlot : list.getOrDefault(Items.AIR, Collections.emptyList())) {
                 // Ignore cursor slot
                 if (airSlot.equals(CursorSlot.SLOT))
@@ -241,8 +242,7 @@ public class InventorySubTracker extends Tracker {
 
     @Override
     protected void updateState() {
-        MinecraftClient mc = MinecraftClient.getInstance();
-        ClientPlayerEntity player = mc.player;
+        PlayerEntity player = BotClientBridge.player();
         ScreenHandler handler = player != null ? player.currentScreenHandler : null;
         _prevScreenHandler = handler;
 
@@ -259,7 +259,7 @@ public class InventorySubTracker extends Tracker {
         }
 
         final int n = handler.slots.size();
-        final Screen screen = ScreenVer.current(mc);
+        final Screen screen = BotClientBridge.currentScreenOrNull();
         final boolean slotsRebuilt = _slots == null || _slotsHandler != handler
                 || _slotsScreen != screen || _slotsCount != n;
         if (slotsRebuilt) {
@@ -377,7 +377,8 @@ public class InventorySubTracker extends Tracker {
 
     @Override
     protected boolean isDirty() {
-        ScreenHandler handler = MinecraftClient.getInstance().player != null ? MinecraftClient.getInstance().player.currentScreenHandler : null;
+        PlayerEntity player = BotClientBridge.player();
+        ScreenHandler handler = player != null ? player.currentScreenHandler : null;
         return super.isDirty() || handler != _prevScreenHandler;
     }
 }

@@ -180,7 +180,7 @@ public class PlaceBlockTask extends Task implements ITaskRequiresGrounded {
 
     @Override
     public boolean isFinished() {
-        assert MinecraftClient.getInstance().world != null;
+        if (adris.altoclef.headless.BotClientBridge.world() == null) return false;
         if (useThrowaways) {
             return WorldHelper.isSolidBlock(target);
         }

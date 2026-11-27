@@ -2,8 +2,8 @@ package adris.altoclef.util.helpers;
 
 import adris.altoclef.Debug;
 import adris.altoclef.util.baritone.CachedProjectile;
-import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.projectile.ExplosiveProjectileEntity;
 import net.minecraft.entity.projectile.ProjectileEntity;
 import net.minecraft.util.math.Vec3d;
@@ -65,7 +65,7 @@ public class ProjectileHelper {
         return calculateArrowClosestApproach(projectile.position, projectile.velocity, projectile.gravity, pos);
     }
 
-    public static Vec3d calculateArrowClosestApproach(CachedProjectile projectile, ClientPlayerEntity player) {
+    public static Vec3d calculateArrowClosestApproach(CachedProjectile projectile, PlayerEntity player) {
         return calculateArrowClosestApproach(projectile, player.getPos());
     }
 

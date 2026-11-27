@@ -17,6 +17,8 @@
 
 package baritone.api.utils;
 
+import baritone.api.context.BotContext;
+import baritone.api.context.BotContextScope;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.level.ClipContext;
@@ -61,7 +63,21 @@ public final class RayTraceUtils {
                 direction.y * blockReachDistance,
                 direction.z * blockReachDistance
         );
-        return entity.level().clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, fluidHandling, entity));
+        return entity.level().clip(new ClipContext(start, end, ClipContext.Block.OUTLINE, currentFluidHandling(), entity));
+    }
+
+    public static ClipContext.Fluid currentFluidHandling() {
+        BotContext ctx = BotContextScope.currentOrNull();
+        return ctx != null ? ctx.rayTraceFluidHandling() : fluidHandling;
+    }
+
+    public static void setFluidHandling(ClipContext.Fluid handling) {
+        BotContext ctx = BotContextScope.currentOrNull();
+        if (ctx != null) {
+            ctx.setRayTraceFluidHandling(handling);
+        } else {
+            fluidHandling = handling == null ? ClipContext.Fluid.NONE : handling;
+        }
     }
 
     public static Vec3 inferSneakingEyePosition(Entity entity) {

@@ -185,7 +185,7 @@ public class PlaceBlockNearbyTask extends Task {
     }
 
     private BlockPos getCurrentlyLookingBlockPlace(AltoClef mod) {
-        HitResult hit = MinecraftClient.getInstance().crosshairTarget;
+        HitResult hit = adris.altoclef.headless.BotClientBridge.crosshairTarget();
         if (hit instanceof BlockHitResult bhit) {
             BlockPos bpos = bhit.getBlockPos();//.subtract(bhit.getSide().getVector());
             //Debug.logMessage("TEMP: A: " + bpos);
@@ -217,13 +217,12 @@ public class PlaceBlockNearbyTask extends Task {
             //mod.getInputControls().tryPress(Input.CLICK_RIGHT);
             // This appears to work on servers...
             // TODO: Helper lol
-            HitResult mouseOver = MinecraftClient.getInstance().crosshairTarget;
+            HitResult mouseOver = adris.altoclef.headless.BotClientBridge.crosshairTarget();
             if (mouseOver == null || mouseOver.getType() != HitResult.Type.BLOCK) {
                 return false;
             }
             Hand hand = Hand.MAIN_HAND;
-            assert MinecraftClient.getInstance().interactionManager != null;
-            if (MinecraftClient.getInstance().interactionManager.interactBlock(mod.getPlayer(),hand, (BlockHitResult) mouseOver) == ActionResult.SUCCESS &&
+            if (adris.altoclef.headless.BotClientBridge.interactBlock(hand, (BlockHitResult) mouseOver) == ActionResult.SUCCESS &&
                     mod.getPlayer().isSneaking()) {
                 mod.getPlayer().swingHand(hand);
                 justPlaced = targetPlace;

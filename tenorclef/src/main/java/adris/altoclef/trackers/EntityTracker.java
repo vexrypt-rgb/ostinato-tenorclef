@@ -3,6 +3,7 @@ package adris.altoclef.trackers;
 import adris.altoclef.Debug;
 import adris.altoclef.eventbus.EventBus;
 import adris.altoclef.eventbus.events.PlayerCollidedWithEntityEvent;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.mixins.PersistentProjectileEntityAccessor;
 import adris.altoclef.trackers.blacklisting.EntityLocateBlacklist;
 import adris.altoclef.util.ItemTarget;
@@ -105,11 +106,30 @@ public class EntityTracker extends Tracker {
 
     public Optional<ItemEntity> getClosestItemDrop(Vec3d position, Predicate<ItemEntity> acceptPredicate, Item... items) {
         ensureUpdated();
-        ItemTarget[] tempTargetList = new ItemTarget[items.length];
-        for (int i = 0; i < items.length; ++i) {
-            tempTargetList[i] = new ItemTarget(items[i], 9999999);
+        if (items.length == 0) {
+            Debug.logError("You asked for the drop position of zero items... Most likely a typo.");
+            return Optional.empty();
         }
-        return getClosestItemDrop(position, acceptPredicate, tempTargetList);
+        if (!itemDropped(items)) {
+            return Optional.empty();
+        }
+        ItemEntity closestEntity = null;
+        float minCost = Float.POSITIVE_INFINITY;
+        for (Item item : items) {
+            if (!itemDropped(item)) continue;
+            for (ItemEntity entity : itemDropLocations.get(item)) {
+                if (entityBlacklist.unreachable(entity)) continue;
+                if (!entity.getStack().getItem().equals(item)) continue;
+                if (!acceptPredicate.test(entity)) continue;
+
+                float cost = (float) BaritoneHelper.calculateGenericHeuristic(position, entity.getPos());
+                if (cost < minCost) {
+                    minCost = cost;
+                    closestEntity = entity;
+                }
+            }
+        }
+        return Optional.ofNullable(closestEntity);
     }
 
     public Optional<ItemEntity> getClosestItemDrop(Vec3d position, Predicate<ItemEntity> acceptPredicate, ItemTarget... targets) {
@@ -330,24 +350,30 @@ public class EntityTracker extends Tracker {
     @Override
     protected synchronized void updateState() {
         synchronized (BaritoneHelper.MINECRAFT_LOCK) {
-            itemDropLocations.clear();
-            entityMap.clear();
+            for (List<ItemEntity> list : itemDropLocations.values()) {
+                list.clear();
+            }
+            for (List<Entity> list : entityMap.values()) {
+                list.clear();
+            }
             closeEntities.clear();
             projectiles.clear();
             hostiles.clear();
             playerMap.clear();
-            if (MinecraftClient.getInstance().world == null) return;
+            if (BotClientBridge.world() == null) return;
 
-            // Store/Register All accumulated player collisions for this frame.
-            entitiesCollidingWithPlayer.clear();
+            // Store/Register All accumulated player collisions for this frame, reusing bucket sets.
+            for (HashSet<Entity> set : entitiesCollidingWithPlayer.values()) {
+                set.clear();
+            }
             for (Map.Entry<PlayerEntity, List<Entity>> collisions : entitiesCollidingWithPlayerAccumulator.entrySet()) {
-                entitiesCollidingWithPlayer.put(collisions.getKey(), new HashSet<>());
-                entitiesCollidingWithPlayer.get(collisions.getKey()).addAll(collisions.getValue());
+                entitiesCollidingWithPlayer.computeIfAbsent(collisions.getKey(), k -> new HashSet<>())
+                        .addAll(collisions.getValue());
             }
             entitiesCollidingWithPlayerAccumulator.clear();
 
             // Loop through all entities and track 'em
-            for (Entity entity : MinecraftClient.getInstance().world.getEntities()) {
+            for (Entity entity : BotClientBridge.entities()) {
                 if (entity == null || !entity.isAlive()) {
                     continue;
                 }
@@ -358,10 +384,7 @@ public class EntityTracker extends Tracker {
                 // Don't catalogue our own player.
                 if (type == PlayerEntity.class && entity.equals(mod.getPlayer())) continue;
 
-                if (!entityMap.containsKey(type)) {
-                    entityMap.put(type, new ArrayList<>());
-                }
-                entityMap.get(type).add(entity);
+                entityMap.computeIfAbsent(type, k -> new ArrayList<>()).add(entity);
 
                 if (mod.getControllerExtras().inRange(entity)) {
                     closeEntities.add(entity);
@@ -372,10 +395,7 @@ public class EntityTracker extends Tracker {
 
                     // Only cared about GROUNDED item entities
                     if (ientity.isOnGround() || ientity.isTouchingWater() || WorldHelper.isSolidBlock(ientity.getBlockPos().down(2)) || WorldHelper.isSolidBlock(ientity.getBlockPos().down(3))) {
-                        if (!itemDropLocations.containsKey(droppedItem)) {
-                            itemDropLocations.put(droppedItem, new ArrayList<>());
-                        }
-                        itemDropLocations.get(droppedItem).add(ientity);
+                        itemDropLocations.computeIfAbsent(droppedItem, k -> new ArrayList<>()).add(ientity);
                     }
                 }
                 if (entity instanceof MobEntity) {

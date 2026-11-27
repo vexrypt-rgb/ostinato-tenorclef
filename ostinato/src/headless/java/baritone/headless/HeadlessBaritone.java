@@ -24,26 +24,44 @@ import baritone.pathing.calc.AbstractNodeCostSearch;
 import baritone.api.pathing.calc.IPathingControlManager;
 import baritone.api.physics.IPredictivePhysics;
 import baritone.api.policy.IAgentPolicy;
+import baritone.api.pathing.goals.Goal;
+import baritone.api.pathing.goals.GoalXZ;
+import baritone.api.pathing.movement.IMovement;
 import baritone.api.process.*;
 import baritone.api.selection.ISelectionManager;
 import baritone.api.swarm.ISwarm;
 import baritone.api.threat.IThreatAssessment;
+import baritone.api.utils.BlockOptionalMeta;
+import baritone.api.utils.BlockOptionalMetaLookup;
 import baritone.api.utils.IInputOverrideHandler;
 import baritone.api.utils.IPlayerContext;
 import baritone.api.utils.IWorldQueries;
 import baritone.pathing.IPathingHost;
 import baritone.pathing.movement.CalculationContext;
+import baritone.pathing.movement.Movement;
+import baritone.pathing.movement.MovementHelper;
 import baritone.pathing.unified.UnifiedExecutor;
+import baritone.process.MineProcess;
 import baritone.utils.BlockBreakHelper;
 import baritone.utils.BlockStateInterface;
 import baritone.utils.InputArbiter;
+import baritone.utils.ToolSet;
 
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Vec3i;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.state.BlockState;
 
+import java.io.File;
+import java.nio.file.Path;
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 public final class HeadlessBaritone implements IPathingHost {
@@ -54,6 +72,13 @@ public final class HeadlessBaritone implements IPathingHost {
     private final HeadlessLookBehavior look;
     private final HeadlessPathingBehavior pathing;
     private final BlockBreakHelper breakHelper;
+    private final ICustomGoalProcess customGoalProcess;
+    private final IExploreProcess exploreProcess;
+    private final IBuilderProcess builderProcess;
+    private final IGetToBlockProcess getToBlockProcess;
+    private final IMineProcess mineProcess;
+    private final IFollowProcess followProcess;
+    private final IWorldQueries worldQueries;
 
     private CalculationContext context;
 
@@ -65,6 +90,13 @@ public final class HeadlessBaritone implements IPathingHost {
         this.look = look;
         this.breakHelper = new BlockBreakHelper(ctx);
         this.pathing = new HeadlessPathingBehavior(this);
+        this.customGoalProcess = new HeadlessCustomGoalProcess();
+        this.exploreProcess = new HeadlessExploreProcess();
+        this.builderProcess = new HeadlessBuilderProcess();
+        this.getToBlockProcess = new HeadlessGetToBlockProcess();
+        this.mineProcess = new HeadlessMineProcess();
+        this.followProcess = new HeadlessFollowProcess();
+        this.worldQueries = new HeadlessWorldQueries();
     }
 
     /** The context the last search was planned with; re-costing reads it instead of a client world. */
@@ -267,22 +299,22 @@ public final class HeadlessBaritone implements IPathingHost {
 
     @Override
     public IFollowProcess getFollowProcess() {
-        return null;
+        return followProcess;
     }
 
     @Override
     public IMineProcess getMineProcess() {
-        return null;
+        return mineProcess;
     }
 
     @Override
     public IBuilderProcess getBuilderProcess() {
-        return null;
+        return builderProcess;
     }
 
     @Override
     public IExploreProcess getExploreProcess() {
-        return null;
+        return exploreProcess;
     }
 
     @Override
@@ -292,12 +324,12 @@ public final class HeadlessBaritone implements IPathingHost {
 
     @Override
     public ICustomGoalProcess getCustomGoalProcess() {
-        return null;
+        return customGoalProcess;
     }
 
     @Override
     public IGetToBlockProcess getGetToBlockProcess() {
-        return null;
+        return getToBlockProcess;
     }
 
     @Override
@@ -336,7 +368,7 @@ public final class HeadlessBaritone implements IPathingHost {
 
     @Override
     public IAgentPolicy getAgentPolicy() {
-        return null;
+        return AltoClefSettings.getInstance();
     }
 
     @Override
@@ -365,7 +397,7 @@ public final class HeadlessBaritone implements IPathingHost {
 
     @Override
     public IWorldQueries getWorldQueries() {
-        return null;
+        return worldQueries;
     }
 
     @Override
@@ -386,5 +418,308 @@ public final class HeadlessBaritone implements IPathingHost {
     @Override
     public ISecondoProcess getSecondoProcess() {
         return null;
+    }
+
+    private final class HeadlessCustomGoalProcess implements ICustomGoalProcess {
+        private Goal goal;
+        private Goal mostRecentGoal;
+        private boolean active;
+
+        @Override
+        public void setGoal(Goal goal) {
+            this.goal = goal;
+            if (goal != null) {
+                this.mostRecentGoal = goal;
+            }
+        }
+
+        @Override
+        public void path() {
+            if (goal != null) {
+                active = true;
+                pathing.gotoGoal(goal);
+            }
+        }
+
+        @Override
+        public Goal getGoal() {
+            return goal;
+        }
+
+        @Override
+        public Goal mostRecentGoal() {
+            return mostRecentGoal;
+        }
+
+        @Override
+        public boolean isActive() {
+            if (active && !pathing.isPathing() && !pathing.planning()) {
+                active = false;
+            }
+            return active;
+        }
+
+        @Override
+        public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
+            return new PathingCommand(goal, PathingCommandType.SET_GOAL_AND_PATH);
+        }
+
+        @Override
+        public boolean isTemporary() {
+            return false;
+        }
+
+        @Override
+        public void onLostControl() {
+            if (active) {
+                active = false;
+                goal = null;
+                pathing.cancelEverything();
+            } else {
+                goal = null;
+            }
+        }
+
+        @Override
+        public String displayName0() {
+            return "HeadlessCustomGoal";
+        }
+    }
+
+    private final class HeadlessExploreProcess implements IExploreProcess {
+        private boolean active;
+
+        @Override
+        public void explore(int centerX, int centerZ) {
+            active = true;
+            pathing.gotoGoal(new GoalXZ(centerX, centerZ));
+        }
+
+        @Override
+        public void applyJsonFilter(Path path, boolean invert) {
+        }
+
+        @Override
+        public boolean isActive() {
+            if (active && !pathing.isPathing() && !pathing.planning()) {
+                active = false;
+            }
+            return active;
+        }
+
+        @Override
+        public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
+            return new PathingCommand(null, PathingCommandType.DEFER);
+        }
+
+        @Override
+        public boolean isTemporary() {
+            return false;
+        }
+
+        @Override
+        public void onLostControl() {
+            if (active) {
+                active = false;
+                pathing.cancelEverything();
+            }
+        }
+
+        @Override
+        public String displayName0() {
+            return "HeadlessExplore";
+        }
+    }
+
+    private static final class HeadlessBuilderProcess implements IBuilderProcess {
+        @Override
+        public void build(String name, baritone.api.schematic.ISchematic schematic, Vec3i origin) {}
+
+        @Override
+        public boolean build(String name, File schematic, Vec3i origin) { return false; }
+
+        @Override
+        public boolean buildRegion(String name, File schematic, Vec3i origin, int regionIndex,
+                                   baritone.api.schematic.partition.PartitionPlan plan) { return false; }
+
+        @Override
+        public void buildOpenSchematic() {}
+
+        @Override
+        public void buildOpenLitematic(int i) {}
+
+        @Override
+        public void pause() {}
+
+        @Override
+        public boolean isPaused() { return false; }
+
+        @Override
+        public void popStack() {}
+
+        @Override
+        public boolean isFromAltoclefFinished() { return true; }
+
+        @Override
+        public void resume() {}
+
+        @Override
+        public void clearArea(BlockPos corner1, BlockPos corner2) {}
+
+        @Override
+        public List<BlockState> getApproxPlaceable() { return List.of(); }
+
+        @Override
+        public Optional<Integer> getMinLayer() { return Optional.empty(); }
+
+        @Override
+        public Optional<Integer> getMaxLayer() { return Optional.empty(); }
+
+        @Override
+        public boolean isActive() { return false; }
+
+        @Override
+        public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
+            return new PathingCommand(null, PathingCommandType.DEFER);
+        }
+
+        @Override
+        public boolean isTemporary() { return false; }
+
+        @Override
+        public void onLostControl() {}
+
+        @Override
+        public String displayName0() { return "HeadlessBuilder"; }
+    }
+
+    private static final class HeadlessGetToBlockProcess implements IGetToBlockProcess {
+        @Override
+        public void getToBlock(BlockOptionalMeta block) {}
+
+        @Override
+        public boolean blacklistClosest() { return false; }
+
+        @Override
+        public boolean isActive() { return false; }
+
+        @Override
+        public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
+            return new PathingCommand(null, PathingCommandType.DEFER);
+        }
+
+        @Override
+        public boolean isTemporary() { return false; }
+
+        @Override
+        public void onLostControl() {}
+
+        @Override
+        public String displayName0() { return "HeadlessGetToBlock"; }
+    }
+
+    private static final class HeadlessMineProcess implements IMineProcess {
+        @Override
+        public void mineByName(int quantity, String... blocks) {}
+
+        @Override
+        public void mine(int quantity, BlockOptionalMetaLookup filter) {}
+
+        @Override
+        public boolean isActive() { return false; }
+
+        @Override
+        public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
+            return new PathingCommand(null, PathingCommandType.DEFER);
+        }
+
+        @Override
+        public boolean isTemporary() { return false; }
+
+        @Override
+        public void onLostControl() {}
+
+        @Override
+        public String displayName0() { return "HeadlessMine"; }
+    }
+
+    private static final class HeadlessFollowProcess implements IFollowProcess {
+        private Predicate<Entity> filter;
+
+        @Override
+        public void follow(Predicate<Entity> filter) {
+            this.filter = filter;
+        }
+
+        @Override
+        public void pickup(Predicate<ItemStack> filter) {}
+
+        @Override
+        public List<Entity> following() { return List.of(); }
+
+        @Override
+        public Predicate<Entity> currentFilter() { return filter; }
+
+        @Override
+        public boolean isActive() { return false; }
+
+        @Override
+        public PathingCommand onTick(boolean calcFailed, boolean isSafeToCancel) {
+            return new PathingCommand(null, PathingCommandType.DEFER);
+        }
+
+        @Override
+        public boolean isTemporary() { return false; }
+
+        @Override
+        public void onLostControl() { this.filter = null; }
+
+        @Override
+        public String displayName0() { return "HeadlessFollow"; }
+    }
+
+    private final class HeadlessWorldQueries implements IWorldQueries {
+        @Override
+        public boolean isWater(BlockState state) {
+            return MovementHelper.isWater(state);
+        }
+
+        @Override
+        public boolean isLava(BlockState state) {
+            return MovementHelper.isLava(state);
+        }
+
+        @Override
+        public boolean canPlaceAgainst(BlockPos pos) {
+            return MovementHelper.canPlaceAgainst(bsi, pos.getX(), pos.getY(), pos.getZ(), bsi.get0(pos));
+        }
+
+        @Override
+        public boolean avoidBreaking(BlockPos pos) {
+            return MovementHelper.avoidBreaking(bsi, pos.getX(), pos.getY(), pos.getZ(), bsi.get0(pos));
+        }
+
+        @Override
+        public boolean plausibleToBreak(BlockPos pos) {
+            CalculationContext calc = new CalculationContext(
+                    HeadlessBaritone.this, bsi, new ToolSet(ctx.entity()),
+                    hasGenericThrowaway(), bsi.minY(), bsi.height());
+            return MineProcess.plausibleToBreak(calc, pos);
+        }
+
+        @Override
+        public double toolSpeedVsBlock(ItemStack tool, BlockState state) {
+            return ToolSet.calculateSpeedVsBlock(tool, state);
+        }
+
+        @Override
+        public List<BlockPos> blocksToBreak(IMovement movement) {
+            return movement instanceof Movement m ? m.toBreak(bsi) : Collections.emptyList();
+        }
+
+        @Override
+        public List<BlockPos> blocksToPlace(IMovement movement) {
+            return movement instanceof Movement m ? m.toPlace(bsi) : Collections.emptyList();
+        }
     }
 }

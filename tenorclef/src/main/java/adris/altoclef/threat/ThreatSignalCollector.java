@@ -4,8 +4,8 @@ import adris.altoclef.AltoClef;
 import adris.altoclef.knowledge.KnowledgeFact;
 import adris.altoclef.knowledge.WorldKnowledge;
 import adris.altoclef.trackers.EntityTracker;
-import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.math.Vec3d;
 
 import java.util.List;
@@ -24,7 +24,7 @@ public final class ThreatSignalCollector {
             return b.build();
         }
 
-        ClientPlayerEntity player = mod.getPlayer();
+        PlayerEntity player = mod.getPlayer();
         if (player == null) {
             return b.build();
         }
@@ -78,7 +78,7 @@ public final class ThreatSignalCollector {
         return b.build();
     }
 
-    private static boolean isDrowning(ClientPlayerEntity player) {
+    private static boolean isDrowning(PlayerEntity player) {
         if (player == null) {
             return false;
         }

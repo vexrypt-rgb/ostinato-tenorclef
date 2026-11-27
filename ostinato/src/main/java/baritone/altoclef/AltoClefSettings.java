@@ -17,6 +17,8 @@
 
 package baritone.altoclef;
 
+import baritone.api.context.BotContext;
+import baritone.api.context.BotContextScope;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
@@ -62,6 +64,10 @@ public class AltoClefSettings implements baritone.api.policy.IAgentPolicy {
     private boolean canWalkOnEndPortal = false;
 
     public static AltoClefSettings getInstance() {
+        BotContext ctx = BotContextScope.currentOrNull();
+        if (ctx != null && ctx.agentPolicy() instanceof AltoClefSettings scoped) {
+            return scoped;
+        }
         return _instance;
     }
 

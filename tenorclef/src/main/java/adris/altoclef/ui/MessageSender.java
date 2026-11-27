@@ -1,11 +1,9 @@
 package adris.altoclef.ui;
 
 import adris.altoclef.Debug;
-import adris.altoclef.multiversion.entity.PlayerVer;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.util.time.BaseTimer;
 import adris.altoclef.util.time.TimerReal;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayNetworkHandler;
 
 import java.util.Comparator;
 import java.util.PriorityQueue;
@@ -72,18 +70,15 @@ public class MessageSender {
     }
 
     private void sendChatInstant(String message, boolean command) {
-        if (MinecraftClient.getInstance().player == null) {
+        if (!BotClientBridge.inGame()) {
             Debug.logError("Failed to send chat message as no client loaded.");
             return;
         }
 
-        ClientPlayNetworkHandler networkHandler =  MinecraftClient.getInstance().getNetworkHandler();
-        assert networkHandler != null;
-
         if (command) {
-            PlayerVer.sendChatCommand(MinecraftClient.getInstance().player, message);
+            BotClientBridge.sendChatCommand(message);
         } else {
-            PlayerVer.sendChatMessage(MinecraftClient.getInstance().player, message);
+            BotClientBridge.sendChatMessage(message);
         }
     }
 

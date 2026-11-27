@@ -198,7 +198,7 @@ public class SafeNetherPortalTask extends Task {
             if (mod.getWorld().getBlockState(pos).getBlock().equals(Blocks.SOUL_SAND)) {
                 LookHelper.lookAt(mod, pos);
 
-                HitResult result = mod.getPlayer().raycast(3, MinecraftClient.getInstance().getRenderTickCounter().getTickDelta(true), true);
+                HitResult result = adris.altoclef.headless.BotClientBridge.raycast(3, true);
                 if (result instanceof BlockHitResult blockHitResult && mod.getWorld().getBlockState(blockHitResult.getBlockPos()).getBlock().equals(Blocks.NETHER_PORTAL)) {
                     setDebugState("Getting closer to target...");
                     mod.getInputControls().hold(Input.MOVE_FORWARD);

@@ -6,6 +6,7 @@ import adris.altoclef.Debug;
 import adris.altoclef.eventbus.EventBus;
 import adris.altoclef.eventbus.events.ChunkLoadEvent;
 import adris.altoclef.eventbus.events.ChunkUnloadEvent;
+import adris.altoclef.headless.BotClientBridge;
 import adris.altoclef.util.helpers.WorldHelper;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
@@ -46,6 +47,9 @@ public class SimpleChunkTracker {
     }
 
     public boolean isChunkLoaded(ChunkPos pos) {
+        if (BotClientBridge.isHeadless()) {
+            return BotClientBridge.isChunkLoaded(ChunkPosVer.x(pos), ChunkPosVer.z(pos));
+        }
         return !(mod.getWorld().getChunk(ChunkPosVer.x(pos), ChunkPosVer.z(pos)) instanceof EmptyChunk);
     }
 
