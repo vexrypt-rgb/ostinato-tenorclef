@@ -153,6 +153,7 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler, IHead
     private final BotContext botContext;
     private volatile IHeadlessAgent agent;
     private volatile boolean agentAttached;
+    private volatile HeadlessSwarmLink swarmLink;
     private volatile Consumer<String> chatReceiveListener;
     private volatile Consumer<net.minecraft.network.protocol.Packet<?>> outboundObserver;
     private volatile boolean stopRequested;
@@ -268,6 +269,18 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler, IHead
     public void attachAgent(IHeadlessAgent agent) {
         this.agent = agent;
         this.agentAttached = false;
+    }
+
+    public void attachSwarmLink(HeadlessSwarmLink swarmLink) {
+        this.swarmLink = swarmLink;
+        HeadlessLiveDriver current = live;
+        if (current != null) {
+            current.baritone().setSwarm(swarmLink);
+        }
+    }
+
+    public HeadlessSwarmLink swarmLink() {
+        return swarmLink;
     }
 
     public boolean isStopRequested() {
@@ -809,6 +822,10 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler, IHead
         transport.tick();
         maybeMarkPlayerLoaded();
         if (state != State.PLAY || !spawnKnown || !loadedSent) {
+            HeadlessSwarmLink prePlaySwarm = swarmLink;
+            if (prePlaySwarm != null) {
+                prePlaySwarm.drainInbox();
+            }
             return;
         }
         IHeadlessAgent activeAgent = agent;
@@ -827,19 +844,29 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler, IHead
             } else if (curLive != null) {
                 curLive.look().beginTick(yRot, xRot);
             }
+            HeadlessSwarmLink curSwarm = swarmLink;
+            if (curSwarm != null) {
+                curSwarm.drainInbox();
+            }
             try {
                 activeAgent.onTick();
             } catch (RuntimeException e) {
                 event("ERROR agent tick: " + e);
                 e.printStackTrace(System.err);
             }
-        } else if (live != null) {
-            HeadlessLiveDriver curLive = live;
-            HeadlessMovement curMove = movement;
-            if (curMove != null) {
-                curLive.look().beginTick(curMove.lastSentYaw(), curMove.lastSentPitch());
-            } else {
-                curLive.look().beginTick(yRot, xRot);
+        } else {
+            if (live != null) {
+                HeadlessLiveDriver curLive = live;
+                HeadlessMovement curMove = movement;
+                if (curMove != null) {
+                    curLive.look().beginTick(curMove.lastSentYaw(), curMove.lastSentPitch());
+                } else {
+                    curLive.look().beginTick(yRot, xRot);
+                }
+            }
+            HeadlessSwarmLink curSwarm = swarmLink;
+            if (curSwarm != null) {
+                curSwarm.drainInbox();
             }
         }
         // Ostinato: pathing commands run here, before the single movement packet, so A* is only queued.
@@ -1087,6 +1114,9 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler, IHead
                 player.getFoodData().setSaturation(lastSaturation);
                 inventory.bind(player);
                 HeadlessLiveDriver created = new HeadlessLiveDriver(this, player, level);
+                if (swarmLink != null) {
+                    created.baritone().setSwarm(swarmLink);
+                }
                 botContext.setBaritone(created.baritone());
                 if (movement != null) {
                     movement.setDriver(created);
@@ -1182,6 +1212,14 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler, IHead
                 live.gotoBlock(parsed.x(), parsed.y(), parsed.z());
                 event("goto " + parsed.x() + " " + parsed.y() + " " + parsed.z());
                 System.out.println("[HeadlessPathing] goto " + parsed.x() + " " + parsed.y() + " " + parsed.z());
+            }
+            case GOTO_XZ -> {
+                ensureHost();
+                ensureMovement();
+                live.sync(movement);
+                live.gotoXZ(parsed.x(), parsed.z());
+                event("goto_xz " + parsed.x() + " " + parsed.z());
+                System.out.println("[HeadlessPathing] goto_xz " + parsed.x() + " " + parsed.z());
             }
             case MINE -> {
                 ensureHost();
@@ -1472,6 +1510,60 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler, IHead
         return body != null ? body.getFoodData().getSaturationLevel() : lastSaturation;
     }
 
+    public float maxHealth() {
+        HeadlessPlayer body = inventory.player();
+        return body != null ? body.getMaxHealth() : 20.0f;
+    }
+
+    public boolean isDead() {
+        return health() <= 0.0f;
+    }
+
+    public String host() {
+        return host;
+    }
+
+    public int port() {
+        return port;
+    }
+
+    public String dimension() {
+        return dimension == null ? "" : dimension;
+    }
+
+    public char dimensionChar() {
+        String d = dimension();
+        if (d.contains("nether")) {
+            return 'n';
+        }
+        if (d.contains("end")) {
+            return 'e';
+        }
+        if (d.contains("overworld") || !d.isEmpty()) {
+            return 'o';
+        }
+        return '?';
+    }
+
+    public baritone.swarm.center.feed.BotFeed.Route pathRoute() {
+        HeadlessLiveDriver current = live;
+        return current != null ? current.pathRouteSnapshot() : baritone.swarm.center.feed.BotFeed.Route.IDLE;
+    }
+
+    public long lastPathMs() {
+        HeadlessLiveDriver current = live;
+        return current != null ? current.lastPathMs() : -1L;
+    }
+
+    public String processName() {
+        String task = currentTask();
+        if (task != null && !task.isBlank() && !task.startsWith("pathing=idle") && !"idle".equalsIgnoreCase(task) && !"not attached".equalsIgnoreCase(task)) {
+            return task;
+        }
+        HeadlessLiveDriver current = live;
+        return current != null ? current.processName() : "idle";
+    }
+
     public IHeadlessAgent agent() {
         return agent;
     }
@@ -1499,14 +1591,34 @@ public final class HeadlessBot implements HeadlessPacketListeners.Handler, IHead
             return;
         }
         String trimmed = command.trim();
-        IHeadlessAgent active = agent;
-        if (active != null && (trimmed.startsWith("@") || "stop".equalsIgnoreCase(trimmed))) {
-            String forwarded = "stop".equalsIgnoreCase(trimmed) ? "@stop" : trimmed;
-            if ("@stop".equalsIgnoreCase(forwarded) || "cancel".equalsIgnoreCase(trimmed)) {
-                enqueuePathing("cancel");
-            }
-            active.onCommand(forwarded);
+        if (trimmed.startsWith("#")) {
+            trimmed = trimmed.substring(1).trim();
+        }
+        if (trimmed.isEmpty()) {
             return;
+        }
+        IHeadlessAgent active = agent;
+        if ("stop".equalsIgnoreCase(trimmed) || "cancel".equalsIgnoreCase(trimmed) || "@stop".equalsIgnoreCase(trimmed)) {
+            enqueuePathing("cancel");
+            if (active != null) {
+                active.onCommand("@stop");
+            }
+            return;
+        }
+        if (active != null && trimmed.startsWith("@")) {
+            active.onCommand(trimmed);
+            return;
+        }
+        String[] parts = trimmed.split("\\s+");
+        if (parts.length == 3 && "goto".equalsIgnoreCase(parts[0])) {
+            try {
+                int gx = Integer.parseInt(parts[1]);
+                int gz = Integer.parseInt(parts[2]);
+                enqueuePathing("goto_xz " + gx + " " + gz);
+                return;
+            } catch (NumberFormatException ignored) {
+                // Fall through to normal pathing parser error reporting
+            }
         }
         enqueuePathing(trimmed);
     }

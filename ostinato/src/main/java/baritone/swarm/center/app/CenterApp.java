@@ -6,7 +6,13 @@ import baritone.swarm.center.app.fake.FakeCommandPort;
 import baritone.swarm.center.app.fake.DemoSwarm;
 import baritone.swarm.center.channel.CenterClient;
 import baritone.swarm.center.channel.CommandPort;
+import baritone.swarm.center.channel.CompositeCommandPort;
+import baritone.swarm.center.channel.HeadlessControlCommandPort;
+import baritone.swarm.center.channel.HeadlessEndpoint;
+import baritone.swarm.center.feed.CenterFeed;
+import baritone.swarm.center.feed.CompositeSwarmSource;
 import baritone.swarm.center.feed.FeedReader;
+import baritone.swarm.center.feed.HeadlessControlSource;
 import baritone.swarm.center.feed.SwarmSource;
 import baritone.swarm.center.feed.SwarmView;
 
@@ -60,21 +66,44 @@ public final class CenterApp {
     public static void main(String[] args) throws Exception {
         Map<String, List<String>> a = parse(args);
         String log = first(a, "log");
-        if (first(a, "fake") == null && first(a, "dir") == null) {
-            System.err.println("usage: CenterApp --dir <swarmCenterDir> | --fake N");
+        List<HeadlessEndpoint> headlessEndpoints = parseHeadlessEndpoints(a);
+        if (first(a, "fake") == null && first(a, "dir") == null && headlessEndpoints.isEmpty()) {
+            System.err.println("usage: CenterApp [--dir <swarmCenterDir>] [--control-port <port>] [--headless <host:port>] | --fake N");
             System.exit(2);
         }
         SwarmSource source;
         CommandPort port;
-        Path dir = null;
+        Path dir = first(a, "dir") == null ? null : Path.of(first(a, "dir"));
         if (first(a, "fake") != null) {
             DemoSwarm demo = new DemoSwarm(Math.max(1, Integer.parseInt(first(a, "fake"))), System::currentTimeMillis);
             source = demo;
             port = new FakeCommandPort(demo.swarm().hostName());
+        } else if (!headlessEndpoints.isEmpty() && dir == null) {
+            HeadlessControlSource hSource = new HeadlessControlSource(headlessEndpoints, System::currentTimeMillis);
+            source = hSource;
+            port = new HeadlessControlCommandPort(headlessEndpoints, hSource::endpointForBot, System::currentTimeMillis);
+        } else if (!headlessEndpoints.isEmpty()) {
+            FeedReader feedReader = new FeedReader(dir, System::currentTimeMillis);
+            HeadlessControlSource hSource = new HeadlessControlSource(headlessEndpoints, System::currentTimeMillis);
+            source = new CompositeSwarmSource(List.of(feedReader, hSource), System::currentTimeMillis);
+            CommandPort hPort = new HeadlessControlCommandPort(headlessEndpoints, hSource::endpointForBot, System::currentTimeMillis);
+            CommandPort cPort = new CenterClient(dir, System::currentTimeMillis);
+            port = new CompositeCommandPort(
+                    hPort,
+                    cPort,
+                    bot -> hSource.endpointForBot(bot) != null,
+                    () -> Files.isRegularFile(CenterFeed.hostFile(dir)));
         } else {
-            dir = Path.of(first(a, "dir"));
             source = new FeedReader(dir, System::currentTimeMillis);
             port = new CenterClient(dir, System::currentTimeMillis);
+        }
+        if (source instanceof AutoCloseable closeable) {
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                try {
+                    closeable.close();
+                } catch (Exception ignored) {
+                }
+            }, "center-source-close"));
         }
         final Path prefs = dir;
         CenterTheme theme = theme(first(a, "theme"));
@@ -366,6 +395,21 @@ public final class CenterApp {
     private static String first(Map<String, List<String>> a, String k) {
         List<String> v = a.get(k);
         return v == null || v.isEmpty() ? null : v.get(0);
+    }
+
+    private static List<HeadlessEndpoint> parseHeadlessEndpoints(Map<String, List<String>> a) {
+        List<HeadlessEndpoint> out = new ArrayList<>();
+        for (String raw : a.getOrDefault("control-port", List.of())) {
+            if (!raw.isBlank()) {
+                out.add(HeadlessEndpoint.parse(raw));
+            }
+        }
+        for (String raw : a.getOrDefault("headless", List.of())) {
+            if (!raw.isBlank()) {
+                out.add(HeadlessEndpoint.parse(raw));
+            }
+        }
+        return out;
     }
 
     /** Optional append-only log for live checks: replies, and every 10 s one line per tile. */

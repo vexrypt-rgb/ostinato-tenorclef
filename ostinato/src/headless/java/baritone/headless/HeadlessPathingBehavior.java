@@ -49,6 +49,7 @@ public final class HeadlessPathingBehavior implements IPathingBehavior {
     private java.util.concurrent.Future<PathCalculationResult> pending;
     private AStarPathFinder finder;
     private volatile String status = "idle";
+    private volatile long lastSearchMs = -1L;
     private int executionFailRetries;
 
 
@@ -125,7 +126,14 @@ public final class HeadlessPathingBehavior implements IPathingBehavior {
                 + " mayEscalate=" + mayEscalate + " planAhead=" + planAhead
                 + " allowPlace=" + allowPlace + " hasThrowaway=" + hasThrowaway
                 + " throwawayCount=" + throwawayCount + " " + hotbar);
-        pending = planner.submit(() -> search.calculate(primaryMs, failureMs));
+        pending = planner.submit(() -> {
+            long t0 = System.nanoTime();
+            try {
+                return search.calculate(primaryMs, failureMs);
+            } finally {
+                lastSearchMs = Math.max(0L, (System.nanoTime() - t0) / 1_000_000L);
+            }
+        });
         status = "planning " + goal;
     }
 
@@ -259,6 +267,10 @@ public final class HeadlessPathingBehavior implements IPathingBehavior {
 
     public String status() {
         return status;
+    }
+
+    public long lastSearchMs() {
+        return lastSearchMs;
     }
 
     /** Ostinato: true while A* is running (including the wait between partial path segments). */

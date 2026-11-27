@@ -79,6 +79,7 @@ public final class HeadlessBaritone implements IPathingHost {
     private final IMineProcess mineProcess;
     private final IFollowProcess followProcess;
     private final IWorldQueries worldQueries;
+    private volatile ISwarm swarm;
 
     private CalculationContext context;
 
@@ -376,9 +377,13 @@ public final class HeadlessBaritone implements IPathingHost {
         return null;
     }
 
+    public void setSwarm(ISwarm swarm) {
+        this.swarm = swarm;
+    }
+
     @Override
     public ISwarm getSwarm() {
-        return null;
+        return swarm;
     }
 
     @Override

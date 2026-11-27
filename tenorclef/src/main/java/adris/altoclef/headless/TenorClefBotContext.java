@@ -31,6 +31,11 @@ public final class TenorClefBotContext {
     //#endif
     private volatile AltoClef mod;
     private volatile boolean loadStarted;
+    private volatile Object swarmRuntimeState;
+
+    // Isolated Fleet member set per bot
+    public final Object fleetLock = new Object();
+    public final Set<String> fleetMembers = new java.util.LinkedHashSet<>();
 
     // Isolated EventBus state per bot
     public final HashMap<Class, List<Subscription>> eventTopics = new HashMap<>();
@@ -112,6 +117,14 @@ public final class TenorClefBotContext {
 
     public void setLoadStarted(boolean loadStarted) {
         this.loadStarted = loadStarted;
+    }
+
+    public Object getSwarmRuntimeState() {
+        return swarmRuntimeState;
+    }
+
+    public void setSwarmRuntimeState(Object swarmRuntimeState) {
+        this.swarmRuntimeState = swarmRuntimeState;
     }
 
     @SuppressWarnings("unchecked")

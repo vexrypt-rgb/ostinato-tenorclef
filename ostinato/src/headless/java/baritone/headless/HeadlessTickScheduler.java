@@ -6,6 +6,7 @@
 package baritone.headless;
 
 import baritone.api.context.BotContextScope;
+import baritone.swarm.TickRateMeter;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -36,6 +37,7 @@ public final class HeadlessTickScheduler {
     private final AtomicLong lastTickDurationNanos = new AtomicLong();
     private final AtomicLong totalTickDurationNanos = new AtomicLong();
     private final AtomicLong errorCount = new AtomicLong();
+    private final TickRateMeter tickRate = new TickRateMeter();
     private volatile Thread loopThread;
 
     public HeadlessTickScheduler(int workerThreads) {
@@ -123,6 +125,11 @@ public final class HeadlessTickScheduler {
         return errorCount.get();
     }
 
+    /** Tenths of a tick per second over the recent 5s window, or -1 if insufficient samples. */
+    public int tpsX10() {
+        return tickRate.tpsX10(System.currentTimeMillis());
+    }
+
     private void runLoop() {
         long nextDeadline = System.nanoTime() + TICK_INTERVAL_NANOS;
         while (running.get()) {
@@ -130,6 +137,7 @@ public final class HeadlessTickScheduler {
             if (!running.get()) {
                 break;
             }
+            tickRate.tick(System.currentTimeMillis());
             long actualStart = System.nanoTime();
             long drift = Math.max(0L, actualStart - nextDeadline);
             updateMax(maxDriftNanos, drift);

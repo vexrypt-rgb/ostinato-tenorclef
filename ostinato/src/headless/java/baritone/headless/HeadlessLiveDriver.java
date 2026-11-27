@@ -5,14 +5,19 @@ import baritone.altoclef.AltoClefSettings;
 import baritone.api.Settings;
 import baritone.api.context.BotContext;
 import baritone.api.context.BotContextScope;
+import baritone.api.pathing.goals.Goal;
 import baritone.api.pathing.goals.GoalBlock;
 import baritone.api.pathing.goals.GoalGetToBlock;
+import baritone.api.pathing.goals.GoalXZ;
+import baritone.api.utils.BetterBlockPos;
 import baritone.api.utils.RayTraceUtils;
 import baritone.api.utils.Rotation;
 import baritone.api.utils.RotationUtils;
 import baritone.api.utils.input.Input;
+import baritone.api.utils.interfaces.IGoalRenderPos;
 import baritone.pathing.kinematic.PlayerSim;
 import baritone.pathing.path.PathExecutor;
+import baritone.swarm.center.feed.BotFeed;
 import net.minecraft.util.Mth;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -176,6 +181,66 @@ final class HeadlessLiveDriver implements HeadlessMovement.Driver {
     void gotoBlock(int x, int y, int z) {
         cancel();
         host.getPathingBehavior().gotoGoal(new GoalBlock(x, y, z));
+    }
+
+    void gotoXZ(int x, int z) {
+        cancel();
+        host.getPathingBehavior().gotoGoal(new GoalXZ(x, z));
+    }
+
+    long lastPathMs() {
+        return host.getPathingBehavior().lastSearchMs();
+    }
+
+    String processName() {
+        if (mining != null) {
+            return "Mine";
+        }
+        if (placing != null) {
+            return "Place";
+        }
+        if (combat.active()) {
+            return "Combat";
+        }
+        if (craft.active()) {
+            return "Craft";
+        }
+        if (host.getPathingBehavior().isPathing()) {
+            return "Goto";
+        }
+        return "idle";
+    }
+
+    BotFeed.Route pathRouteSnapshot() {
+        HeadlessPathingBehavior pb = host.getPathingBehavior();
+        Goal goal = pb.getGoal();
+        var cur = pb.getCurrent();
+        String state = pb.planning() ? "calculating" : (cur != null ? "pathing" : "idle");
+        int[] goalPos = null;
+        double dist = -1;
+        if (goal instanceof IGoalRenderPos g) {
+            BlockPos gp = g.getGoalPos();
+            goalPos = new int[]{gp.getX(), gp.getY(), gp.getZ()};
+            dist = Math.sqrt(gp.distSqr(player.blockPosition()));
+        } else if (goal instanceof GoalXZ gxz) {
+            goalPos = new int[]{gxz.getX(), player.getBlockY(), gxz.getZ()};
+            double dx = gxz.getX() - player.getX();
+            double dz = gxz.getZ() - player.getZ();
+            dist = Math.sqrt(dx * dx + dz * dz);
+        }
+        java.util.List<int[]> nodes = new java.util.ArrayList<>();
+        int posIdx = 0;
+        int len = 0;
+        if (cur != null && cur.getPath() != null) {
+            posIdx = cur.getPosition();
+            var all = cur.getPath().positions();
+            len = all.size();
+            for (int i = Math.max(0, posIdx); i < len && nodes.size() < BotFeed.MAX_NODES; i++) {
+                BetterBlockPos n = all.get(i);
+                nodes.add(new int[]{n.x, n.y, n.z});
+            }
+        }
+        return new BotFeed.Route(state, goal == null ? "" : goal.toString(), goalPos, dist, posIdx, len, nodes);
     }
 
     // Ostinato: fight matching monsters (or a type like "zombie") until none remain.

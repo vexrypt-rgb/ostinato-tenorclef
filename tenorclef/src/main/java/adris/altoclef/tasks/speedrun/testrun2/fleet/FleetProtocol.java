@@ -4,10 +4,15 @@ import adris.altoclef.AltoClef;
 import adris.altoclef.Debug;
 import adris.altoclef.TaskCatalogue;
 import adris.altoclef.ui.MessagePriority;
+import baritone.api.BaritoneAPI;
+import baritone.api.IBaritone;
+import baritone.api.swarm.ISwarm;
+import baritone.api.swarm.ISwarmGroup;
+import baritone.api.swarm.SwarmPriority;
 import java.util.Locale;
 
 /**
- * Bot-to-bot whispers. Line after butler "` " :
+ * Bot-to-bot whispers and in-JVM swarm messages. Line after butler "` " :
  *   ~ ping
  *   ~ pong
  *   ~ do get oak_log 32
@@ -16,8 +21,23 @@ import java.util.Locale;
 public final class FleetProtocol {
 
     public static final String TAG = "~ ";
+    public static final String TYPE = "TCF";
 
     private FleetProtocol() {}
+
+    /** Registers this bot's {@code TCF} handler on {@link ISwarm} when online. */
+    public static boolean registerSwarmHandler() {
+        try {
+            IBaritone b = BaritoneAPI.getProvider().getPrimaryBaritone();
+            ISwarm sw = b == null ? null : b.getSwarm();
+            if (sw == null || !sw.isOnline()) {
+                return false;
+            }
+            return sw.registerHandler(TYPE, (from, group, body) -> handle(from, body));
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
 
     /** @return true if consumed (not a normal butler reject). */
     public static boolean handle(String from, String message) {
@@ -26,7 +46,7 @@ public final class FleetProtocol {
         if (body.startsWith("`")) body = body.substring(1).trim();
         if (!body.startsWith("~")) return false;
         body = body.substring(1).trim();
-        if (!Fleet.known(from)) {
+        if (!Fleet.known(from) && !knownOnSwarm(from)) {
             Debug.logMessage("FLEET ignore unknown " + from);
             return true;
         }
@@ -87,10 +107,42 @@ public final class FleetProtocol {
 
     public static void whisper(AltoClef mod, String user, String line) {
         try {
-            mod.getMessageSender().enqueueWhisper(user, "` " + line, MessagePriority.TIMELY);
+            IBaritone b = BaritoneAPI.getProvider().getPrimaryBaritone();
+            ISwarm sw = b == null ? null : b.getSwarm();
+            if (sw != null && sw.isOnline()) {
+                for (ISwarmGroup g : sw.myGroups()) {
+                    if (g.has(user) && sw.send(g.id(), user, TYPE, line, SwarmPriority.HIGH)) {
+                        return;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+            // Fall back to server whisper below
+        }
+        try {
+            if (mod != null && mod.getMessageSender() != null) {
+                mod.getMessageSender().enqueueWhisper(user, "` " + line, MessagePriority.TIMELY);
+            }
         } catch (Throwable t) {
             Debug.logWarning("FLEET whisper " + t.getMessage());
         }
+    }
+
+    private static boolean knownOnSwarm(String from) {
+        try {
+            IBaritone b = BaritoneAPI.getProvider().getPrimaryBaritone();
+            ISwarm sw = b == null ? null : b.getSwarm();
+            if (sw == null || !sw.isOnline()) {
+                return false;
+            }
+            for (ISwarmGroup g : sw.myGroups()) {
+                if (g.has(from)) {
+                    return true;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
     }
 
     private static int parse(String s, int d) {

@@ -143,11 +143,7 @@ public final class AltoClefExecutor implements AssignmentExecutor {
         long now = System.currentTimeMillis();
         if (now - lastRespawnTry > 3_000) {
             lastRespawnTry = now;
-            net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
-            if (mc.player != null) {
-                mc.player.requestRespawn();
-                mc.setScreen(null);
-            }
+            adris.altoclef.headless.BotClientBridge.respawn();
         }
         return false;
     }

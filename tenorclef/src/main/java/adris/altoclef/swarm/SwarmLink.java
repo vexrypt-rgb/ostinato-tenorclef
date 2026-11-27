@@ -45,12 +45,18 @@ public interface SwarmLink {
     /** Ostinato: the link over the typed {@code IBaritone.getSwarm()} API, no reflection. */
     final class Typed implements SwarmLink {
         private static baritone.api.swarm.ISwarm swarm() {
-            return BaritoneAPI.getProvider().getPrimaryBaritone().getSwarm();
+            var provider = BaritoneAPI.getProvider();
+            if (provider == null) return null;
+            var primary = provider.getPrimaryBaritone();
+            return primary == null ? null : primary.getSwarm();
         }
 
         @Override
         public String problem() {
             baritone.api.swarm.ISwarm s = swarm();
+            if (s == null) {
+                return "Ostinato swarm link is unavailable (no ISwarm)";
+            }
             if (s.isOnline()) return null;
             return "Ostinato swarm link is not running (" + s.state()
                     + "). Set swarmEnabled true, add a roster and keyring; see the Ostinato swarm guide.";
@@ -58,12 +64,15 @@ public interface SwarmLink {
 
         @Override
         public String self() {
-            return swarm().self();
+            baritone.api.swarm.ISwarm s = swarm();
+            return s == null ? null : s.self();
         }
 
         @Override
         public String leader() {
-            for (baritone.api.swarm.ISwarmGroup g : swarm().myGroups()) {
+            baritone.api.swarm.ISwarm s = swarm();
+            if (s == null) return null;
+            for (baritone.api.swarm.ISwarmGroup g : s.myGroups()) {
                 if (g.lead() != null) return g.lead();
             }
             return null;
@@ -72,6 +81,7 @@ public interface SwarmLink {
         @Override
         public boolean leads() {
             baritone.api.swarm.ISwarm s = swarm();
+            if (s == null) return false;
             String me = s.self();
             if (me == null) return false;
             for (baritone.api.swarm.ISwarmGroup g : s.myGroups()) {
@@ -82,13 +92,16 @@ public interface SwarmLink {
 
         @Override
         public String leadOf(String group) {
-            baritone.api.swarm.ISwarmGroup g = swarm().group(group);
+            baritone.api.swarm.ISwarm s = swarm();
+            if (s == null) return null;
+            baritone.api.swarm.ISwarmGroup g = s.group(group);
             return g == null ? null : g.lead();
         }
 
         @Override
         public boolean send(String to, SwarmMessage m) {
             baritone.api.swarm.ISwarm s = swarm();
+            if (s == null) return false;
             for (baritone.api.swarm.ISwarmGroup g : s.myGroups()) {
                 if (!g.has(to)) continue;
                 return s.send(g.id(), to, TYPE, m.encode(), baritone.api.swarm.SwarmPriority.HIGH);
@@ -100,7 +113,10 @@ public interface SwarmLink {
         public void onReceive(TriConsumer<String, String, String> handler) {
             // Re-registering replaces the handler for TYPE, so this is safe to call every tick and
             // picks up a restarted link.
-            swarm().registerHandler(TYPE, handler::accept);
+            baritone.api.swarm.ISwarm s = swarm();
+            if (s != null) {
+                s.registerHandler(TYPE, handler::accept);
+            }
         }
     }
 }

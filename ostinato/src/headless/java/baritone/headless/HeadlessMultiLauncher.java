@@ -51,6 +51,8 @@ public final class HeadlessMultiLauncher {
         long staggerMs = 200L;
         int tickThreads = 4;
         boolean withTenorClef = false;
+        String swarmLeader = null;
+        boolean swarmAuto = false;
 
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
@@ -70,6 +72,8 @@ public final class HeadlessMultiLauncher {
                 case "--stagger-ms" -> staggerMs = Long.parseLong(requireValue(args, ++i, "--stagger-ms"));
                 case "--tick-threads" -> tickThreads = Integer.parseInt(requireValue(args, ++i, "--tick-threads"));
                 case "--with-tenorclef" -> withTenorClef = true;
+                case "--swarm-leader" -> swarmLeader = requireValue(args, ++i, "--swarm-leader");
+                case "--swarm-auto" -> swarmAuto = true;
                 case "--help", "-h" -> {
                     printUsage();
                     return;
@@ -116,6 +120,13 @@ public final class HeadlessMultiLauncher {
         }
 
         scheduler.start();
+
+        if (swarmLeader != null && !swarmLeader.isBlank()) {
+            fleet.swarmBus().setLeader(swarmLeader);
+        }
+        if (swarmAuto && botCount > 0) {
+            fleet.bootstrapLocalSwarm(swarmLeader);
+        }
 
         if (enableStdin) {
             startStdinLoop(fleet);
@@ -231,5 +242,7 @@ public final class HeadlessMultiLauncher {
         System.out.println("  --stagger-ms <ms>       Delay between sequential bot logins (default 200)");
         System.out.println("  --tick-threads <N>      Worker threads in HeadlessTickScheduler (default 4)");
         System.out.println("  --with-tenorclef        Load TenorClef agent factory via ServiceLoader");
+        System.out.println("  --swarm-leader <botId>  Designate initial in-JVM swarm coordinator bot");
+        System.out.println("  --swarm-auto            Auto-bootstrap @swarm lead/join across launched bots");
     }
 }

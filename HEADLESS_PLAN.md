@@ -196,3 +196,46 @@ Run configuration: `--bots 50 --host 127.0.0.1 --port 25570 --prefix StressBot -
 | **Scheduler `maxDriftMs` / Overruns / Errors** | — | **`50.457 ms` / `7` / `0`** (`694` ticks) | — |
 | **G1GC Pauses (`gc50.log`)** | — | **`36` pauses, `0` Full GCs** | `max = 26.817 ms`, `avg = 7.499 ms` |
 
+---
+
+## Phase D — Command Center & In-JVM Swarm Coordinator Integration
+
+### Step 0 — Design Doc Audit & Architecture Mapping (`SPEC_swarm_design_doc.md` -> Single-JVM Headless Engine)
+
+| Design Doc Concept (`SWARM_DESIGN_DOC_v3.tsx`) | Existing Command Center / Swarm Component | Headless Fleet Target (`HeadlessControlServer` / `HeadlessFleetController`) |
+| --- | --- | --- |
+| Read-only status & log view + Mission control wall / War room map (`CenterApp`, `WallView`, `MapView`) | `SwarmSource` (`FeedReader`, `FakeSwarm`) reading `ostinato.center` v1 (`BotFeed`, `CoordinatorFeed`, `CatalogFeed`, `HostInfo`) | `HeadlessControlSource` (`SwarmSource`) streaming via `ws://127.0.0.1:<port>/ws` (`subscribe`) + `GET /center/snapshot` fallback, emitting `ostinato.center` v1 feeds; `CompositeSwarmSource` merges graphical + headless fleets |
+| Authenticated command dispatch (`CommandPort`, `CenterRequest`/`CenterReply`, `TileRoute`) | `CenterClient` -> `CenterHost` -> `UnifiedRegistry` / `TileActions` | `HeadlessControlCommandPort` (`CommandPort`) -> `POST /center/request` (or WS `center_request`) -> `HeadlessFleetController.handleCenterRequest(CenterRequest)`; `CompositeCommandPort` routes per target bot |
+| Execution & observation split states (`accepted`, `running`, `succeeded`, `failed`, `canceled` + `confirmed`, `stale`, `unknown`) | `BotFeed.Execution`, `CommandProtocol`, `Alerts` | Bounded per-bot execution ledger (`MAX_EXECUTIONS = 8`) in `HeadlessFleetController` tracking `dispatchCommand` & `cancel` with explicit `observation` state |
+| Local IPC / in-process bus preferred over rate-limited server chat (`InMemorySwarmBus`, `ISwarm`, `SwarmControl`) | `ISwarm` (`SwarmApi` / `SwarmBehavior`), `SwarmLink.Typed`, `SwarmRuntime`, `SwarmCoordinator`, `SwarmWorker`, `FleetProtocol` | `HeadlessSwarmBus` + `HeadlessSwarmLink` (`ISwarm`) owned by `HeadlessFleetController`, wired into `HeadlessBaritone.getSwarm()`, drained inside `HeadlessBot.tickOnce()` under `BotContextScope`, with `RemoteFallback` for non-local peers |
+| Cooperative resource claims, leases & observations (`ReservationKey`, `LeaseCoordinator`, `ReservationTable`) | `ReservationKey.conflicts(...)`, TenorClef `SwarmCoordinator`, `ReservationTable`, `BeliefBoard` | `HeadlessSwarmBus` cooperative claims (`ReservationKey.conflicts`), shared observations, and passive `TCS` (`s1 ...`) observer projecting live assignments/claims into `CoordinatorFeed` (`GET /swarm/status`) |
+| Per-bot `BotContext` / `ScopedValue` isolation & safety hierarchy | `BotContextScope`, `TenorClefBotContext`, `SwarmRuntime`, `GoalCommand`, `Fleet` | `TenorClefBotContext`-scoped `SwarmRuntime.State`, `GoalCommand`, `Fleet.members()`, and `AltoClefExecutor` using `BotClientBridge.respawn()` |
+
+### Integration Checklist
+- [x] **Step 0 — Audit Design Doc, Command Center & Swarm Architecture:** Audited `SPEC_swarm_design_doc.md`, `COMMAND_CENTER_NOTES.md`, `SWARM_PHASE1_NOTES.md`, `tenorclef/docs/guides/swarm-and-fleet.md`, `CenterApp`, `SwarmSource`, `CommandPort`, `CenterFeed` v1, `ISwarm`, `SwarmRuntime`, `SwarmCoordinator`, `SwarmWorker`, `HeadlessControlServer`, and `HeadlessFleetController`.
+- [x] **Phase 1 — Command Center <-> `HeadlessControlServer` Integration:**
+  - [x] Enrich `HeadlessCommands`, `HeadlessLiveDriver`, `HeadlessPathingBehavior`, `HeadlessBot`, `HeadlessFleetController`, and `HeadlessControlServer` with `ostinato.center` v1 telemetry (`GET /center/snapshot`, `POST /center/request`, WS `subscribe`/`snapshot`/`center_request`), 2-arg `goto <x> <z>`, `mine [count] <block>`, `InventorySummary`, live route nodes, and execution ledger.
+  - [x] Add pure-JDK `HeadlessEndpoint`, `HeadlessControlSource`, `CompositeSwarmSource`, `HeadlessControlCommandPort`, `CompositeCommandPort`, and `--control-port` / `--headless` support in `CenterApp` (preserving `SourceLintTest` and `center-app` JDK-21-only boundary).
+- [x] **Phase 2 — In-JVM Swarm Coordinator <-> `HeadlessFleetController` Bridge:**
+  - [x] Add `HeadlessSwarmBus` and `HeadlessSwarmLink` (`ISwarm`) with tick-thread `BotContextScope` inbox drain, `ReservationKey` claim conflict detection, shared observations, `TCS` passive projection, remote fallback hook, and `GET /swarm/status` + `POST /swarm/command` + `--swarm-leader` / `--swarm-auto`.
+  - [x] Isolate TenorClef `SwarmRuntime`, `GoalCommand`, `Fleet`, `FleetProtocol` (`TCF` over `ISwarm` with whisper fallback), `BotClientBridge.runDirectory()`, and `GameFiles.dir()` per `TenorClefBotContext`, replace `MinecraftClient.getInstance()` in `AltoClefExecutor.alive()` with `BotClientBridge.respawn()`, fix per-bot `Settings` isolation in `HeadlessFleetController.spawnBot`, and wire `@swarm lead|join|leave|acquire|jobs|why|local|cancel` (plus multi-token `StringArg` parsing) in `SwarmCommand`.
+- [x] **Phase 3 — Verification, Builds & Live MC 26.3 Multi-Bot Proof:**
+  - [x] `center-app` tests (`SourceLintTest` + `HeadlessControlAdapterTest`: `155 tests, 0 failed`), Ostinato headless/swarm/center tests (`HeadlessCenterAndSwarmIntegrationTest`: `380 tests, 0 failed`), `check-baritone-imports.sh` (`ok`), TenorClef `:26.3:compileJava :26.3:test :26.3:build :1.21.11:compileJava :1.21.4:compileJava` (`SwarmContextIsolationTest`, `368 tests` on `:26.3`, `0` failures).
+  - [x] Live multi-bot MC `26.3` verification against `127.0.0.1:25570` with Command Center live telemetry/dispatch + in-JVM Swarm work division and `0` protocol/GCD/slew/steady-overrun violations.
+
+### Phase D — Changed & Added Files
+- **Ostinato Headless Engine (`ostinato/src/headless/java/baritone/headless/`):** `HeadlessSwarmBus.java` (new), `HeadlessSwarmLink.java` (new), `HeadlessBaritone.java`, `HeadlessBot.java`, `HeadlessCommands.java`, `HeadlessControlServer.java`, `HeadlessFleetController.java`, `HeadlessLiveDriver.java`, `HeadlessMultiLauncher.java`, `HeadlessPathingBehavior.java`, `HeadlessTickScheduler.java`.
+- **Ostinato Command Center (`ostinato/src/main/java/baritone/swarm/center/`):** `channel/HeadlessEndpoint.java` (new), `channel/HeadlessControlCommandPort.java` (new), `channel/CompositeCommandPort.java` (new), `feed/HeadlessControlSource.java` (new), `feed/CompositeSwarmSource.java` (new), `app/CenterApp.java`.
+- **TenorClef (`tenorclef/src/main/java/adris/altoclef/`):** `commands/GoalCommand.java`, `commands/SwarmCommand.java`, `headless/BotClientBridge.java`, `headless/TenorClefBotContext.java`, `swarm/AltoClefExecutor.java`, `swarm/SwarmLink.java`, `swarm/SwarmRuntime.java`, `tasks/speedrun/testrun2/fleet/Fleet.java`, `tasks/speedrun/testrun2/fleet/FleetProtocol.java`, `tasks/speedrun/testrun2/util/GameFiles.java`.
+- **Tests:** `ostinato/center-app/src/test/java/baritone/swarm/center/feed/HeadlessControlAdapterTest.java`, `ostinato/src/test/java/baritone/headless/HeadlessCenterAndSwarmIntegrationTest.java`, `tenorclef/src/test/java/adris/altoclef/swarm/SwarmContextIsolationTest.java`.
+
+### Phase D — Verification & Live MC 26.3 Results (`PASS`)
+- **Gate 1 (`ostinato/scripts/center-app.ps1 test`):** `tests: 155, failed: 0` (`SourceLintTest` + `HeadlessControlAdapterTest`).
+- **Gate 2 (`ostinato` `:fabric:remapJar :compileHeadlessJava :test -x nativeHost --tests "baritone.headless.*" --tests "baritone.swarm.center.*" --tests "baritone.swarm.transport.*" --tests "baritone.swarm.lease.*"`):** `380 tests, 0 failed` (`BUILD SUCCESSFUL`).
+- **Gate 3 (`tenorclef/scripts/check-baritone-imports.sh`):** `baritone import gate: ok (1 allowlisted files still use internals)`.
+- **Gate 4 (`tenorclef` `-PostinatoJar.26.3=.../baritone-fabric-1.28.0.jar :26.3:compileJava :26.3:test :26.3:build :1.21.11:compileJava :1.21.4:compileJava`):** `BUILD SUCCESSFUL` (`368` tests on `:26.3`, plus `:1.21.11` & `:1.21.4` compilation).
+- **Live MC `26.3` 3-Bot Verification (`127.0.0.1:25570`, `CleanLead` / `CleanA` / `CleanB` with `TenorClefHeadlessFactory` + `legitMine=true`):**
+  - Command Center (`HeadlessControlSource` + `HeadlessControlCommandPort` + `CenterShell`) discovered all 3 bots, rendered wall tiles with live position/dimension/health/inventory/process telemetry, executed `PRESS goto` (`GoalXZ`) + `stop`, and verified dynamic `spawn`/`despawn` (`TempBot`).
+  - In-JVM Swarm (`@swarm lead` on `CleanLead`, `@swarm join` on `CleanA`/`CleanB`) divided `@swarm acquire dirt 2` (`a1 -> CleanA`) and `@swarm acquire oak_log 2` (`a2 -> CleanB`) concurrently over `HeadlessSwarmBus` (`58/58` local messages delivered, `SWARM_CHAT_PACKETS=0`, both `released` / `progress=100` / `reason=succeeded`).
+  - Compliance & timing: `ROT_CHECKS=192`, `GCD_VIOLATIONS=0`, `SLEW_VIOLATIONS=0`, `ORDER_VIOLATIONS=0`, `SWARM_STEADY_TICKS=896`, `SWARM_STEADY_OVERRUNS=0`, `TPS_X10=199`.
+

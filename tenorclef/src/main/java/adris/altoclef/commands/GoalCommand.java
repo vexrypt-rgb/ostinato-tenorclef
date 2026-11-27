@@ -79,9 +79,10 @@ public class GoalCommand extends Command {
     }
 
     private void dumpStatus(AltoClef mod) {
-        if (activeManager != null) {
-            mod.log("Goal: " + activeManager.summarize());
-            Plan plan = activeManager.getPlan();
+        GoalManager current = getActiveManager();
+        if (current != null) {
+            mod.log("Goal: " + current.summarize());
+            Plan plan = current.getPlan();
             if (plan != null) {
                 for (PlanStep s : plan.getSteps()) {
                     mod.log("  step: " + s);
@@ -106,7 +107,7 @@ public class GoalCommand extends Command {
         GoalManager manager = new GoalManager();
         CatalogueInventoryView inv = new CatalogueInventoryView(mod);
         manager.start(goal, inv);
-        activeManager = manager;
+        setActiveManager(manager);
 
         if (manager.getStatus().isTerminal()) {
             mod.log("Goal immediate " + manager.getStatus() + ": " + manager.getLastNote());

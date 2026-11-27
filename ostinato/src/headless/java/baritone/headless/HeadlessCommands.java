@@ -11,7 +11,7 @@ import java.util.Locale;
 public final class HeadlessCommands {
 
     public enum Kind {
-        STOP, CANCEL, GOTO, MINE, PLACE, STATUS, PROBE, COURSE, KILL, CRAFT, SMELT, CHEST, DROP, PICKUP, EQUIP
+        STOP, CANCEL, GOTO, GOTO_XZ, MINE, PLACE, STATUS, PROBE, COURSE, KILL, CRAFT, SMELT, CHEST, DROP, PICKUP, EQUIP
     }
 
     /** A parsed command. {@code error} is set when the verb was recognized but the arguments were not. */
@@ -58,11 +58,33 @@ public final class HeadlessCommands {
                     yield bad("usage: goto <x> <y> <z> (integers)");
                 }
             }
-            case "mine" -> {
-                if (parts.length != 2) {
-                    yield bad("usage: mine <block>");
+            case "goto_xz" -> {
+                if (parts.length != 3) {
+                    yield bad("usage: goto_xz <x> <z>");
                 }
-                yield new Parsed(Kind.MINE, 0, 0, 0, parts[1].toLowerCase(Locale.ROOT), null);
+                try {
+                    yield new Parsed(Kind.GOTO_XZ, Integer.parseInt(parts[1]), 0,
+                            Integer.parseInt(parts[2]), "", null);
+                } catch (NumberFormatException e) {
+                    yield bad("usage: goto_xz <x> <z> (integers)");
+                }
+            }
+            case "mine" -> {
+                if (parts.length == 2) {
+                    yield new Parsed(Kind.MINE, 0, 0, 0, parts[1].toLowerCase(Locale.ROOT), null);
+                }
+                if (parts.length == 3) {
+                    try {
+                        int count = Integer.parseInt(parts[1]);
+                        if (count < 1) {
+                            yield bad("count must be at least 1");
+                        }
+                        yield new Parsed(Kind.MINE, count, 0, 0, parts[2].toLowerCase(Locale.ROOT), null);
+                    } catch (NumberFormatException e) {
+                        yield bad("usage: mine [count] <block>");
+                    }
+                }
+                yield bad("usage: mine [count] <block>");
             }
             case "place" -> {
                 if (parts.length != 4) {

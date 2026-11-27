@@ -381,9 +381,15 @@ public final class BotClientBridge {
 
     public static Path runDirectory() {
         //#if MC >= 260000
-        //$$ IHeadlessHost host = hostOrNull();
-        //$$ if (host != null) {
-        //$$     return host.configDir();
+        //$$ BotContext ctx = BotContextScope.currentOrNull();
+        //$$ if (ctx != null) {
+        //$$     IHeadlessHost host = ctx.headlessHost();
+        //$$     if (host != null && host.configDir() != null) {
+        //$$         return host.configDir();
+        //$$     }
+        //$$     if (ctx.configDir() != null) {
+        //$$         return ctx.configDir();
+        //$$     }
         //$$ }
         //#endif
         MinecraftClient mc = MinecraftClient.getInstance();

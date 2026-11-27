@@ -9,6 +9,9 @@
 
 package baritone.headless;
 
+import baritone.swarm.center.channel.CenterReply;
+import baritone.swarm.center.channel.CenterRequest;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -35,6 +38,9 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -121,6 +127,21 @@ public final class HeadlessControlServer implements AutoCloseable {
             }
             if ("GET".equals(method) && "/bots".equals(path)) {
                 return jsonResponse(200, "OK", fleet.listBotsJson());
+            }
+            if ("GET".equals(method) && "/center/snapshot".equals(path)) {
+                return jsonResponse(200, "OK", fleet.centerSnapshotJson(port()));
+            }
+            if ("POST".equals(method) && "/center/request".equals(path)) {
+                CenterRequest centerReq = parseCenterRequest(bodyStr);
+                CenterReply centerReply = fleet.handleCenterRequest(centerReq);
+                return jsonResponse(200, "OK", toJson(centerReply));
+            }
+            if ("GET".equals(method) && "/swarm/status".equals(path)) {
+                return jsonResponse(200, "OK", fleet.swarmStatusJson());
+            }
+            if ("POST".equals(method) && "/swarm/command".equals(path)) {
+                JsonObject payload = bodyStr.isEmpty() ? new JsonObject() : JsonParser.parseString(bodyStr).getAsJsonObject();
+                return jsonResponse(200, "OK", fleet.dispatchSwarmAction(payload));
             }
             if ("POST".equals(method) && "/bots/spawn".equals(path)) {
                 JsonObject payload = JsonParser.parseString(bodyStr).getAsJsonObject();
@@ -232,23 +253,100 @@ public final class HeadlessControlServer implements AutoCloseable {
         out.write(handshake.getBytes(StandardCharsets.US_ASCII));
         out.flush();
         socket.setSoTimeout(0);
+        final Object writeLock = new Object();
+        ScheduledExecutorService pushExec = null;
+        ScheduledFuture<?> pushTask = null;
 
-        while (running.get() && !socket.isClosed()) {
-            WsFrame frame = readWsFrame(in);
-            if (frame == null || frame.opcode == 0x8) {
-                writeWsFrame(out, 0x8, new byte[0]);
-                return;
+        try {
+            while (running.get() && !socket.isClosed()) {
+                WsFrame frame = readWsFrame(in);
+                if (frame == null || frame.opcode == 0x8) {
+                    synchronized (writeLock) {
+                        writeWsFrame(out, 0x8, new byte[0]);
+                    }
+                    return;
+                }
+                if (frame.opcode == 0x9) {
+                    synchronized (writeLock) {
+                        writeWsFrame(out, 0xA, frame.payload);
+                    }
+                    continue;
+                }
+                if (frame.opcode != 0x1 && frame.opcode != 0x0) {
+                    continue;
+                }
+                String text = new String(frame.payload, StandardCharsets.UTF_8).trim();
+                if (text.startsWith("{")) {
+                    JsonObject wsReq = JsonParser.parseString(text).getAsJsonObject();
+                    String action = wsReq.has("action") ? wsReq.get("action").getAsString()
+                            : (wsReq.has("type") ? wsReq.get("type").getAsString() : "");
+                    if ("subscribe".equalsIgnoreCase(action)) {
+                        long interval = wsReq.has("intervalMs") ? wsReq.get("intervalMs").getAsLong() : 500L;
+                        interval = Math.max(250L, Math.min(5000L, interval));
+                        if (pushTask != null) {
+                            pushTask.cancel(false);
+                        }
+                        if (pushExec == null) {
+                            pushExec = Executors.newSingleThreadScheduledExecutor(r -> {
+                                Thread t = new Thread(r, "headless-ws-push-" + port());
+                                t.setDaemon(true);
+                                return t;
+                            });
+                        }
+                        JsonObject ack = new JsonObject();
+                        ack.addProperty("ok", true);
+                        ack.addProperty("action", "subscribe");
+                        ack.addProperty("intervalMs", interval);
+                        synchronized (writeLock) {
+                            writeWsFrame(out, 0x1, ack.toString().getBytes(StandardCharsets.UTF_8));
+                        }
+                        pushTask = pushExec.scheduleWithFixedDelay(() -> {
+                            if (!running.get() || socket.isClosed()) {
+                                return;
+                            }
+                            try {
+                                JsonObject msg = new JsonObject();
+                                msg.addProperty("ok", true);
+                                msg.addProperty("event", "snapshot");
+                                msg.add("data", fleet.centerSnapshotJson(port()));
+                                synchronized (writeLock) {
+                                    writeWsFrame(out, 0x1, msg.toString().getBytes(StandardCharsets.UTF_8));
+                                }
+                            } catch (IOException | RuntimeException ignored) {
+                                try {
+                                    socket.close();
+                                } catch (IOException ignoredClose) {
+                                }
+                            }
+                        }, 0L, interval, TimeUnit.MILLISECONDS);
+                        continue;
+                    }
+                    if ("unsubscribe".equalsIgnoreCase(action)) {
+                        if (pushTask != null) {
+                            pushTask.cancel(false);
+                            pushTask = null;
+                        }
+                        JsonObject ack = new JsonObject();
+                        ack.addProperty("ok", true);
+                        ack.addProperty("action", "unsubscribe");
+                        synchronized (writeLock) {
+                            writeWsFrame(out, 0x1, ack.toString().getBytes(StandardCharsets.UTF_8));
+                        }
+                        continue;
+                    }
+                }
+                JsonObject reply = dispatchWsMessage(text);
+                synchronized (writeLock) {
+                    writeWsFrame(out, 0x1, reply.toString().getBytes(StandardCharsets.UTF_8));
+                }
             }
-            if (frame.opcode == 0x9) {
-                writeWsFrame(out, 0xA, frame.payload);
-                continue;
+        } finally {
+            if (pushTask != null) {
+                pushTask.cancel(false);
             }
-            if (frame.opcode != 0x1 && frame.opcode != 0x0) {
-                continue;
+            if (pushExec != null) {
+                pushExec.shutdownNow();
             }
-            String text = new String(frame.payload, StandardCharsets.UTF_8).trim();
-            JsonObject reply = dispatchWsMessage(text);
-            writeWsFrame(out, 0x1, reply.toString().getBytes(StandardCharsets.UTF_8));
         }
     }
 
@@ -268,6 +366,14 @@ public final class HeadlessControlServer implements AutoCloseable {
             switch (action.toLowerCase(Locale.ROOT)) {
                 case "health" -> reply.add("data", fleet.healthJson());
                 case "list" -> reply.add("data", fleet.listBotsJson());
+                case "snapshot" -> reply.add("data", fleet.centerSnapshotJson(port()));
+                case "center_request" -> {
+                    JsonObject payload = req.has("request") && req.get("request").isJsonObject()
+                            ? req.getAsJsonObject("request") : req;
+                    reply.add("data", toJson(fleet.handleCenterRequest(parseCenterRequest(payload))));
+                }
+                case "swarm_status" -> reply.add("data", fleet.swarmStatusJson());
+                case "swarm_command" -> reply.add("data", fleet.dispatchSwarmAction(req));
                 case "status" -> reply.add("data", fleet.botDetailJson(req.get("bot").getAsString()));
                 case "command" -> {
                     String bot = req.has("bot") ? req.get("bot").getAsString() : "all";
@@ -305,6 +411,47 @@ public final class HeadlessControlServer implements AutoCloseable {
             err.addProperty("error", e.getMessage());
             return err;
         }
+    }
+
+    private static CenterRequest parseCenterRequest(String bodyStr) {
+        if (bodyStr == null || bodyStr.isBlank()) {
+            throw new IllegalArgumentException("request body must not be empty");
+        }
+        return parseCenterRequest(JsonParser.parseString(bodyStr).getAsJsonObject());
+    }
+
+    private static CenterRequest parseCenterRequest(JsonObject obj) {
+        String id = obj.has("id") && !obj.get("id").isJsonNull() ? obj.get("id").getAsString() : UUID.randomUUID().toString();
+        long atMs = obj.has("atMs") && !obj.get("atMs").isJsonNull() ? obj.get("atMs").getAsLong() : System.currentTimeMillis();
+        String opRaw = obj.has("op") && !obj.get("op").isJsonNull() ? obj.get("op").getAsString() : "ping";
+        CenterRequest.Op op = CenterRequest.Op.valueOf(opRaw.trim().toUpperCase(Locale.ROOT));
+        String command = obj.has("command") && !obj.get("command").isJsonNull() ? obj.get("command").getAsString() : "";
+        String formId = obj.has("formId") && !obj.get("formId").isJsonNull() ? obj.get("formId").getAsString() : "";
+        Map<String, String> values = new HashMap<>();
+        if (obj.has("values") && obj.get("values").isJsonObject()) {
+            for (Map.Entry<String, JsonElement> e : obj.getAsJsonObject("values").entrySet()) {
+                if (e.getValue() != null && !e.getValue().isJsonNull()) {
+                    values.put(e.getKey(), e.getValue().getAsString());
+                }
+            }
+        }
+        String bot = obj.has("bot") && !obj.get("bot").isJsonNull() ? obj.get("bot").getAsString() : "";
+        String line = obj.has("line") && !obj.get("line").isJsonNull() ? obj.get("line").getAsString() : "";
+        boolean dryRun = obj.has("dryRun") && !obj.get("dryRun").isJsonNull() && obj.get("dryRun").getAsBoolean();
+        return new CenterRequest(id, atMs, op, command, formId, values, bot, line, dryRun);
+    }
+
+    private static JsonObject toJson(CenterReply reply) {
+        JsonObject obj = new JsonObject();
+        obj.addProperty("v", baritone.swarm.center.feed.CenterFeed.VERSION);
+        obj.addProperty("id", reply.id());
+        obj.addProperty("atMs", reply.atMs());
+        obj.addProperty("admitted", reply.admitted());
+        obj.addProperty("executed", reply.executed());
+        obj.addProperty("reason", reply.reason());
+        obj.addProperty("line", reply.line());
+        obj.addProperty("host", reply.host());
+        return obj;
     }
 
     private static String computeWsAccept(String wsKey) {
