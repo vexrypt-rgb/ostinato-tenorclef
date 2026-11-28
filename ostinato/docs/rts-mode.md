@@ -75,8 +75,10 @@ The map layout grows an **RTS** toggle. With it on:
 - **Live bot positions**: the markers, facing and paths already drawn from the feeds, now labelled with the role
   letter (F, M, S, A, B).
 
-Rendering stays the existing top-down raster from the feeds' terrain overview. Isometric is a later view mode on
-the same data (the camera is already separate from the painter).
+Rendering supports both the existing top-down raster and a **3D Iso** toggle (`map:toggle:iso`, or `@map|iso:on|off|rot:0..3`) on the same feed data (`IsoMapCamera` + `IsoMapRenderer`). In 3D isometric mode:
+- **Voxel terrain**: shaded isometric columns using `TerrainFeed` heights, grass-to-dirt-to-stone cliff skirts, recessed water, elevation shading, and a terrain-draped 16×16 chunk grid.
+- **4-way rotation**: `⟲` / `⟳` header buttons (`map:iso:rotL`, `map:iso:rotR`) or `Q` / `E` keys rotate 90° around the shared camera center, with a North compass badge and rotated-frustum minimap.
+- **Full RTS interaction**: exact terrain surface ray-picking for cursor readout (`x, y, z`), right-click move orders, area drag (rendered as a 3D prism), depth-sorted 3D bot pawns with selection rings and projected facing arrows, 3D paths/goals, 3D wireframe leases, elevated observations with surface drop-lines, and 3D stacked live blueprint / schematic ghost voxels with a layer-accurate paint preview cube.
 
 ## 4. Live build
 
@@ -99,7 +101,7 @@ types), so the later 3D Design/Live editor can open and save the same file.
 - The full 3D schematic editor (Design and Live modes) now lives on `swarm/schematic-editor` (`docs/schematic-editor.md`).
   It reads and writes the same `ost1` files and reuses `blueprint live` for Live mode. Grim-gated live proof: se-r2
   (`swarm-gate-logs/rtsl/se-r2.out`): 11/11, mid-erase air, Grim 0, deaths 0.
-- Isometric rendering, a minimap of chest contents, and per-role priorities.
+- A minimap of chest contents and per-role priorities.
 - Remote-PC bots: feeds and blueprints are same-PC files, as for the rest of the window.
 
 ## Status

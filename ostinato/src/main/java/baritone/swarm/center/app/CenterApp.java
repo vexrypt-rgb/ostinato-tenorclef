@@ -353,11 +353,23 @@ public final class CenterApp {
             if (!map.areaArmed() && find(shell.component(), "area:tool") instanceof AbstractButton tool) {
                 tool.doClick();
             }
-            MapCamera cam = map.camera();
-            int ax = (int) Math.round(cam.screenX(Math.min(x1, x2) + 0.25));
-            int az = (int) Math.round(cam.screenZ(Math.min(z1, z2) + 0.25));
-            int bx = (int) Math.round(cam.screenX(Math.max(x1, x2) + 0.75));
-            int bz = (int) Math.round(cam.screenZ(Math.max(z1, z2) + 0.75));
+            int ax, az, bx, bz;
+            if (map.isometric()) {
+                IsoMapCamera iso = map.isoCamera();
+                double y = iso.refY();
+                double[] pa = iso.worldToScreen(Math.min(x1, x2) + 0.5, y, Math.min(z1, z2) + 0.5);
+                double[] pb = iso.worldToScreen(Math.max(x1, x2) + 0.5, y, Math.max(z1, z2) + 0.5);
+                ax = (int) Math.round(pa[0]);
+                az = (int) Math.round(pa[1]);
+                bx = (int) Math.round(pb[0]);
+                bz = (int) Math.round(pb[1]);
+            } else {
+                MapCamera cam = map.camera();
+                ax = (int) Math.round(cam.screenX(Math.min(x1, x2) + 0.25));
+                az = (int) Math.round(cam.screenZ(Math.min(z1, z2) + 0.25));
+                bx = (int) Math.round(cam.screenX(Math.max(x1, x2) + 0.75));
+                bz = (int) Math.round(cam.screenZ(Math.max(z1, z2) + 0.75));
+            }
             long now = System.currentTimeMillis();
             canvas.dispatchEvent(new java.awt.event.MouseEvent(canvas, java.awt.event.MouseEvent.MOUSE_PRESSED, now, 0,
                     ax, az, 1, false, java.awt.event.MouseEvent.BUTTON1));
@@ -368,6 +380,9 @@ public final class CenterApp {
             int[] a = map.area();
             return a == null ? "no area" : "area=" + a[0] + "," + a[1] + "," + a[2] + "," + a[3];
         }
+        if (spec.startsWith("iso:")) {
+            return isoAuto(map, shell, spec.substring("iso:".length()));
+        }
         if (spec.startsWith("rts:")) {
             return rtsAuto(map, canvas, shell, spec.substring("rts:".length()));
         }
@@ -377,6 +392,23 @@ public final class CenterApp {
         return "bad map spec";
     }
 
+    /** Ostinato: 3D isometric map auto controls ({@code iso:on|off|rot:0..3}). */
+    static String isoAuto(MapView map, CenterShell shell, String spec) {
+        if ("on".equals(spec) || "off".equals(spec)) {
+            boolean want = "on".equals(spec);
+            if (map.isometric() != want && find(shell.component(), "map:toggle:iso") instanceof AbstractButton b) {
+                b.doClick();
+            }
+            return "iso=" + map.isometric() + " rot=" + map.isoRotation();
+        }
+        if (spec.startsWith("rot:")) {
+            int r = Integer.parseInt(spec.substring("rot:".length()).trim());
+            map.setIsoRotation(r);
+            return "iso=" + map.isometric() + " rot=" + map.isoRotation();
+        }
+        return "bad iso spec";
+    }
+
     /**
      * Ostinato: RTS live checks. {@code rts:on} shows the panel; {@code rts:paint:x1,z1,x2,z2} and
      * {@code rts:erase:x1,z1,x2,z2} drag the paint tool over every block of the box (left paints, right erases);
@@ -384,6 +416,9 @@ public final class CenterApp {
      */
     static String rtsAuto(MapView map, javax.swing.JComponent canvas, CenterShell shell, String spec) {
         RtsPanel rts = map.rts();
+        if (spec.startsWith("iso:")) {
+            return isoAuto(map, shell, spec.substring("iso:".length()));
+        }
         if (spec.equals("on")) {
             if (!rts.visible() && find(shell.component(), "map:toggle:rts") instanceof AbstractButton b) {
                 b.doClick();
@@ -400,6 +435,7 @@ public final class CenterApp {
                 paint.doClick();
             }
             MapCamera cam = map.camera();
+            IsoMapCamera iso = map.isoCamera();
             int button = erase ? java.awt.event.MouseEvent.BUTTON3 : java.awt.event.MouseEvent.BUTTON1;
             int downMask = erase ? java.awt.event.InputEvent.BUTTON3_DOWN_MASK : java.awt.event.InputEvent.BUTTON1_DOWN_MASK;
             long now = System.currentTimeMillis();
@@ -407,8 +443,14 @@ public final class CenterApp {
             int lx = 0, lz = 0;
             for (int x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
                 for (int z = Math.min(z1, z2); z <= Math.max(z1, z2); z++) {
-                    lx = (int) Math.round(cam.screenX(x + 0.5));
-                    lz = (int) Math.round(cam.screenZ(z + 0.5));
+                    if (map.isometric()) {
+                        double[] pt = iso.worldToScreen(x + 0.5, rts.layerY() + 1.0, z + 0.5);
+                        lx = (int) Math.round(pt[0]);
+                        lz = (int) Math.round(pt[1]);
+                    } else {
+                        lx = (int) Math.round(cam.screenX(x + 0.5));
+                        lz = (int) Math.round(cam.screenZ(z + 0.5));
+                    }
                     canvas.dispatchEvent(new java.awt.event.MouseEvent(canvas, first ? java.awt.event.MouseEvent.MOUSE_PRESSED
                             : java.awt.event.MouseEvent.MOUSE_DRAGGED, now, first ? 0 : downMask, lx, lz, first ? 1 : 0, false, button));
                     first = false;
@@ -424,9 +466,17 @@ public final class CenterApp {
             }
             String[] n = spec.substring("order:".length()).split(",");
             int x = Integer.parseInt(n[0].trim()), z = Integer.parseInt(n[1].trim());
-            MapCamera cam = map.camera();
-            int sx = (int) Math.round(cam.screenX(x + 0.5));
-            int sz = (int) Math.round(cam.screenZ(z + 0.5));
+            int sx, sz;
+            if (map.isometric()) {
+                IsoMapCamera iso = map.isoCamera();
+                double[] pt = iso.worldToScreen(x + 0.5, iso.refY(), z + 0.5);
+                sx = (int) Math.round(pt[0]);
+                sz = (int) Math.round(pt[1]);
+            } else {
+                MapCamera cam = map.camera();
+                sx = (int) Math.round(cam.screenX(x + 0.5));
+                sz = (int) Math.round(cam.screenZ(z + 0.5));
+            }
             long now = System.currentTimeMillis();
             canvas.dispatchEvent(new java.awt.event.MouseEvent(canvas, java.awt.event.MouseEvent.MOUSE_PRESSED, now, 0,
                     sx, sz, 1, false, java.awt.event.MouseEvent.BUTTON3));

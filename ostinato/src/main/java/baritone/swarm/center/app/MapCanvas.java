@@ -34,6 +34,11 @@ final class MapCanvas extends javax.swing.JComponent {
     interface Listener {
         void cursor(int blockX, int blockZ);
 
+        /** Ostinato: 3D isometric cursor coordinates with surface Y. Defaults to 2D {@link #cursor(int, int)}. */
+        default void cursor3d(int blockX, int blockY, int blockZ) {
+            cursor(blockX, blockZ);
+        }
+
         /** Right-click on a marker. {@code bot} is null when the click missed. */
         void markerMenu(String bot);
 
@@ -54,6 +59,7 @@ final class MapCanvas extends javax.swing.JComponent {
     }
 
     final MapCamera camera = new MapCamera();
+    final IsoMapCamera isoCamera = new IsoMapCamera(camera); // Ostinato: 3D isometric RTS view camera
     private final AppStyle style;
     private final Listener listener;
     private SwarmView view = SwarmView.EMPTY;
@@ -64,6 +70,16 @@ final class MapCanvas extends javax.swing.JComponent {
     boolean showObservations = true;
     boolean showPaths = true;
     boolean showTerrain = true;
+    /** Ostinato: when true, the war-room map renders and interacts in 3D isometric projection. */
+    boolean isometric;
+    private MapTerrain.Grid terrainGrid = MapTerrain.Grid.EMPTY;
+    private long terrainKey = Long.MIN_VALUE;
+    private char terrainDim = '?';
+    java.util.function.IntSupplier paintLayerY = () -> (int) Math.round(isoCamera.refY());
+    java.util.function.IntSupplier paintLayers = () -> 1;
+    java.util.function.Supplier<AreaOrders.Box> areaBoxSupplier = () -> null;
+    private int hoverBlockX, hoverBlockZ;
+    private boolean hoverValid;
     final MapSelection selection = new MapSelection();
     final MapGroups groups = new MapGroups();
     private int pressX, pressY;
@@ -165,7 +181,13 @@ final class MapCanvas extends javax.swing.JComponent {
                     return;
                 }
                 if (panning) {
-                    camera.panPixels(e.getX() - pressX, e.getY() - pressY);
+                    int dx = e.getX() - pressX;
+                    int dy = e.getY() - pressY;
+                    if (isometric) {
+                        isoCamera.panPixels(dx, dy);
+                    } else {
+                        camera.panPixels(dx, dy);
+                    }
                     pressX = e.getX();
                     pressY = e.getY();
                     placed = true;
@@ -193,8 +215,8 @@ final class MapCanvas extends javax.swing.JComponent {
                         && !selection.names().isEmpty()) {
                     // Ostinato: RTS right-click order on open ground.
                     syncSize();
-                    double[] w = camera.screenToWorld(e.getX(), e.getY());
-                    listener.order((int) Math.floor(w[0]), (int) Math.floor(w[1]));
+                    int[] picked = pickGroundBlock(e.getX(), e.getY());
+                    listener.order(picked[0], picked[2]);
                 }
                 if (areaDragging) {
                     if (areaMoved) {
@@ -226,13 +248,20 @@ final class MapCanvas extends javax.swing.JComponent {
             public void mouseMoved(MouseEvent e) {
                 reportCursor(e.getX(), e.getY());
                 listener.hover(tipAt(e.getX(), e.getY()));
+                if (isometric && paintArmed) {
+                    repaint();
+                }
             }
         };
         addMouseListener(mouse);
         addMouseMotionListener(mouse);
         addMouseWheelListener((MouseWheelEvent e) -> {
             syncSize();
-            camera.zoomAt(e.getX(), e.getY(), -e.getWheelRotation());
+            if (isometric) {
+                isoCamera.zoomAt(e.getX(), e.getY(), -e.getWheelRotation());
+            } else {
+                camera.zoomAt(e.getX(), e.getY(), -e.getWheelRotation());
+            }
             placed = true;
             reportCursor(e.getX(), e.getY());
             repaint();
@@ -243,13 +272,31 @@ final class MapCanvas extends javax.swing.JComponent {
                 if (groupKey(e)) {
                     return;
                 }
+                if (isometric) {
+                    if (e.getKeyCode() == KeyEvent.VK_Q) {
+                        isoCamera.rotateCCW();
+                        repaint();
+                        return;
+                    }
+                    if (e.getKeyCode() == KeyEvent.VK_E) {
+                        isoCamera.rotateCW();
+                        repaint();
+                        return;
+                    }
+                }
                 int step = 32;
+                int dx = 0, dy = 0;
                 switch (e.getKeyCode()) {
-                    case KeyEvent.VK_LEFT -> camera.panPixels(step, 0);
-                    case KeyEvent.VK_RIGHT -> camera.panPixels(-step, 0);
-                    case KeyEvent.VK_UP -> camera.panPixels(0, step);
-                    case KeyEvent.VK_DOWN -> camera.panPixels(0, -step);
+                    case KeyEvent.VK_LEFT -> dx = step;
+                    case KeyEvent.VK_RIGHT -> dx = -step;
+                    case KeyEvent.VK_UP -> dy = step;
+                    case KeyEvent.VK_DOWN -> dy = -step;
                     default -> { return; }
+                }
+                if (isometric) {
+                    isoCamera.panPixels(dx, dy);
+                } else {
+                    camera.panPixels(dx, dy);
                 }
                 placed = true;
                 repaint();
@@ -299,14 +346,94 @@ final class MapCanvas extends javax.swing.JComponent {
 
     private void commitArea() {
         syncSize();
-        double[] a = camera.screenToWorld(originX, originY);
-        double[] b = camera.screenToWorld(currentX, currentY);
-        areaX1 = (int) Math.floor(Math.min(a[0], b[0]));
-        areaZ1 = (int) Math.floor(Math.min(a[1], b[1]));
-        areaX2 = (int) Math.floor(Math.max(a[0], b[0]));
-        areaZ2 = (int) Math.floor(Math.max(a[1], b[1]));
+        if (isometric) {
+            int[] a = pickGroundBlock(originX, originY);
+            int[] b = pickGroundBlock(currentX, currentY);
+            areaX1 = Math.min(a[0], b[0]);
+            areaZ1 = Math.min(a[2], b[2]);
+            areaX2 = Math.max(a[0], b[0]);
+            areaZ2 = Math.max(a[2], b[2]);
+        } else {
+            double[] a = camera.screenToWorld(originX, originY);
+            double[] b = camera.screenToWorld(currentX, currentY);
+            areaX1 = (int) Math.floor(Math.min(a[0], b[0]));
+            areaZ1 = (int) Math.floor(Math.min(a[1], b[1]));
+            areaX2 = (int) Math.floor(Math.max(a[0], b[0]));
+            areaZ2 = (int) Math.floor(Math.max(a[1], b[1]));
+        }
         areaSet = true;
         listener.areaDrawn(areaX1, areaZ1, areaX2, areaZ2);
+    }
+
+    /** Ostinato: live area drag bounds in world XZ for isometric rendering. */
+    int[] liveAreaWorldBounds() {
+        if (!areaDragging || !areaMoved) {
+            return null;
+        }
+        syncSize();
+        int[] a = pickGroundBlock(originX, originY);
+        int[] b = pickGroundBlock(currentX, currentY);
+        return new int[]{Math.min(a[0], b[0]), Math.min(a[2], b[2]), Math.max(a[0], b[0]), Math.max(a[2], b[2])};
+    }
+
+    boolean isAreaDraggingMoved() { return areaDragging && areaMoved; }
+    AreaOrders.Box areaBox() { return areaBoxSupplier.get(); }
+    List<int[]> ghostCells() { return ghost; }
+    List<int[]> blueprintCells() { return blueprint; }
+    int paintLayerY() { return paintLayerY.getAsInt(); }
+    int paintLayers() { return paintLayers.getAsInt(); }
+    boolean hasHoverBlock() { return hoverValid; }
+    int hoverBlockX() { return hoverBlockX; }
+    int hoverBlockZ() { return hoverBlockZ; }
+
+    int[] selectionBoxScreen() {
+        if (!boxing || !boxMoved) {
+            return null;
+        }
+        return new int[]{Math.min(originX, currentX), Math.min(originY, currentY),
+                Math.max(1, Math.abs(currentX - originX)), Math.max(1, Math.abs(currentY - originY))};
+    }
+
+    private MapTerrain.Grid ensureTerrainGrid() {
+        long key = 17L * dim;
+        for (TerrainFeed t : view.terrain().values()) {
+            if (t != null && t.dim() == dim) {
+                key = key * 31L + t.bot().hashCode();
+                key = key * 31L + t.writtenAtMs();
+                key = key * 31L + t.seq();
+            }
+        }
+        if (terrainDim != dim || terrainKey != key) {
+            terrainGrid = MapTerrain.Grid.merge(view.terrain().values(), dim);
+            terrainDim = dim;
+            terrainKey = key;
+            if (!terrainGrid.isEmpty()) {
+                isoCamera.defaultRefY(terrainGrid.medianY);
+            }
+        }
+        return terrainGrid;
+    }
+
+    /** Pick world block {x, y, z} at screen pixel (sx, sy). Uses surface ray-march in isometric mode. */
+    int[] pickGroundBlock(int sx, int sy) {
+        syncSize();
+        if (isometric) {
+            return isoCamera.pickSurface(sx, sy, showTerrain ? ensureTerrainGrid() : MapTerrain.Grid.EMPTY);
+        }
+        double[] w = camera.screenToWorld(sx, sy);
+        return new int[]{(int) Math.floor(w[0]), (int) Math.round(isoCamera.refY()), (int) Math.floor(w[1])};
+    }
+
+    /** Pick world block {x, y, z} on the active blueprint paint layer Y. */
+    private int[] pickPaintBlock(int sx, int sy) {
+        syncSize();
+        if (isometric) {
+            int y = paintLayerY.getAsInt();
+            double[] w = isoCamera.screenToWorldAtY(sx, sy, y + 1.0);
+            return new int[]{(int) Math.floor(w[0]), y, (int) Math.floor(w[1])};
+        }
+        double[] w = camera.screenToWorld(sx, sy);
+        return new int[]{(int) Math.floor(w[0]), paintLayerY.getAsInt(), (int) Math.floor(w[1])};
     }
 
     private List<int[]> ghost = List.of();
@@ -321,10 +448,12 @@ final class MapCanvas extends javax.swing.JComponent {
     }
 
     private void paintAt(int sx, int sy) {
-        syncSize();
-        double[] w = camera.screenToWorld(sx, sy);
-        int x = (int) Math.floor(w[0]);
-        int z = (int) Math.floor(w[1]);
+        int[] p = pickPaintBlock(sx, sy);
+        int x = p[0];
+        int z = p[2];
+        hoverBlockX = x;
+        hoverBlockZ = z;
+        hoverValid = true;
         long key = (((long) x) << 32) ^ (z & 0xFFFFFFFFL);
         if (key == lastPaintKey) {
             return;
@@ -446,6 +575,7 @@ final class MapCanvas extends javax.swing.JComponent {
         }
         syncSize();
         camera.setCenter(b.feed().pos().x(), b.feed().pos().z());
+        isoCamera.setRefY(b.feed().pos().y());
         placed = true;
         repaint();
         return true;
@@ -458,17 +588,22 @@ final class MapCanvas extends javax.swing.JComponent {
             return null;
         }
         syncSize();
-        return camera.worldToScreen(b.feed().pos().x(), b.feed().pos().z());
+        BotFeed.Pos p = b.feed().pos();
+        if (isometric) {
+            return isoCamera.worldToScreen(p.x(), p.y(), p.z());
+        }
+        return camera.worldToScreen(p.x(), p.z());
     }
 
     String hit(int sx, int sy) {
-        return MapHit.nearest(screenMarkers(), sx, sy, MapHit.RADIUS);
+        return MapHit.nearest(screenMarkers(), sx, sy, isometric ? MapHit.RADIUS + 4 : MapHit.RADIUS);
     }
 
     private void frameOn(SwarmView.BotState b) {
         syncSize();
         if (b != null && b.feed().pos() != null) {
             camera.setCenter(b.feed().pos().x(), b.feed().pos().z());
+            isoCamera.setRefY(b.feed().pos().y());
         }
         placed = true;
     }
@@ -499,6 +634,14 @@ final class MapCanvas extends javax.swing.JComponent {
 
     private void reportCursor(int sx, int sy) {
         syncSize();
+        if (isometric) {
+            int[] p = paintArmed ? pickPaintBlock(sx, sy) : pickGroundBlock(sx, sy);
+            hoverBlockX = p[0];
+            hoverBlockZ = p[2];
+            hoverValid = true;
+            listener.cursor3d(p[0], p[1], p[2]);
+            return;
+        }
         double[] w = camera.screenToWorld(sx, sy);
         listener.cursor((int) Math.floor(w[0]), (int) Math.floor(w[1]));
     }
@@ -511,7 +654,12 @@ final class MapCanvas extends javax.swing.JComponent {
             if (p == null || p.dim() != dim) {
                 continue;
             }
-            out.add(new MapHit.Marker(b.name(), camera.screenX(p.x()), camera.screenZ(p.z())));
+            if (isometric) {
+                double[] pt = isoCamera.worldToScreen(p.x(), p.y(), p.z());
+                out.add(new MapHit.Marker(b.name(), pt[0], pt[1]));
+            } else {
+                out.add(new MapHit.Marker(b.name(), camera.screenX(p.x()), camera.screenZ(p.z())));
+            }
         }
         return out;
     }
@@ -526,6 +674,11 @@ final class MapCanvas extends javax.swing.JComponent {
         }
         if (buffer == null || buffer.getWidth() != w || buffer.getHeight() != h) {
             buffer = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        }
+        if (isometric) {
+            IsoMapRenderer.render(buffer, style, isoCamera, view, dim, ensureTerrainGrid(), this);
+            graphics.drawImage(buffer, 0, 0, null);
+            return;
         }
         rasterTerrain(w, h);
         Graphics2D g = buffer.createGraphics();
@@ -856,7 +1009,10 @@ final class MapCanvas extends javax.swing.JComponent {
                 if (lease.box() == null) {
                     continue;
                 }
-                if (MapOverlay.screenBox(camera, lease.box()).contains(sx, sy)) {
+                MapOverlay.Rect r = isometric
+                        ? IsoMapRenderer.screenBoundsOfBox(isoCamera, lease.box())
+                        : MapOverlay.screenBox(camera, lease.box());
+                if (r.contains(sx, sy)) {
                     return lease.tip();
                 }
             }
@@ -866,9 +1022,18 @@ final class MapCanvas extends javax.swing.JComponent {
                 if (obs.box() == null) {
                     continue;
                 }
-                MapOverlay.Rect r = MapOverlay.screenBox(camera, obs.box());
-                int cx = r.x() + r.w() / 2;
-                int cy = r.y() + r.h() / 2;
+                int cx, cy;
+                if (isometric) {
+                    int[] b = obs.box();
+                    double[] pt = isoCamera.worldToScreen((b[0] + b[3] + 1) * 0.5,
+                            (b[1] + b[4] + 1) * 0.5, (b[2] + b[5] + 1) * 0.5);
+                    cx = (int) Math.round(pt[0]);
+                    cy = (int) Math.round(pt[1]);
+                } else {
+                    MapOverlay.Rect r = MapOverlay.screenBox(camera, obs.box());
+                    cx = r.x() + r.w() / 2;
+                    cy = r.y() + r.h() / 2;
+                }
                 if (Math.abs(sx - cx) <= 8 && Math.abs(sy - cy) <= 8) {
                     return obs.tip();
                 }

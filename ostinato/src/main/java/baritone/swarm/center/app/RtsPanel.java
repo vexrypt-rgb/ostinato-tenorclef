@@ -444,7 +444,8 @@ public final class RtsPanel {
             if (in) {
                 done++;
             }
-            cells.add(new int[]{c.x(), c.z(), BlockColors.color(c.block()), in ? 1 : 0});
+            // Ostinato: 5th element carries world Y for 3D isometric stacked blueprint blocks.
+            cells.add(new int[]{c.x(), c.z(), BlockColors.color(c.block()), in ? 1 : 0, c.y()});
         }
         ghostOut.accept(cells);
         String s = blueprint.size() + " blocks · v" + blueprint.version();

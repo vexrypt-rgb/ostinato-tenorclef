@@ -360,6 +360,7 @@ public final class CenterShell {
         wall.setMultiSelected(snap.wallMultiSelected);
         map.restoreMap(snap.zoom, snap.cx, snap.cz, snap.dim, snap.selected, snap.groups, snap.area, snap.armed,
                 snap.mine, snap.build);
+        map.restoreIso(snap.isometric, snap.isoRotation, snap.rtsVisible);
         if (snap.editor != null) {
             editor.restore(snap.editor);
         }
@@ -394,6 +395,9 @@ public final class CenterShell {
         h.armed = map != null && map.areaArmed();
         h.mine = map != null && map.areaMine();
         h.build = map != null && map.areaBuild();
+        h.isometric = map != null && map.isometric();
+        h.isoRotation = map == null ? 0 : map.isoRotation();
+        h.rtsVisible = map != null && map.rts().visible();
         h.editor = editor == null ? null : editor.snapshot();
         collect(root, h.fields);
         return h;
@@ -575,6 +579,9 @@ public final class CenterShell {
         private boolean armed;
         private boolean mine;
         private boolean build;
+        private boolean isometric;
+        private int isoRotation;
+        private boolean rtsVisible;
         private EditorView.Snapshot editor;
         private final Map<String, String> fields = new LinkedHashMap<>();
     }

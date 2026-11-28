@@ -53,11 +53,11 @@ public final class OstSchematic {
             if (layer != null && c.y != layer) {
                 continue;
             }
-            // oy is the placement height. The map is top-down, so a mark is the cell's XZ only.
+            // Ostinato: 4th element carries world Y for the 3D isometric view; 2D callers read indices 0..2.
             if (oy < -64) {
                 continue;
             }
-            out.add(new int[]{ox + c.x, oz + c.z, BlockColors.color(c.block)});
+            out.add(new int[]{ox + c.x, oz + c.z, BlockColors.color(c.block), oy + c.y});
         }
         return out;
     }

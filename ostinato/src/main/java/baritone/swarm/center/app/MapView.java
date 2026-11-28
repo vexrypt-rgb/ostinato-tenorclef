@@ -37,6 +37,9 @@ public final class MapView implements LayoutView {
     private final JLabel keys;
     private final JPanel menu;
     private final JToggleButton overworld, nether, end;
+    private final JToggleButton rtsToggle;
+    private final JToggleButton isoToggle;
+    private final JButton isoRotL, isoRotR;
     private final SelectInspector inspector;
     private final AreaBar areaBar;
     private final RtsPanel rts; // Ostinato: RTS mode
@@ -52,6 +55,11 @@ public final class MapView implements LayoutView {
             @Override
             public void cursor(int blockX, int blockZ) {
                 cursor.setText(blockX + ", " + blockZ);
+            }
+
+            @Override
+            public void cursor3d(int blockX, int blockY, int blockZ) {
+                cursor.setText(blockX + ", " + blockY + ", " + blockZ);
             }
 
             @Override
@@ -101,6 +109,9 @@ public final class MapView implements LayoutView {
         areaBar = new AreaBar(style, commands, armed -> canvas.areaArmed = armed, canvas::setGhost);
         rts = new RtsPanel(style, commands, canvas.selection::names, armed -> canvas.paintArmed = armed, canvas::setBlueprint,
                 areaBar::box, canvas::dim); // Ostinato: "In area" region leases use the drawn area and its Y range
+        canvas.paintLayerY = rts::layerY;
+        canvas.paintLayers = rts::layers;
+        canvas.areaBoxSupplier = areaBar::box;
 
         JPanel header = style.panel(new BorderLayout(), style.surface());
         header.setBorder(style.box(style.line(), 0, 6));
@@ -115,7 +126,7 @@ public final class MapView implements LayoutView {
         dims.add(layerToggle(dims, "Paths", "map:toggle:paths", on -> canvas.showPaths = on));
         dims.add(layerToggle(dims, "Terrain", "map:toggle:terrain", on -> canvas.showTerrain = on));
         dims.add(areaBar.tool());
-        JToggleButton rtsToggle = style.toggle("RTS");
+        rtsToggle = style.toggle("RTS");
         rtsToggle.setName("map:toggle:rts");
         rtsToggle.setToolTipText("Roles, right-click move orders, blueprint painting and live build");
         rtsToggle.addActionListener(e -> {
@@ -124,6 +135,29 @@ public final class MapView implements LayoutView {
             canvas.repaint();
         });
         dims.add(rtsToggle);
+        isoToggle = style.toggle("3D Iso");
+        isoToggle.setName("map:toggle:iso");
+        isoToggle.setToolTipText("3D isometric view of terrain, bots, paths, leases and blueprints (Q/E rotates 90°)");
+        isoRotL = style.button("⟲");
+        isoRotL.setName("map:iso:rotL");
+        isoRotL.setToolTipText("Rotate 3D isometric view 90° counter-clockwise (Q)");
+        isoRotL.setVisible(false);
+        isoRotL.addActionListener(e -> {
+            canvas.isoCamera.rotateCCW();
+            canvas.repaint();
+        });
+        isoRotR = style.button("⟳");
+        isoRotR.setName("map:iso:rotR");
+        isoRotR.setToolTipText("Rotate 3D isometric view 90° clockwise (E)");
+        isoRotR.setVisible(false);
+        isoRotR.addActionListener(e -> {
+            canvas.isoCamera.rotateCW();
+            canvas.repaint();
+        });
+        isoToggle.addActionListener(e -> setIsometric(isoToggle.isSelected()));
+        dims.add(isoToggle);
+        dims.add(isoRotL);
+        dims.add(isoRotR);
         header.add(dims, BorderLayout.WEST);
         JPanel info = style.panel(new FlowLayout(FlowLayout.RIGHT, 12, 0), null);
         bots = style.label("0 bots", style.muted(), Font.PLAIN, 12f);
@@ -219,6 +253,45 @@ public final class MapView implements LayoutView {
 
     public MapCamera camera() {
         return canvas.camera;
+    }
+
+    /** Ostinato: 3D isometric camera sharing center and zoom with {@link #camera()}. */
+    public IsoMapCamera isoCamera() {
+        return canvas.isoCamera;
+    }
+
+    public boolean isometric() {
+        return canvas.isometric;
+    }
+
+    public void setIsometric(boolean on) {
+        canvas.isometric = on;
+        if (isoToggle.isSelected() != on) {
+            isoToggle.setSelected(on);
+        }
+        isoRotL.setVisible(on);
+        isoRotR.setVisible(on);
+        root.revalidate();
+        canvas.repaint();
+    }
+
+    public int isoRotation() {
+        return canvas.isoCamera.rotation();
+    }
+
+    public void setIsoRotation(int rot) {
+        canvas.isoCamera.setRotation(rot);
+        canvas.repaint();
+    }
+
+    /** Ostinato: restore 3D isometric and RTS panel state across a theme rebuild. */
+    public void restoreIso(boolean isometric, int rotation, boolean rtsVisible) {
+        canvas.isoCamera.setRotation(rotation);
+        setIsometric(isometric);
+        rts.setVisible(rtsVisible);
+        if (rtsToggle.isSelected() != rtsVisible) {
+            rtsToggle.setSelected(rtsVisible);
+        }
     }
 
     public char dimension() {
