@@ -18,6 +18,7 @@ public class ContainerCache {
 
     private final HashMap<Item, Integer> itemCounts = new HashMap<>();
     private int _emptySlots;
+    private long lastUpdatedMs;
 
     public ContainerCache(Dimension dimension, BlockPos blockPos, ContainerType containerType) {
         this.dimension = dimension;
@@ -28,6 +29,7 @@ public class ContainerCache {
     public void update(ScreenHandler screenHandler, Consumer<ItemStack> onStack) {
         itemCounts.clear();
         _emptySlots = 0;
+        lastUpdatedMs = System.currentTimeMillis();
         int start = 0;
         int end = screenHandler.slots.size() - (4 * 9); // subtract by player inventory
         // do NOT count the furnace output slot as an empty slot, it cannot be used.
@@ -90,5 +92,10 @@ public class ContainerCache {
 
     public Dimension getDimension() {
         return dimension;
+    }
+
+    /** Wall-clock timestamp (ms) when this cache was last refreshed from an open container screen. */
+    public long getLastUpdatedMs() {
+        return lastUpdatedMs;
     }
 }

@@ -82,7 +82,8 @@ public class AltoClefCommands {
                 new ShowcaseCommand(),
                 new FugueCommand(),
                 new FugueBenchCommand(),
-                new AllBlocksCommand() // Ostinato: @allblocks (also Ostinato #allblocks)
+                new AllBlocksCommand(), // Ostinato: @allblocks (also Ostinato #allblocks)
+                new ReplenishCommand()
         );
     }
 }

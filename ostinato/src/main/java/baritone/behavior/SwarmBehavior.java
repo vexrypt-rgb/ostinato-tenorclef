@@ -157,6 +157,8 @@ public final class SwarmBehavior extends Behavior implements Helper {
     private BotLeaseGuard leaseGuard;
     private LeaseCoordinator leaseCoordinator;
     private final LeaseRate leaseRate = new LeaseRate(SwarmBehavior::nowMs);
+    /** Ostinato: cooperative local container leases shared across roles and TenorClef policies via ISwarm. */
+    private final baritone.swarm.rts.ChestLeaseTable localChestLeases = new baritone.swarm.rts.ChestLeaseTable();
     /** Chest menu whose block is already named, so a later tick can re-read counts after the crosshair moves. */
     private net.minecraft.world.inventory.AbstractContainerMenu latchedChestMenu;
     private BlockPos latchedChestPos;
@@ -1639,6 +1641,33 @@ public final class SwarmBehavior extends Behavior implements Helper {
     /** Latest encoded TenorClef speedrun splits string, or empty. */
     public String latestSpeedrunSplits() {
         return latestSpeedrunSplits;
+    }
+
+    /** Cooperative chest lease acquisition via {@link baritone.api.swarm.ISwarm}. */
+    public boolean tryAcquireChestLease(String chestKey, String owner, long ttlMs) {
+        if (chestKey == null || chestKey.isBlank() || owner == null || owner.isBlank()) {
+            return false;
+        }
+        LeaseCoordinator coord = leaseCoordinator;
+        if (coord != null && coord.mode() == LeaseCoordinator.Mode.ACTIVE && coord.busyReason(chestKey) != null) {
+            BotLeaseGuard g = leaseGuard;
+            if (g == null || !g.holds(chestKey)) {
+                return false;
+            }
+        }
+        return localChestLeases.tryAcquire(chestKey, owner, nowMs(), ttlMs);
+    }
+
+    public void releaseChestLease(String chestKey, String owner) {
+        localChestLeases.release(chestKey, owner);
+    }
+
+    public void releaseAllChestLeases(String owner) {
+        localChestLeases.releaseAll(owner);
+    }
+
+    public boolean holdsChestLease(String chestKey, String owner) {
+        return localChestLeases.holds(chestKey, owner, nowMs());
     }
 
     private String currentServerAddress() {
