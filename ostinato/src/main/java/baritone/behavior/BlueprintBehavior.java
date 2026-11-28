@@ -28,6 +28,7 @@ import baritone.swarm.lease.BotLeaseGuard;
 import baritone.swarm.rts.Blueprint;
 import baritone.swarm.rts.BlueprintRepairSession;
 import baritone.swarm.rts.RoleOrder;
+import baritone.swarm.rts.ScaffoldTracker;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Vec3i;
 import net.minecraft.world.level.block.Block;
@@ -60,6 +61,16 @@ public final class BlueprintBehavior extends Behavior implements Helper {
     private volatile boolean stopRequested;
     private volatile boolean inMemory; // Ostinato: scoped repair of a baseline's cells; no .ost file backs it
     private int repairProgress = -1;
+    private ScaffoldTracker tracker; // Ostinato: what the repair placed around the region, taken down once it ends
+    private java.util.Set<String> repairMaterials = java.util.Set.of();
+    private volatile boolean cleaning;
+    private List<int[]> cleanupCells = List.of();
+    private int cleanupRestarts;
+    private int cleanupLeft = -1;
+    private int cleanupProgressTick;
+    private volatile String cleanupNote = "";
+    private static final int CLEANUP_STALL_TICKS = 600;
+    private static final int CLEANUP_MAX_STARTS = 3;
     private int repairProgressTick;
     private AltoClefSettings.CellGuard installedGuard; // Ostinato: keeps a baseline repair off every other managed cell
     private AltoClefSettings.CellGuard previousGuard;
@@ -197,9 +208,9 @@ public final class BlueprintBehavior extends Behavior implements Helper {
      * watched, so a live edit of a design of the same name cannot redirect it, and nothing outside {@code bp} is
      * ever targeted. {@code protect} marks cells the builder and pathfinder must neither break nor place into (the
      * rest of the baseline: approved masonry, accepted openings, unclassified differences) for as long as the repair
-     * runs.
+     * runs. With {@code region}, the blocks the repair placed around it (scaffolding) are taken down afterwards.
      */
-    public String repairCells(Blueprint bp, AltoClefSettings.CellGuard protect) {
+    public String repairCells(Blueprint bp, AltoClefSettings.CellGuard protect, int[] region) {
         if (bp == null || bp.size() == 0) {
             throw new IllegalArgumentException("nothing to repair");
         }
@@ -208,6 +219,13 @@ public final class BlueprintBehavior extends Behavior implements Helper {
         }
         releaseGuard();
         installGuard(protect);
+        cleanupNote = "";
+        java.util.Set<String> mats = new java.util.HashSet<>();
+        for (Blueprint.Cell c : bp.cells()) {
+            mats.add(c.block());
+        }
+        repairMaterials = mats;
+        tracker = region == null ? null : new ScaffoldTracker(region, worldReader());
         String targetName = bp.name();
         part = null;
         watching = targetName;
@@ -223,6 +241,94 @@ public final class BlueprintBehavior extends Behavior implements Helper {
         return beginRepair(targetName, bp, null, false);
     }
 
+    /** True while the builder is taking down scaffolding after a repair; the repair is not over until it is false. */
+    public boolean cleaningUp() {
+        return cleaning;
+    }
+
+    /** What the scaffolding cleanup of the last repair did, or empty. */
+    public String cleanupNote() {
+        return cleanupNote;
+    }
+
+    private boolean isScaffold(String blockId) {
+        Block b = BlueprintStateHelper.lookupBlock(blockId);
+        return b != null && (repairMaterials.contains(blockId)
+                || Baritone.settings().acceptableThrowawayItems.value.contains(b.asItem()));
+    }
+
+    private void beginCleanup(String name) {
+        ScaffoldTracker t = tracker;
+        tracker = null;
+        if (t == null || repairSession.state() == BlueprintRepairSession.SessionState.CANCELLED) {
+            releaseGuard();
+            return;
+        }
+        List<int[]> found = t.placedSince(worldReader(), this::isScaffold);
+        if (found.isEmpty()) {
+            cleanupNote = "no scaffolding left behind";
+            releaseGuard();
+            return;
+        }
+        cleanupCells = found;
+        cleanupRestarts = 0;
+        cleanupLeft = found.size();
+        cleanupProgressTick = tick;
+        cleaning = true;
+        logDirect("blueprint: " + name + " taking down " + found.size() + " scaffolding blocks it placed");
+        startCleanupBuild();
+    }
+
+    private void startCleanupBuild() {
+        List<int[]> todo = remainingScaffold();
+        int[] origin = new int[3];
+        ISchematic schem = BlueprintStateHelper.clearSchematic(todo, origin);
+        cleanupRestarts++;
+        baritone.getBuilderProcess().build("blueprint scaffolding " + todo.size(), schem, new Vec3i(origin[0], origin[1], origin[2]));
+    }
+
+    private List<int[]> remainingScaffold() {
+        List<int[]> left = new ArrayList<>();
+        BlueprintRepairSession.WorldReader r = worldReader();
+        for (int[] c : cleanupCells) {
+            BlueprintRepairSession.CellObservation o = r.read(c[0], c[1], c[2]);
+            if (o != null && o.loaded() && !o.isAir() && isScaffold(o.block())) {
+                left.add(c);
+            }
+        }
+        return left;
+    }
+
+    private void tickCleanup(String name) {
+        List<int[]> left = remainingScaffold();
+        if (left.isEmpty()) {
+            finishCleanup(name, "took down " + cleanupCells.size() + " scaffolding blocks");
+            return;
+        }
+        if (left.size() != cleanupLeft) {
+            cleanupLeft = left.size();
+            cleanupProgressTick = tick;
+        }
+        if (tick - cleanupProgressTick >= CLEANUP_STALL_TICKS) {
+            finishCleanup(name, "left " + left.size() + " of " + cleanupCells.size() + " scaffolding blocks standing (no progress)");
+        } else if (!baritone.getBuilderProcess().isActive()) {
+            if (cleanupRestarts >= CLEANUP_MAX_STARTS) {
+                finishCleanup(name, "left " + left.size() + " of " + cleanupCells.size() + " scaffolding blocks standing");
+            } else {
+                startCleanupBuild();
+            }
+        }
+    }
+
+    private void finishCleanup(String name, String result) {
+        if (baritone.getBuilderProcess().isActive()) {
+            baritone.getBuilderProcess().onLostControl();
+        }
+        cleanupNote = result;
+        logDirect("blueprint: " + name + " " + result);
+        releaseGuard();
+    }
+
     private void installGuard(AltoClefSettings.CellGuard protect) {
         if (protect == null) {
             return;
@@ -236,6 +342,9 @@ public final class BlueprintBehavior extends Behavior implements Helper {
 
     /** Puts back the guard that was there before a baseline repair; idempotent, and leaves a newer guard alone. */
     private void releaseGuard() {
+        tracker = null;
+        cleaning = false;
+        cleanupCells = List.of();
         if (installedGuard == null) {
             return;
         }
@@ -435,6 +544,10 @@ public final class BlueprintBehavior extends Behavior implements Helper {
             if (!repairSession.isActive()) {
                 // Scoped repair already reached a terminal state (SUCCEEDED/PARTIAL/FAILED/CANCELLED):
                 // never fall through and auto-restart full live building.
+                if (cleaning) {
+                    tickCleanup(name);
+                    return;
+                }
                 releaseGuard();
                 return;
             }
@@ -464,8 +577,8 @@ public final class BlueprintBehavior extends Behavior implements Helper {
                 note = BlueprintRepairSession.summaryNote(cmp, baritone.getBuilderProcess().isActive(), repairSession);
                 writeStatusFile(name, b, cmp, note, repairSession);
                 if (!repairSession.isActive()) {
-                    releaseGuard();
                     logDirect("blueprint: " + name + " " + repairSession.statusNote());
+                    beginCleanup(name);
                     generation++;
                 }
             }
