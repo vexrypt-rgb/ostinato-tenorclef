@@ -1,5 +1,7 @@
 package baritone.swarm.center.app;
 
+import baritone.swarm.rts.BlockStateSpec;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -8,15 +10,34 @@ import java.util.TreeMap;
 
 /**
  * Ostinato: the studio {@code ost1} text schematic, with no Minecraft types. Air is omitted. A block id is the
- * name after a {@code minecraft:} prefix, and only {@code [a-z0-9_]+}. The same cell listed twice keeps the later
- * block.
+ * name after a {@code minecraft:} prefix ({@code [a-z0-9_]+}), optionally followed by {@code [key=value,...]}
+ * explicit block-state properties. Legacy name-only lines have empty properties. The same cell listed twice keeps
+ * the later block.
  */
 public final class OstSchematic {
 
     public static final int MAX_EDGE = 512;
     public static final int MAX_CELLS = 20_000;
 
-    public record Cell(int x, int y, int z, String block) {}
+    public record Cell(int x, int y, int z, String block, Map<String, String> properties) {
+        public Cell {
+            BlockStateSpec.Parsed parsed = BlockStateSpec.of(block, properties);
+            block = parsed.block();
+            properties = parsed.properties();
+        }
+
+        public Cell(int x, int y, int z, String block) {
+            this(x, y, z, block, Map.of());
+        }
+
+        public boolean hasExplicitProperties() {
+            return !properties.isEmpty();
+        }
+
+        public String spec() {
+            return BlockStateSpec.format(block, properties);
+        }
+    }
 
     private final int sx;
     private final int sy;
@@ -66,7 +87,7 @@ public final class OstSchematic {
         StringBuilder sb = new StringBuilder();
         sb.append("ost1\n").append(sx).append(' ').append(sy).append(' ').append(sz).append('\n');
         for (Cell c : cells) {
-            sb.append(c.x).append(' ').append(c.y).append(' ').append(c.z).append(' ').append(c.block).append('\n');
+            sb.append(c.x).append(' ').append(c.y).append(' ').append(c.z).append(' ').append(c.spec()).append('\n');
         }
         return sb.toString();
     }
@@ -89,8 +110,8 @@ public final class OstSchematic {
             if (x < 0 || y < 0 || z < 0) {
                 throw new IllegalArgumentException("block outside the volume: " + x + " " + y + " " + z);
             }
-            String block = blockName(raw.block());
-            at.put(key(x, y, z), new Cell(x, y, z, block));
+            Cell norm = new Cell(x, y, z, raw.block(), raw.properties());
+            at.put(key(x, y, z), norm);
             if (at.size() > MAX_CELLS) {
                 throw new IllegalArgumentException("schematic has more than " + MAX_CELLS + " blocks");
             }
@@ -146,8 +167,8 @@ public final class OstSchematic {
             if (x < 0 || y < 0 || z < 0 || x >= sx || y >= sy || z >= sz) {
                 throw new IllegalArgumentException("block outside the volume: " + line);
             }
-            String block = blockName(p[3]);
-            at.put(key(x, y, z), new Cell(x, y, z, block));
+            BlockStateSpec.Parsed spec = BlockStateSpec.parse(p[3]);
+            at.put(key(x, y, z), new Cell(x, y, z, spec.block(), spec.properties()));
             if (at.size() > MAX_CELLS) {
                 throw new IllegalArgumentException("schematic has more than " + MAX_CELLS + " blocks");
             }
@@ -156,21 +177,7 @@ public final class OstSchematic {
     }
 
     static String blockName(String raw) {
-        if (raw == null) {
-            throw new IllegalArgumentException("unknown block");
-        }
-        String id = raw.startsWith("minecraft:") ? raw.substring("minecraft:".length()) : raw;
-        if (id.isEmpty() || "air".equals(id)) {
-            throw new IllegalArgumentException("unknown block " + raw);
-        }
-        for (int i = 0; i < id.length(); i++) {
-            char c = id.charAt(i);
-            boolean ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
-            if (!ok) {
-                throw new IllegalArgumentException("unknown block " + raw);
-            }
-        }
-        return id;
+        return BlockStateSpec.parse(raw).block();
     }
 
     private static long key(int x, int y, int z) {

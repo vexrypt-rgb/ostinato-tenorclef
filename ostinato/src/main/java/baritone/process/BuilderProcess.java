@@ -39,6 +39,7 @@ import baritone.api.schematic.partition.SchematicCells;
 import baritone.api.utils.*;
 import baritone.api.utils.Rotation;
 import baritone.api.utils.input.Input;
+import baritone.behavior.BlueprintStateHelper;
 import baritone.pathing.cadenza.Cadenza;
 import baritone.swarm.lease.LeaseFence;
 import baritone.pathing.cadenza.CadenzaGoal;
@@ -864,12 +865,21 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         private final BlockPos placeAgainst;
         private final Direction side;
         private final Rotation rot;
+        private final BlockState desired;
+        private final boolean strictAim;
 
         public Placement(int hotbarSelection, BlockPos placeAgainst, Direction side, Rotation rot) {
+            this(hotbarSelection, placeAgainst, side, rot, null, false);
+        }
+
+        public Placement(int hotbarSelection, BlockPos placeAgainst, Direction side, Rotation rot,
+                         BlockState desired, boolean strictAim) {
             this.hotbarSelection = hotbarSelection;
             this.placeAgainst = placeAgainst;
             this.side = side;
             this.rot = rot;
+            this.desired = desired;
+            this.strictAim = strictAim;
         }
     }
 
@@ -961,9 +971,14 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
                 Rotation actualRot = baritone.getLookBehavior().getAimProcessor().peekAim(rot); // Ostinato: uncapped settle (IAimProcessor.peekAim)
                 HitResult result = RayTraceUtils.rayTraceTowards(ctx.entity(), actualRot, ctx.playerController().getBlockReachDistance(), true);
                 if (result != null && result.getType() == HitResult.Type.BLOCK && ((BlockHitResult) result).getBlockPos().equals(placeAgainstPos) && ((BlockHitResult) result).getDirection() == against.getOpposite()) {
-                    OptionalInt hotbar = hasAnyItemThatWouldPlace(toPlace, result, actualRot);
+                    double hitFracY = ((BlockHitResult) result).getLocation().y - y;
+                    OptionalInt hotbar = hasAnyItemThatWouldPlace(toPlace, result, actualRot, hitFracY);
                     if (hotbar.isPresent()) {
-                        return Optional.of(new Placement(hotbar.getAsInt(), placeAgainstPos, against.getOpposite(), rot));
+                        boolean strict = BlueprintStateHelper.needsOrientedStand(toPlace)
+                                || toPlace.getBlock() instanceof SlabBlock
+                                || toPlace.getBlock() instanceof RotatedPillarBlock
+                                || toPlace.getBlock() instanceof StairBlock;
+                        return Optional.of(new Placement(hotbar.getAsInt(), placeAgainstPos, against.getOpposite(), rot, toPlace, strict));
                     }
                 }
             }
@@ -984,19 +999,46 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
     private boolean anyHistoryMatch(final BlockPos pos) {
         return getFromHistory(pos) != null;
     }
-    private OptionalInt hasAnyItemThatWouldPlace(BlockState desired, HitResult result, Rotation rot) {
+
+    private OptionalInt hasAnyItemThatWouldPlace(BlockState desired, HitResult result, Rotation rot, double hitFracY) {
+        BlockHitResult bhr = (BlockHitResult) result;
+        float originalYaw = ctx.entity().getYRot();
+        float originalPitch = ctx.entity().getXRot();
+        boolean aligned = Math.abs(net.minecraft.util.Mth.wrapDegrees(rot.getYaw() - originalYaw)) <= 1.5f
+                && Math.abs(rot.getPitch() - originalPitch) <= 1.5f;
         for (int i = 0; i < 9; i++) {
             ItemStack stack = ctx.entity().getInventory().getNonEquipmentItems().get(i);
-            if (stack.isEmpty() || !(stack.getItem() instanceof BlockItem)) {
+            if (stack.isEmpty() || !(stack.getItem() instanceof BlockItem blockItem)) {
                 continue;
             }
-            float originalYaw = ctx.entity().getYRot();
-            float originalPitch = ctx.entity().getXRot();
-            // the state depends on the facing of the player sometimes
-            // Ostinato: placement prediction must not mutate the live player.
-            if (Math.abs(net.minecraft.util.Mth.wrapDegrees(rot.getYaw() - originalYaw)) > 1
-                    || Math.abs(rot.getPitch() - originalPitch) > 1) {
-                baritone.getLookBehavior().updateTarget(rot, true);
+            Block itemBlock = blockItem.getBlock();
+            // Ostinato: predict ordinary placement state for oriented blocks (logs, slabs, stairs) without
+            // mutating the live player or clobbering lookBehavior inside the face-search loop.
+            BlockState predicted = BlueprintStateHelper.predictPlacementState(itemBlock, bhr.getDirection(), hitFracY, rot.getYaw());
+            if (predicted != null) {
+                if (!valid(predicted, desired, true)) {
+                    continue;
+                }
+                if (aligned) {
+                    BlockPlaceContext meme = new BlockPlaceContext(new UseOnContext(
+                            ctx.world(),
+                            ctx.entity(),
+                            InteractionHand.MAIN_HAND,
+                            stack,
+                            bhr
+                    ) {});
+                    BlockState wouldBePlaced = itemBlock.getStateForPlacement(meme);
+                    if (wouldBePlaced == null || !meme.canPlace() || !valid(wouldBePlaced, desired, true)) {
+                        continue;
+                    }
+                }
+                return OptionalInt.of(i);
+            }
+            // Non-oriented / other blocks: keep vanilla prediction when aligned without mutating the player.
+            if (!aligned) {
+                if (itemBlock == desired.getBlock()) {
+                    baritone.getLookBehavior().updateTarget(rot, true);
+                }
                 continue;
             }
             BlockPlaceContext meme = new BlockPlaceContext(new UseOnContext(
@@ -1004,9 +1046,9 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
                     ctx.entity(),
                     InteractionHand.MAIN_HAND,
                     stack,
-                    (BlockHitResult) result
+                    bhr
             ) {}); // that {} gives us access to a protected constructor lmfao
-            BlockState wouldBePlaced = ((BlockItem) stack.getItem()).getBlock().getStateForPlacement(meme);
+            BlockState wouldBePlaced = itemBlock.getStateForPlacement(meme);
             // Ostinato: no rotation restoration: prediction did not change it.
             if (wouldBePlaced == null) {
                 continue;
@@ -1226,7 +1268,24 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
             // Ostinato: publish through the controls-only input boundary.
             ControlInput.selectSlot(toPlace.get().hotbarSelection);
             baritone.getInputOverrideHandler().setInputForceState(Input.SNEAK, true);
-            if ((ctx.isLookingAt(toPlace.get().placeAgainst) && ((BlockHitResult) ctx.objectMouseOver()).getDirection().equals(toPlace.get().side)) || ctx.playerRotations().isReallyCloseTo(rot)) {
+            boolean faceAligned = ctx.isLookingAt(toPlace.get().placeAgainst)
+                    && ((BlockHitResult) ctx.objectMouseOver()).getDirection().equals(toPlace.get().side);
+            boolean readyToClick;
+            if (toPlace.get().strictAim && toPlace.get().desired != null) {
+                if (faceAligned) {
+                    BlockHitResult liveHit = (BlockHitResult) ctx.objectMouseOver();
+                    int targetY = toPlace.get().placeAgainst.relative(toPlace.get().side).getY();
+                    double liveFracY = liveHit.getLocation().y - targetY;
+                    BlockState livePred = BlueprintStateHelper.predictPlacementState(
+                            toPlace.get().desired.getBlock(), liveHit.getDirection(), liveFracY, ctx.entity().getYRot());
+                    readyToClick = livePred != null && valid(livePred, toPlace.get().desired, true);
+                } else {
+                    readyToClick = false;
+                }
+            } else {
+                readyToClick = faceAligned || ctx.playerRotations().isReallyCloseTo(rot);
+            }
+            if (readyToClick) {
                 baritone.getInputOverrideHandler().setInputForceState(Input.CLICK_RIGHT, true);
                 lastPlacePhase = PlacePhase.CLICK;
             }
@@ -1244,7 +1303,8 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
             outer:
             for (BlockState desired : desirableOnHotbar) {
                 for (int i = 0; i < 9; i++) {
-                    if (valid(approxPlaceable.get(i), desired, true)) {
+                    if (valid(approxPlaceable.get(i), desired, true)
+                            || BlueprintStateHelper.canPlaceBlockItemAs(approxPlaceable.get(i).getBlock(), desired)) {
                         usefulSlots.add(i);
                         continue outer;
                     }
@@ -1255,7 +1315,8 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
             outer:
             for (int i = 9; i < 36; i++) {
                 for (BlockState desired : noValidHotbarOption) {
-                    if (valid(approxPlaceable.get(i), desired, true)) {
+                    if (valid(approxPlaceable.get(i), desired, true)
+                            || BlueprintStateHelper.canPlaceBlockItemAs(approxPlaceable.get(i).getBlock(), desired)) {
                         if (!baritone.getInventoryBehavior().attemptToPutOnHotbar(i, usefulSlots::contains)) {
                             // awaiting inventory move, so pause
                             return new PathingCommand(null, PathingCommandType.REQUEST_PAUSE);
@@ -1510,7 +1571,8 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         List<Goal> extras = new ArrayList<>();
         for (BetterBlockPos pos : byDistance) {
             BlockState desired = bcc.getSchematic(pos.x, pos.y, pos.z, bcc.bsi.get0(pos));
-            if (targets.size() < max && desired != null && placementPlausible(pos, desired)) {
+            if (targets.size() < max && desired != null && placementPlausible(pos, desired)
+                    && !BlueprintStateHelper.needsOrientedStand(desired)) {
                 targets.add(new Cadenza.Target(Cadenza.Kind.PLACE, pos, reach, eye, false));
             } else {
                 extras.add(placementGoal(pos, bcc));
@@ -1644,6 +1706,15 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         BlockState desired = bcc.getSchematic(pos.getX(), pos.getY(), pos.getZ(), current);
         boolean plausible = desired != null && (desired.getCollisionShape(ctx.world(), pos).isEmpty()
                 || ctx.world().isUnobstructed(ctx.entity(), desired.getCollisionShape(ctx.world(), pos).move(pos.getX(), pos.getY(), pos.getZ())));
+        // Ostinato: when the target block requires an oriented ordinary placement (stair facing/half, horizontal log
+        // axis, top slab), stand where a feasible support face can be clicked with the required yaw instead of any
+        // arbitrary adjacent cell.
+        if (plausible && desired != null && BlueprintStateHelper.needsOrientedStand(desired)) {
+            List<BlockPos> orientedStands = BlueprintStateHelper.feasibleOrientationStands(ctx, bcc.bsi, pos, desired);
+            if (!orientedStands.isEmpty()) {
+                return new GoalComposite(orientedStands.stream().map(GoalBlock::new).toArray(Goal[]::new));
+            }
+        }
         // Ostinato: se-r1. Stock checked horizontals before DOWN, so a neighbor-column block became GoalAdjacent's
         // forbidden stand, and allowSameLevel was false whenever the cell had air above. After mid-erase removed the
         // in-lease same-Y stand, every remaining in-goal cell was mid-air; the path 'All done' at a jump and never
@@ -1860,7 +1931,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
 
     private static boolean containsBlockState(Collection<BlockState> states, BlockState state) {
         for (BlockState testee : states) {
-            if (sameBlockstate(testee, state)) {
+            if (sameBlockstate(testee, state) || BlueprintStateHelper.canPlaceBlockItemAs(testee.getBlock(), state)) {
                 return true;
             }
         }
@@ -1944,7 +2015,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
                     // this won't be a schematic block, this will be a throwaway
                     return placeBlockCost * Baritone.settings().placeIncorrectBlockPenaltyMultiplier.value; // we're going to have to break it eventually
                 }
-                if (placeable.contains(sch)) {
+                if (containsBlockState(placeable, sch)) {
                     return 0; // thats right we gonna make it FREE to place a block where it should go in a structure
                     // no place block penalty at all 😎
                     // i'm such an idiot that i just tried to copy and paste the epic gamer moment emoji too

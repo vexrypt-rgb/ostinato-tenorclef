@@ -80,6 +80,10 @@ public final class BlockColors {
             return 0;
         }
         String key = id.toLowerCase(Locale.ROOT);
+        int bracket = key.indexOf('[');
+        if (bracket >= 0) {
+            key = key.substring(0, bracket);
+        }
         if (key.startsWith("minecraft:")) {
             key = key.substring("minecraft:".length());
         }

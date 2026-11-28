@@ -255,7 +255,8 @@ public final class RegistryExecutor implements CommandProtocol.Executor {
             return new long[]{0, b.getRoleBehavior().generation()};
         }
         if (n.equals("blueprint")) {
-            return first.equals("live") ? new long[]{2, b.getBlueprintBehavior().generation()} : new long[]{3, 0};
+            return (first.equals("live") || first.equals("repair"))
+                    ? new long[]{2, b.getBlueprintBehavior().generation()} : new long[]{3, 0};
         }
         return null;
     }

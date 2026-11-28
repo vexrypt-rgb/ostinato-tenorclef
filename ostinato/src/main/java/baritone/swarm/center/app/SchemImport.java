@@ -1,5 +1,6 @@
 package baritone.swarm.center.app;
 
+import baritone.swarm.rts.BlockStateSpec;
 import baritone.swarm.rts.Blueprint;
 
 import java.io.IOException;
@@ -10,11 +11,13 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
- * Ostinato: JDK-only import of {@code .litematic} and Sponge {@code .schem} (v1/v2) into {@link OstSchematic}.
- * Block-state properties are dropped; ids are ost1 names ({@code cobblestone}, no {@code minecraft:} prefix).
- * Air is omitted. Classic MCEdit {@code .schematic} (numeric ids) is refused.
+ * Ostinato: JDK-only import/export of {@code .litematic}, Sponge {@code .schem} (v1/v2), and structure {@code .nbt}
+ * into {@link OstSchematic}. Explicit block-state properties are preserved as canonical {@code [key=value,...]}
+ * suffixes while legacy name-only entries remain property-free. Air is omitted. Classic MCEdit {@code .schematic}
+ * (numeric ids) is refused.
  */
 public final class SchemImport {
 
@@ -66,8 +69,8 @@ public final class SchemImport {
             if (state < 0 || state >= palette.size()) {
                 throw new IllegalArgumentException("structure .nbt state index " + state);
             }
-            String id = palette.get(state);
-            if (skip(id)) {
+            String spec = palette.get(state);
+            if (skip(spec)) {
                 continue;
             }
             List<Nbt.Tag> pos = b.list("pos");
@@ -78,7 +81,8 @@ public final class SchemImport {
             int y = intTag(pos.get(1));
             int z = intTag(pos.get(2));
             try {
-                cells.add(new OstSchematic.Cell(x, y, z, OstSchematic.blockName(id)));
+                BlockStateSpec.Parsed parsed = BlockStateSpec.parse(spec);
+                cells.add(new OstSchematic.Cell(x, y, z, parsed.block(), parsed.properties()));
             } catch (IllegalArgumentException ignored) {
                 // drop unknown block id characters
             }
@@ -100,7 +104,7 @@ public final class SchemImport {
         int oy = origin == null ? 0 : origin[1];
         int oz = origin == null ? 0 : origin[2];
         for (OstSchematic.Cell c : s.cells()) {
-            b.paint(ox + c.x(), oy + c.y(), oz + c.z(), c.block());
+            b.paint(ox + c.x(), oy + c.y(), oz + c.z(), c.block(), c.properties());
         }
         return b;
     }
@@ -152,7 +156,8 @@ public final class SchemImport {
         List<OstSchematic.Cell> cells = new ArrayList<>();
         for (Region r : built) {
             for (OstSchematic.Cell c : r.cells) {
-                cells.add(new OstSchematic.Cell(c.x() + r.x0 - ox, c.y() + r.y0 - oy, c.z() + r.z0 - oz, c.block()));
+                cells.add(new OstSchematic.Cell(c.x() + r.x0 - ox, c.y() + r.y0 - oy, c.z() + r.z0 - oz,
+                        c.block(), c.properties()));
             }
         }
         return OstSchematic.of(cells);
@@ -194,10 +199,11 @@ public final class SchemImport {
                     if (pal < 0 || pal >= palette.size()) {
                         throw new IllegalArgumentException("litematic palette index " + pal);
                     }
-                    String id = palette.get(pal);
-                    if (!skip(id)) {
+                    String spec = palette.get(pal);
+                    if (!skip(spec)) {
                         try {
-                            cells.add(new OstSchematic.Cell(x, y, z, OstSchematic.blockName(id)));
+                            BlockStateSpec.Parsed parsed = BlockStateSpec.parse(spec);
+                            cells.add(new OstSchematic.Cell(x, y, z, parsed.block(), parsed.properties()));
                         } catch (IllegalArgumentException ignored) {
                             // unknown id characters: drop the cell
                         }
@@ -218,9 +224,9 @@ public final class SchemImport {
         Map<Integer, String> palette = new LinkedHashMap<>();
         Nbt.Compound pal = root.child("Palette");
         for (Map.Entry<String, Nbt.Tag> e : pal.map.entrySet()) {
-            String id = blockId(e.getKey());
+            String spec = blockSpec(e.getKey());
             int index = (e.getValue() instanceof Nbt.IntTag n) ? n.v() : 0;
-            palette.put(index, id);
+            palette.put(index, spec);
         }
         byte[] raw = root.bytes("BlockData");
         int volume = sx * sy * sz;
@@ -234,13 +240,14 @@ public final class SchemImport {
                     }
                     int[] var = varInt(raw, offset);
                     offset = var[1];
-                    String id = palette.get(var[0]);
-                    if (id == null) {
+                    String spec = palette.get(var[0]);
+                    if (spec == null) {
                         throw new IllegalArgumentException("schem palette index " + var[0]);
                     }
-                    if (!skip(id)) {
+                    if (!skip(spec)) {
                         try {
-                            cells.add(new OstSchematic.Cell(x, y, z, OstSchematic.blockName(id)));
+                            BlockStateSpec.Parsed parsed = BlockStateSpec.parse(spec);
+                            cells.add(new OstSchematic.Cell(x, y, z, parsed.block(), parsed.properties()));
                         } catch (IllegalArgumentException ignored) {
                             // drop
                         }
@@ -254,18 +261,63 @@ public final class SchemImport {
         return OstSchematic.of(cells);
     }
 
+    /** Preserves optional explicit {@code [key=value,...]} block-state properties when present. */
+    public static String blockSpec(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty()) {
+            return "";
+        }
+        if (skip(trimmed)) {
+            return blockId(trimmed);
+        }
+        try {
+            return BlockStateSpec.parse(trimmed).spec();
+        } catch (IllegalArgumentException e) {
+            return blockId(trimmed);
+        }
+    }
+
     static String paletteEntry(Nbt.Tag t) {
         if (t instanceof Nbt.StringTag s) {
-            return blockId(s.v());
+            return blockSpec(s.v());
         }
         if (t instanceof Nbt.Compound c) {
             String name = c.s("Name");
             if (name.isEmpty()) {
                 name = c.s("name");
             }
-            return blockId(name);
+            if (skip(name)) {
+                return blockId(name);
+            }
+            Nbt.Compound propsTag = c.has("Properties") ? c.child("Properties") : c.child("properties");
+            if (propsTag.map.isEmpty()) {
+                return blockSpec(name);
+            }
+            Map<String, String> props = new TreeMap<>();
+            for (Map.Entry<String, Nbt.Tag> e : propsTag.map.entrySet()) {
+                String v = propValue(e.getValue());
+                if (v != null && !v.isEmpty()) {
+                    props.put(e.getKey().trim().toLowerCase(Locale.ROOT), v.trim().toLowerCase(Locale.ROOT));
+                }
+            }
+            try {
+                return BlockStateSpec.of(name, props).spec();
+            } catch (IllegalArgumentException e) {
+                return blockId(name);
+            }
         }
         return "";
+    }
+
+    private static String propValue(Nbt.Tag tag) {
+        if (tag instanceof Nbt.StringTag s) return s.v();
+        if (tag instanceof Nbt.IntTag n) return Integer.toString(n.v());
+        if (tag instanceof Nbt.ByteTag n) return Byte.toString(n.v());
+        if (tag instanceof Nbt.ShortTag n) return Short.toString(n.v());
+        return null;
     }
 
     static int axis(Nbt.Compound c, String lower) {
@@ -350,16 +402,16 @@ public final class SchemImport {
         return (int) ((bitsTotal + 63) / 64);
     }
 
-    /** A tiny Sponge v2 file, for tests. {@code cells} are local and non-air. */
+    /** A tiny Sponge v2 file, for tests and export. {@code cells} are local and non-air. */
     public static byte[] writeSchem(int sx, int sy, int sz, List<OstSchematic.Cell> cells) {
         Map<String, Integer> pal = new LinkedHashMap<>();
         pal.put("minecraft:air", 0);
         for (OstSchematic.Cell c : cells) {
-            pal.putIfAbsent("minecraft:" + c.block(), pal.size());
+            pal.putIfAbsent("minecraft:" + c.spec(), pal.size());
         }
         int[] index = new int[sx * sy * sz]; // air
         for (OstSchematic.Cell c : cells) {
-            index[(c.y() * sz + c.z()) * sx + c.x()] = pal.get("minecraft:" + c.block());
+            index[(c.y() * sz + c.z()) * sx + c.x()] = pal.get("minecraft:" + c.spec());
         }
         java.io.ByteArrayOutputStream data = new java.io.ByteArrayOutputStream();
         for (int v : index) {
@@ -383,31 +435,36 @@ public final class SchemImport {
         return Nbt.writeGzip(root, "Schematic");
     }
 
-    /** A tiny single-region litematic, for tests. {@code cells} are local and non-air. */
+    /** A tiny single-region litematic, for tests and export. {@code cells} are local and non-air. */
     public static byte[] writeLitematic(int sx, int sy, int sz, List<OstSchematic.Cell> cells) {
-        List<String> pal = new ArrayList<>();
-        pal.add("minecraft:air");
+        List<Nbt.Tag> palette = new ArrayList<>();
+        Nbt.Compound airEntry = new Nbt.Compound();
+        airEntry.put("Name", "minecraft:air");
+        palette.add(airEntry);
         Map<String, Integer> at = new LinkedHashMap<>();
         at.put("air", 0);
         int[] index = new int[sx * sy * sz];
         for (OstSchematic.Cell c : cells) {
-            int i = at.computeIfAbsent(c.block(), k -> {
-                pal.add("minecraft:" + k);
-                return pal.size() - 1;
+            int i = at.computeIfAbsent(c.spec(), k -> {
+                Nbt.Compound e = new Nbt.Compound();
+                e.put("Name", "minecraft:" + c.block());
+                if (c.hasExplicitProperties()) {
+                    Nbt.Compound props = new Nbt.Compound();
+                    for (Map.Entry<String, String> pe : c.properties().entrySet()) {
+                        props.put(pe.getKey(), pe.getValue());
+                    }
+                    e.put("Properties", props);
+                }
+                palette.add(e);
+                return palette.size() - 1;
             });
             index[(c.y() * sz + c.z()) * sx + c.x()] = i;
         }
-        int bits = Math.max(2, (int) Math.ceil(Math.log(pal.size()) / Math.log(2)));
+        int bits = Math.max(2, (int) Math.ceil(Math.log(palette.size()) / Math.log(2)));
         long volume = (long) sx * sy * sz;
         long[] packed = new long[litematicLongCount(bits, volume)];
         for (int i = 0; i < index.length; i++) {
             litematicPut(packed, bits, i, index[i]);
-        }
-        List<Nbt.Tag> palette = new ArrayList<>();
-        for (String name : pal) {
-            Nbt.Compound e = new Nbt.Compound();
-            e.put("Name", name);
-            palette.add(e);
         }
         Nbt.Compound pos = new Nbt.Compound();
         pos.put("x", 0);
@@ -425,7 +482,7 @@ public final class SchemImport {
         Nbt.Compound regions = new Nbt.Compound();
         regions.put("main", region);
         Nbt.Compound root = new Nbt.Compound();
-        root.put("Version", 6);
+        root.put("Version", 7);
         root.put("MinecraftDataVersion", 3700);
         root.put("Regions", regions);
         return Nbt.writeGzip(root, "");
@@ -437,9 +494,16 @@ public final class SchemImport {
         Map<String, Integer> palIdx = new LinkedHashMap<>();
         List<Nbt.Tag> blockTags = new ArrayList<>();
         for (OstSchematic.Cell c : cells) {
-            int state = palIdx.computeIfAbsent(c.block(), k -> {
+            int state = palIdx.computeIfAbsent(c.spec(), k -> {
                 Nbt.Compound entry = new Nbt.Compound();
-                entry.put("Name", "minecraft:" + k);
+                entry.put("Name", "minecraft:" + c.block());
+                if (c.hasExplicitProperties()) {
+                    Nbt.Compound props = new Nbt.Compound();
+                    for (Map.Entry<String, String> pe : c.properties().entrySet()) {
+                        props.put(pe.getKey(), pe.getValue());
+                    }
+                    entry.put("Properties", props);
+                }
                 palTags.add(entry);
                 return palTags.size() - 1;
             });
@@ -475,7 +539,7 @@ public final class SchemImport {
         int sz = b[5] - oz + 1;
         List<OstSchematic.Cell> local = new ArrayList<>(blueprint.size());
         for (Blueprint.Cell c : blueprint.cells()) {
-            local.add(new OstSchematic.Cell(c.x() - ox, c.y() - oy, c.z() - oz, c.block()));
+            local.add(new OstSchematic.Cell(c.x() - ox, c.y() - oy, c.z() - oz, c.block(), c.properties()));
         }
         Path parent = target.toAbsolutePath().getParent();
         if (parent != null) {

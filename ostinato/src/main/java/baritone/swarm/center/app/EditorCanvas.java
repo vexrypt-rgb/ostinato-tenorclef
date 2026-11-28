@@ -12,7 +12,10 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
 import java.awt.image.BufferedImage;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.BiConsumer;
 
@@ -29,6 +32,7 @@ public final class EditorCanvas extends JComponent {
     private boolean showAll = true;
     private boolean live;
     private final Set<Long> placed = new HashSet<>();
+    private final Map<Long, Blueprint.Discrepancy> discrepancies = new HashMap<>();
     private EditorHit hover = EditorHit.miss();
     private BiConsumer<EditorHit, Boolean> onPaint = (h, e) -> {};
     private final Color bg;
@@ -152,6 +156,20 @@ public final class EditorCanvas extends JComponent {
         repaint();
     }
 
+    public void setDiscrepancies(List<Blueprint.Discrepancy> list) {
+        discrepancies.clear();
+        if (list != null) {
+            for (Blueprint.Discrepancy d : list) {
+                discrepancies.put(Blueprint.cellKey(d.x(), d.y(), d.z()), d);
+            }
+        }
+        repaint();
+    }
+
+    public Map<Long, Blueprint.Discrepancy> discrepancies() {
+        return Map.copyOf(discrepancies);
+    }
+
     public EditorHit hover() {
         return hover;
     }
@@ -185,12 +203,31 @@ public final class EditorCanvas extends JComponent {
             if (!showAll && !current) {
                 continue;
             }
-            boolean done = live && placed.contains(Blueprint.cellKey(c.x(), c.y(), c.z()));
+            long key = Blueprint.cellKey(c.x(), c.y(), c.z());
+            Blueprint.Discrepancy diff = discrepancies.get(key);
+            boolean done = live && diff == null && placed.contains(key);
             int rgb = BlockColors.color(c.block());
             if (rgb == 0) {
                 rgb = BlockColors.OTHER;
             }
             float alpha = !current ? 0.35f : (live && !done ? 0.55f : 1f);
+            if (diff != null) {
+                switch (diff.kind()) {
+                    case WRONG_STATE -> {
+                        rgb = 0xFF9800; // amber highlight for misoriented / wrong-state blocks
+                        alpha = current ? 1f : 0.7f;
+                    }
+                    case UNSUPPORTED -> {
+                        rgb = 0xE91E63; // magenta highlight for unsupported explicit state requirements
+                        alpha = current ? 1f : 0.7f;
+                    }
+                    case WRONG_BLOCK, REPAIR_FAILED -> {
+                        rgb = 0xE53935; // red highlight for wrong block or failed repair
+                        alpha = current ? 1f : 0.7f;
+                    }
+                    default -> {}
+                }
+            }
             drawCube(c.x(), c.y(), c.z(), rgb, alpha, w, h, pix, zbuf);
         }
         if (hover.kind == EditorHit.Kind.CELL) {
@@ -206,9 +243,15 @@ public final class EditorCanvas extends JComponent {
         String line = blueprint.name() + "  " + blueprint.size() + " blocks  v" + blueprint.version()
                 + "  y=" + layerY + (live ? "  live" : "  design");
         if (!hover.missed()) {
-            line += "  " + (hover.kind == EditorHit.Kind.CELL
-                    ? hover.x + "," + hover.y + "," + hover.z
-                    : "place " + hover.placeX + "," + hover.placeY + "," + hover.placeZ);
+            if (hover.kind == EditorHit.Kind.CELL) {
+                Blueprint.Cell hc = blueprint.at(hover.x, hover.y, hover.z);
+                Blueprint.Discrepancy hd = discrepancies.get(Blueprint.cellKey(hover.x, hover.y, hover.z));
+                line += "  " + hover.x + "," + hover.y + "," + hover.z
+                        + (hc == null ? "" : " " + hc.spec())
+                        + (hd == null ? "" : " [" + hd.kind() + "]");
+            } else {
+                line += "  place " + hover.placeX + "," + hover.placeY + "," + hover.placeZ;
+            }
         }
         g2.drawString(line, 10, h - 12);
     }

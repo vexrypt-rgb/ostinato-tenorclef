@@ -10,13 +10,52 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Ostinato: RTS mode live build. A world-anchored blueprint being edited: block names at world positions. It saves as
- * the same {@code ost1} text schematic the area bar and the later 3D editor use, with the world origin and a
- * version in {@code #} header lines that {@link OstSchematic#read} skips. Pure, shared by the window and the bot.
+ * Ostinato: RTS mode live build. A world-anchored blueprint being edited: block specs (name + optional explicit
+ * block-state properties) at world positions. It saves as the same {@code ost1} text schematic the area bar and
+ * the 3D editor use, with the world origin and a version in {@code #} header lines that {@link OstSchematic#read}
+ * skips. Pure, shared by the window and the bot.
  */
 public final class Blueprint {
 
-    public record Cell(int x, int y, int z, String block) {}
+    public record Cell(int x, int y, int z, String block, Map<String, String> properties) {
+        public Cell {
+            BlockStateSpec.Parsed parsed = BlockStateSpec.of(block, properties);
+            block = parsed.block();
+            properties = parsed.properties();
+        }
+
+        public Cell(int x, int y, int z, String block) {
+            this(x, y, z, block, Map.of());
+        }
+
+        public boolean hasExplicitProperties() {
+            return !properties.isEmpty();
+        }
+
+        public String spec() {
+            return BlockStateSpec.format(block, properties);
+        }
+    }
+
+    public enum DiscrepancyKind {
+        WRONG_STATE,
+        WRONG_BLOCK,
+        MISSING,
+        UNSUPPORTED,
+        UNLOADED,
+        REPAIR_FAILED
+    }
+
+    public record Discrepancy(int x, int y, int z, DiscrepancyKind kind, String expected, String actual, String reason) {
+        public Discrepancy {
+            if (kind == null) {
+                throw new IllegalArgumentException("discrepancy kind is required");
+            }
+            expected = expected == null ? "" : expected;
+            actual = actual == null ? "-" : actual;
+            reason = reason == null ? "" : reason;
+        }
+    }
 
     public static final int MAX_CELLS = OstSchematic.MAX_CELLS;
 
@@ -44,10 +83,16 @@ public final class Blueprint {
         return Collections.unmodifiableList(new ArrayList<>(cells.values()));
     }
 
-    /** True when the cell changed. */
+    /** True when the cell changed. Accepts legacy {@code oak_log} or explicit {@code oak_log[axis=x]}. */
     public boolean paint(int x, int y, int z, String block) {
-        String id = block(block);
-        Cell c = new Cell(x, y, z, id);
+        BlockStateSpec.Parsed parsed = parsePaint(block);
+        return paint(x, y, z, parsed.block(), parsed.properties());
+    }
+
+    /** True when the cell changed. */
+    public boolean paint(int x, int y, int z, String block, Map<String, String> properties) {
+        BlockStateSpec.Parsed parsed = parsePaint(block, properties);
+        Cell c = new Cell(x, y, z, parsed.block(), parsed.properties());
         Cell old = cells.get(key(x, y, z));
         if (c.equals(old)) {
             return false;
@@ -124,7 +169,7 @@ public final class Blueprint {
                 .append(o[2]).append(" version ").append(version).append('\n');
         for (Cell c : cells.values()) {
             sb.append(c.x - o[0]).append(' ').append(c.y - o[1]).append(' ').append(c.z - o[2]).append(' ')
-                    .append(c.block).append('\n');
+                    .append(c.spec()).append('\n');
         }
         return sb.toString();
     }
@@ -152,7 +197,8 @@ public final class Blueprint {
         }
         Blueprint b = new Blueprint(name);
         for (OstSchematic.Cell c : s.cells()) {
-            b.cells.put(key(o[0] + c.x(), o[1] + c.y(), o[2] + c.z()), new Cell(o[0] + c.x(), o[1] + c.y(), o[2] + c.z(), c.block()));
+            b.cells.put(key(o[0] + c.x(), o[1] + c.y(), o[2] + c.z()),
+                    new Cell(o[0] + c.x(), o[1] + c.y(), o[2] + c.z(), c.block(), c.properties()));
         }
         b.version = version;
         return b;
@@ -173,20 +219,31 @@ public final class Blueprint {
     }
 
     static String block(String raw) {
+        return parsePaint(raw).block();
+    }
+
+    private static BlockStateSpec.Parsed parsePaint(String raw) {
         String id = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
-        if (id.startsWith("minecraft:")) {
-            id = id.substring("minecraft:".length());
-        }
-        if (id.isEmpty() || id.equals("air")) {
+        if (id.isEmpty() || id.equals("air") || id.equals("minecraft:air")) {
             throw new IllegalArgumentException("pick a block to paint");
         }
-        for (int i = 0; i < id.length(); i++) {
-            char c = id.charAt(i);
-            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
-                throw new IllegalArgumentException("bad block name " + raw);
-            }
+        try {
+            return BlockStateSpec.parse(raw);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("bad block name " + raw);
         }
-        return id;
+    }
+
+    private static BlockStateSpec.Parsed parsePaint(String raw, Map<String, String> properties) {
+        String id = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
+        if (id.isEmpty() || id.equals("air") || id.equals("minecraft:air")) {
+            throw new IllegalArgumentException("pick a block to paint");
+        }
+        try {
+            return BlockStateSpec.of(raw, properties);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("bad block name " + raw);
+        }
     }
 
     static long key(int x, int y, int z) {
@@ -253,30 +310,96 @@ public final class Blueprint {
         return r;
     }
 
-    /** {@code version placed total} then one {@code x y z} line per placed cell. */
+    /** {@code version placed total note} then one {@code x y z} line per placed cell. */
     public static String writeStatus(long version, List<int[]> placed, int total, String note) {
+        return writeStatus(version, placed, total, note, List.of());
+    }
+
+    /**
+     * {@code version placed total note}, then {@code x y z} lines for placed/matched cells, then
+     * {@code ! <kind> <x> <y> <z> <expected> <actual> <reason>} lines for discrepancies.
+     */
+    public static String writeStatus(long version, List<int[]> placed, int total, String note,
+                                     List<Discrepancy> discrepancies) {
         StringBuilder sb = new StringBuilder();
         sb.append(version).append(' ').append(placed.size()).append(' ').append(total).append(' ')
                 .append(note == null || note.isBlank() ? "-" : note.replace('\n', ' ')).append('\n');
         for (int[] p : placed) {
             sb.append(p[0]).append(' ').append(p[1]).append(' ').append(p[2]).append('\n');
         }
+        if (discrepancies != null) {
+            for (Discrepancy d : discrepancies) {
+                if (d == null) {
+                    continue;
+                }
+                String exp = sanitizeToken(d.expected());
+                String act = sanitizeToken(d.actual());
+                String rsn = d.reason().replace('\r', ' ').replace('\n', ' ').trim();
+                sb.append("! ").append(d.kind().name()).append(' ')
+                        .append(d.x()).append(' ').append(d.y()).append(' ').append(d.z()).append(' ')
+                        .append(exp).append(' ').append(act);
+                if (!rsn.isEmpty()) {
+                    sb.append(' ').append(rsn);
+                }
+                sb.append('\n');
+            }
+        }
         return sb.toString();
     }
 
-    public record Status(long version, int placed, int total, String note, List<int[]> cells) {}
+    private static String sanitizeToken(String s) {
+        if (s == null || s.isBlank()) {
+            return "-";
+        }
+        return s.trim().replace(' ', '_').replace('\n', '_').replace('\r', '_');
+    }
+
+    public record Status(long version, int placed, int total, String note, List<int[]> cells,
+                         List<Discrepancy> discrepancies) {
+        public Status {
+            cells = cells == null ? List.of() : List.copyOf(cells);
+            discrepancies = discrepancies == null ? List.of() : List.copyOf(discrepancies);
+        }
+
+        public Status(long version, int placed, int total, String note, List<int[]> cells) {
+            this(version, placed, total, note, cells, List.of());
+        }
+    }
 
     public static Status readStatus(String text) {
         String[] lines = text.split("\\R");
         String[] h = lines[0].trim().split(" ", 4);
         List<int[]> cells = new ArrayList<>();
+        List<Discrepancy> discrepancies = new ArrayList<>();
         for (int i = 1; i < lines.length; i++) {
-            String[] w = lines[i].trim().split(" ");
+            String trimmed = lines[i].trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            if (trimmed.startsWith("! ")) {
+                String[] w = trimmed.split(" ", 8);
+                if (w.length >= 7) {
+                    try {
+                        DiscrepancyKind kind = DiscrepancyKind.valueOf(w[1]);
+                        int x = Integer.parseInt(w[2]);
+                        int y = Integer.parseInt(w[3]);
+                        int z = Integer.parseInt(w[4]);
+                        String exp = w[5];
+                        String act = w[6];
+                        String rsn = w.length > 7 ? w[7] : "";
+                        discrepancies.add(new Discrepancy(x, y, z, kind, exp, act, rsn));
+                    } catch (IllegalArgumentException ignored) {
+                        // ignore malformed discrepancy line
+                    }
+                }
+                continue;
+            }
+            String[] w = trimmed.split(" ");
             if (w.length == 3) {
                 cells.add(new int[]{Integer.parseInt(w[0]), Integer.parseInt(w[1]), Integer.parseInt(w[2])});
             }
         }
         return new Status(Long.parseLong(h[0]), Integer.parseInt(h[1]), Integer.parseInt(h[2]),
-                h.length > 3 ? h[3] : "", cells);
+                h.length > 3 ? h[3] : "", cells, discrepancies);
     }
 }
