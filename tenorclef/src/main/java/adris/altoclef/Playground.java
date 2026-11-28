@@ -139,6 +139,12 @@ public class Playground {
             case "teach_by_demo_fixture_exit":
                 Debug.logMessage(adris.altoclef.benchmark.TeachByDemoFixture.start(mod, true));
                 break;
+            case "animal_husbandry_fixture":
+                Debug.logMessage(adris.altoclef.benchmark.AnimalHusbandryFixture.start(mod, false));
+                break;
+            case "animal_husbandry_fixture_exit":
+                Debug.logMessage(adris.altoclef.benchmark.AnimalHusbandryFixture.start(mod, true));
+                break;
             case "":
                 // None specified
                 Debug.logWarning("Please specify a test (ex. stacked, bed, terminate)");

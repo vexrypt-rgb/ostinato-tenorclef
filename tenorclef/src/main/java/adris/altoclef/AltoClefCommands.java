@@ -86,7 +86,8 @@ public class AltoClefCommands {
                 new ShopCommand(), // Ostinato: @shop (also Ostinato #shop shopping list)
                 new ReplenishCommand(),
                 new BrewCommand(),
-                new TeachCommand()
+                new TeachCommand(),
+                new BreedCommand()
         );
     }
 }
