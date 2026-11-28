@@ -26,13 +26,15 @@ import baritone.api.event.events.type.EventState;
 import baritone.api.event.listener.AbstractGameEventListener;
 import baritone.gui.model.KeyNames;
 import baritone.gui.screen.OstinatoScreen;
+import baritone.gui.screen.RadialScreen;
 import baritone.gui.tasks.game.TaskService;
 import net.minecraft.client.Minecraft;
 import com.mojang.blaze3d.platform.InputConstants;
 
 /**
  * Wiring for the Ostinato GUI: polls the {@code guiKeybind} key every client tick (edge-triggered, only with no
- * screen open, same approach as TenorClef's menu key) and flushes debounced GUI saves.
+ * screen open, same approach as TenorClef's menu key), polls the hold-key radial quick menu ({@code ostinato.radialKey},
+ * default {@code R}), and flushes debounced GUI saves.
  */
 public final class OstinatoGui implements AbstractGameEventListener {
 
@@ -40,6 +42,7 @@ public final class OstinatoGui implements AbstractGameEventListener {
 
     private final Baritone baritone;
     private boolean wasDown = true; // don't open on a key that was already held at startup
+    private boolean radialWasDown = true; // Ostinato: P3 hold-key radial menu
 
     public OstinatoGui(Baritone baritone) {
         this.baritone = baritone;
@@ -59,6 +62,14 @@ public final class OstinatoGui implements AbstractGameEventListener {
             mc.gui.setScreen(new OstinatoScreen());
         }
         wasDown = down;
+
+        // Ostinato: P3 hold-key radial quick menu (default R; override via -Dostinato.radialKey=...)
+        int radialKey = KeyNames.parse(System.getProperty("ostinato.radialKey", "R"));
+        boolean radialDown = radialKey != KeyNames.NONE && radialKey != key && InputConstants.isKeyDown(radialKey);
+        if (radialDown && !radialWasDown && mc.gui.screen() == null && mc.player != null) {
+            mc.gui.setScreen(new RadialScreen(radialKey));
+        }
+        radialWasDown = radialDown;
     }
 
     @Override

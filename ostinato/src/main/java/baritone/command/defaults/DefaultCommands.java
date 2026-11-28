@@ -93,7 +93,8 @@ public final class DefaultCommands {
                 new OvernightCommand(baritone), // Ostinato: hypothesis queue, off unless overnightRaces is on
                 new SecondoCommand(baritone), // Ostinato: companion, idle unless secondoEnabled
                 new CenterCommand(baritone), // Ostinato: #center opens the command-center window
-                new ThemeCommand(baritone) // Ostinato: #theme picks the command-center color theme
+                new ThemeCommand(baritone), // Ostinato: #theme picks the command-center color theme
+                new PovCommand(baritone) // Ostinato: P4 Bot POV switching (#pov show|hide|status)
         ));
         ExecutionControlCommands prc = new ExecutionControlCommands(baritone);
         commands.add(prc.pauseCommand);

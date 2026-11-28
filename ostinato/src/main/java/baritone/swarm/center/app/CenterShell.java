@@ -62,6 +62,8 @@ public final class CenterShell {
     private EditorView editor;
     private CommandPalette palette;
     private ThemeEditorPanel themeEditor;
+    private final PovSwitcher pov = new PovSwitcher(); // Ostinato: P4 Bot POV switching
+    private PovStreamPanel povPanel;
     private JToggleButton paletteToggle;
     private JToggleButton themeEditToggle;
     private javax.swing.JComboBox<String> moreThemes;
@@ -250,8 +252,10 @@ public final class CenterShell {
                     if (themeEditToggle != null) themeEditToggle.setSelected(false);
                     root.revalidate();
                 });
+        povPanel = new PovStreamPanel(style, () -> cyclePov(-1), () -> cyclePov(1), this::returnPov);
         JPanel drawers = style.panel(new BorderLayout(), null);
-        drawers.add(palette.component(), BorderLayout.NORTH);
+        drawers.add(povPanel.component(), BorderLayout.NORTH);
+        drawers.add(palette.component(), BorderLayout.CENTER);
         drawers.add(themeEditor.component(), BorderLayout.SOUTH);
         northWrap.add(drawers, BorderLayout.SOUTH);
         root.add(northWrap, BorderLayout.NORTH);
@@ -276,6 +280,8 @@ public final class CenterShell {
             pick(CenterLayout.MAP);
             map.centerOn(name);
         });
+        wall.onWatchPov(this::watchPov);
+        map.onWatchPov(this::watchPov);
         wall.onTierChanged(tier -> refreshTierBadge());
 
         JPanel footer = style.panel(new BorderLayout(12, 0), style.surface());
@@ -390,6 +396,40 @@ public final class CenterShell {
 
     public ThemeEditorPanel themeEditor() {
         return themeEditor;
+    }
+
+    public PovSwitcher pov() {
+        return pov;
+    }
+
+    public PovStreamPanel povPanel() {
+        return povPanel;
+    }
+
+    /** Ostinato: P4 switch POV to {@code bot} (render-swap for hidden bots, stream preview for headless/other). */
+    public void watchPov(String bot) {
+        applyPovTransition(pov.watch(bot, last));
+    }
+
+    public void cyclePov(int delta) {
+        applyPovTransition(pov.cycle(last, delta));
+    }
+
+    public void returnPov() {
+        applyPovTransition(pov.returnToOwn(last));
+    }
+
+    private void applyPovTransition(PovSwitcher.Transition t) {
+        if (commands != null) {
+            for (String cmd : t.commands()) {
+                commands.line(cmd, last.hostBot(), null);
+            }
+        }
+        if (povPanel != null) {
+            povPanel.show(t.watching(), t.mode(), last);
+        }
+        root.revalidate();
+        root.repaint();
     }
 
     private List<String> activeSelection() {
@@ -555,6 +595,10 @@ public final class CenterShell {
                 snap.mine, snap.build);
         map.restoreIso(snap.isometric, snap.isoRotation, snap.rtsVisible);
         map.setShowDanger(snap.showDanger);
+        map.setYSlice(snap.ySliceEnabled, snap.ySlice);
+        if (povPanel != null && pov.isWatching()) {
+            povPanel.show(pov.watching(), pov.mode(), last);
+        }
         if (palette != null && snap.paletteVisible) {
             palette.setVisible(true);
             if (paletteToggle != null) paletteToggle.setSelected(true);
@@ -602,6 +646,8 @@ public final class CenterShell {
         h.isoRotation = map == null ? 0 : map.isoRotation();
         h.rtsVisible = map != null && map.rts().visible();
         h.showDanger = map != null && map.showDanger();
+        h.ySliceEnabled = map != null && map.ySliceEnabled();
+        h.ySlice = map == null ? 64 : map.ySlice();
         h.paletteVisible = palette != null && palette.visible();
         h.themeEditorVisible = themeEditor != null && themeEditor.visible();
         h.editor = editor == null ? null : editor.snapshot();
@@ -772,6 +818,9 @@ public final class CenterShell {
         if (palette != null) {
             palette.update(view);
         }
+        if (povPanel != null) {
+            povPanel.update(view);
+        }
         refreshTierBadge();
         if (hold != null) {
             restoreFields(hold);
@@ -813,6 +862,8 @@ public final class CenterShell {
         private int isoRotation;
         private boolean rtsVisible;
         private boolean showDanger;
+        private boolean ySliceEnabled;
+        private int ySlice = 64;
         private boolean paletteVisible;
         private boolean themeEditorVisible;
         private EditorView.Snapshot editor;

@@ -74,6 +74,7 @@ public final class WallView implements LayoutView {
     private DensityPolicy.Override densityOverride = DensityPolicy.Override.AUTO;
     private DensityPolicy.Tier activeTier;
     private Consumer<String> onOpen = name -> {};
+    private Consumer<String> onWatchPov = name -> {};
     private Consumer<DensityPolicy.Tier> onTierChanged = tier -> {};
 
     public WallView(AppStyle style, Commands commands) {
@@ -239,6 +240,12 @@ public final class WallView implements LayoutView {
         onOpen = open == null ? name -> {} : open;
     }
 
+    /** Ostinato: P4 Watch / Switch POV callback from wall tiles or the focus panel. */
+    public void onWatchPov(Consumer<String> watch) {
+        onWatchPov = watch == null ? name -> {} : watch;
+        focus.onWatchPov(onWatchPov);
+    }
+
     /** Opens the focus panel on {@code name}, or closes it when {@code name} is null. */
     public void select(String name) {
         selected = name == null || name.isBlank() ? null : name;
@@ -315,6 +322,7 @@ public final class WallView implements LayoutView {
                     t.onSelect(() -> select(bot));
                     t.onToggleMulti(() -> toggleMulti(bot));
                     t.onOpen(() -> onOpen.accept(bot));
+                    t.onWatchPov(() -> onWatchPov.accept(bot));
                 }
                 keep.put(n, t);
             }

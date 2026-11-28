@@ -384,6 +384,17 @@ public final class CenterApp {
             map.setShowDanger(want);
             return "danger=" + map.showDanger();
         }
+        if (spec.startsWith("yslice:")) {
+            String v = spec.substring("yslice:".length()).trim();
+            if ("off".equalsIgnoreCase(v)) {
+                map.setYSlice(false, map.ySlice());
+            } else if ("on".equalsIgnoreCase(v)) {
+                map.setYSlice(true, map.ySlice());
+            } else {
+                map.setYSlice(true, Integer.parseInt(v));
+            }
+            return "yslice=" + map.ySliceEnabled() + ":" + map.ySlice();
+        }
         if (spec.startsWith("rts:")) {
             return rtsAuto(map, canvas, shell, spec.substring("rts:".length()));
         }

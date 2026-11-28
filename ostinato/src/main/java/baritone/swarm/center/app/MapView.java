@@ -40,9 +40,13 @@ public final class MapView implements LayoutView {
     private final JToggleButton rtsToggle;
     private final JToggleButton isoToggle;
     private final JButton isoRotL, isoRotR;
+    private final JToggleButton ySliceToggle; // Ostinato: P2 Y-level cave/maze slice
+    private final javax.swing.JTextField ySliceField;
+    private final JButton ySliceUp, ySliceDown;
     private final SelectInspector inspector;
     private final AreaBar areaBar;
     private final RtsPanel rts; // Ostinato: RTS mode
+    private java.util.function.Consumer<String> onWatchPov = n -> {};
     private SwarmView last = SwarmView.EMPTY;
     private Path groupsFile;
 
@@ -166,6 +170,30 @@ public final class MapView implements LayoutView {
         dims.add(isoToggle);
         dims.add(isoRotL);
         dims.add(isoRotR);
+        ySliceToggle = style.toggle("Y-cut");
+        ySliceToggle.setName("map:yslice:toggle");
+        ySliceToggle.setToolTipText("Slice terrain, blueprints and ghosts at or below Y (cave/maze cut)");
+        ySliceField = style.field(3, "64", "Cut Y level");
+        ySliceField.setName("map:yslice:val");
+        ySliceField.setText(String.valueOf(canvas.ySlice));
+        ySliceField.setVisible(false);
+        ySliceField.addActionListener(e -> applyYSliceField());
+        ySliceUp = style.button("Y▲");
+        ySliceUp.setName("map:yslice:up");
+        ySliceUp.setVisible(false);
+        ySliceUp.addActionListener(e -> setYSlice(true, canvas.ySlice + 1));
+        ySliceDown = style.button("Y▼");
+        ySliceDown.setName("map:yslice:down");
+        ySliceDown.setVisible(false);
+        ySliceDown.addActionListener(e -> setYSlice(true, canvas.ySlice - 1));
+        ySliceToggle.addActionListener(e -> {
+            int y = parseYSlice(ySliceField.getText(), canvas.ySlice);
+            setYSlice(ySliceToggle.isSelected(), y);
+        });
+        dims.add(ySliceToggle);
+        dims.add(ySliceField);
+        dims.add(ySliceDown);
+        dims.add(ySliceUp);
         header.add(dims, BorderLayout.WEST);
         JPanel info = style.panel(new FlowLayout(FlowLayout.RIGHT, 12, 0), null);
         bots = style.label("0 bots", style.muted(), Font.PLAIN, 12f);
@@ -244,9 +272,62 @@ public final class MapView implements LayoutView {
             menu.setVisible(false);
         });
         menu.add(center);
+        JButton pov = style.button("Watch POV");
+        pov.setName("map:pov:" + bot);
+        pov.addActionListener(e -> {
+            onWatchPov.accept(bot);
+            menu.setVisible(false);
+        });
+        menu.add(pov);
         menu.setVisible(true);
         menu.revalidate();
         root.repaint();
+    }
+
+    /** Ostinato: P4 Watch POV callback from the marker menu. */
+    public void onWatchPov(java.util.function.Consumer<String> watch) {
+        onWatchPov = watch == null ? n -> {} : watch;
+    }
+
+    public boolean ySliceEnabled() {
+        return canvas.ySliceEnabled;
+    }
+
+    public int ySlice() {
+        return canvas.ySlice;
+    }
+
+    public void setYSlice(boolean on, int y) {
+        int clamped = Math.max(-64, Math.min(320, y));
+        canvas.ySliceEnabled = on;
+        canvas.ySlice = clamped;
+        if (ySliceToggle.isSelected() != on) {
+            ySliceToggle.setSelected(on);
+        }
+        String text = String.valueOf(clamped);
+        if (!text.equals(ySliceField.getText())) {
+            ySliceField.setText(text);
+        }
+        ySliceField.setVisible(on);
+        ySliceDown.setVisible(on);
+        ySliceUp.setVisible(on);
+        root.revalidate();
+        canvas.repaint();
+    }
+
+    private void applyYSliceField() {
+        setYSlice(canvas.ySliceEnabled, parseYSlice(ySliceField.getText(), canvas.ySlice));
+    }
+
+    private static int parseYSlice(String raw, int fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     @Override

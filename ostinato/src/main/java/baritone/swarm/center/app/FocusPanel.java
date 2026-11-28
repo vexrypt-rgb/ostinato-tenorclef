@@ -53,6 +53,7 @@ final class FocusPanel extends JPanel {
     private final JLabel quickResult;
     private final Runnable onClose;
     private final Consumer<String> onOpenOnMap;
+    private Consumer<String> onWatchPov = n -> {};
     private SwarmView last = SwarmView.EMPTY;
     private String currentBot;
     private String cancelTarget;
@@ -146,6 +147,7 @@ final class FocusPanel extends JPanel {
 
         JPanel row3 = style.panel(new FlowLayout(FlowLayout.LEFT, 3, 2), null);
         row3.setAlignmentX(Component.LEFT_ALIGNMENT);
+        row3.add(compactBtn("Watch POV", "focus:button:pov", false, this::runWatchPov));
         despawnBtn = compactBtn("Despawn", "focus:button:despawn", true, this::runDespawn);
         row3.add(despawnBtn);
         controls.add(row3);
@@ -337,6 +339,16 @@ final class FocusPanel extends JPanel {
             return;
         }
         commands.line(routedLine(currentBot, "home"), currentBot, this::showReply);
+    }
+
+    void onWatchPov(Consumer<String> onWatchPov) {
+        this.onWatchPov = onWatchPov == null ? n -> {} : onWatchPov;
+    }
+
+    private void runWatchPov() {
+        if (currentBot != null) {
+            onWatchPov.accept(currentBot);
+        }
     }
 
     private void runOpenOnMap() {

@@ -43,7 +43,7 @@ final class IsoMapRenderer {
         Arrays.fill(pix, style.theme.background());
 
         if (canvas.showTerrain && grid != null && !grid.isEmpty()) {
-            rasterTerrain(pix, w, h, cam, grid);
+            rasterTerrain(pix, w, h, cam, grid, canvas.ySliceEnabled, canvas.ySlice);
         }
 
         Graphics2D g = buffer.createGraphics();
@@ -78,7 +78,8 @@ final class IsoMapRenderer {
     // 1. Voxel Terrain Rasterizer (direct int[] backbuffer, exact painter order)
     // -------------------------------------------------------------------------
 
-    private static void rasterTerrain(int[] pix, int w, int h, IsoMapCamera cam, MapTerrain.Grid grid) {
+    private static void rasterTerrain(int[] pix, int w, int h, IsoMapCamera cam, MapTerrain.Grid grid,
+                                      boolean ySliceOn, int ySlice) {
         int zoom = cam.base().zoom();
         double hw = cam.halfW();
         double hh = cam.halfH();
@@ -134,6 +135,12 @@ final class IsoMapRenderer {
                     y = grid.medianY;
                 }
                 byte kind = grid.kind[idx];
+                boolean cut = ySliceOn && y > ySlice;
+                if (cut) {
+                    y = ySlice;
+                    baseRgb = STONE_RGB;
+                    kind = MapTerrain.Grid.KIND_NORMAL;
+                }
                 double topY = kind == MapTerrain.Grid.KIND_WATER ? y + 0.85 : y + 1.0;
 
                 double sxD = cam.screenX(wx + 0.5, wz + 0.5);
@@ -145,12 +152,14 @@ final class IsoMapRenderer {
                 }
 
                 // Height-based subtle tint so hills and valleys pop even on uniform grass/stone.
-                float elevMul = clamp(1.0f + (float) ((y - refY) * 0.008), 0.84f, 1.16f);
+                float elevMul = cut ? 0.65f : clamp(1.0f + (float) ((y - refY) * 0.008), 0.84f, 1.16f);
                 int topColor = shade(baseRgb, elevMul);
 
                 // Neighbor heights on the two visible front sides (+rz left, +rx right).
                 int leftNy = grid.heightAt(wx + flDx, wz + flDz);
                 int rightNy = grid.heightAt(wx + frDx, wz + frDz);
+                if (ySliceOn && leftNy != TerrainFeed.UNKNOWN_Y && leftNy > ySlice) leftNy = ySlice;
+                if (ySliceOn && rightNy != TerrainFeed.UNKNOWN_Y && rightNy > ySlice) rightNy = ySlice;
                 int leftBlocks = skirtDepth(y, leftNy);
                 int rightBlocks = skirtDepth(y, rightNy);
                 int maxSkirtPx = (int) Math.ceil(Math.max(leftBlocks, rightBlocks) * vy);
@@ -496,6 +505,7 @@ final class IsoMapRenderer {
             int z = c[1];
             int rgb = c[2] == 0 ? style.theme.accent() : c[2];
             int y = c.length > 3 ? c[3] : defaultY;
+            if (canvas.ySliceEnabled && y > canvas.ySlice) continue;
             drawVoxelCube(g, cam, x, y, z, rgb, 155, edge);
         }
     }
@@ -515,6 +525,7 @@ final class IsoMapRenderer {
             int rgb = c[2] == 0 ? style.theme.accent() : c[2];
             boolean placed = c.length > 3 && c[3] == 1;
             int y = c.length > 4 ? c[4] : defaultY;
+            if (canvas.ySliceEnabled && y > canvas.ySlice) continue;
             drawVoxelCube(g, cam, x, y, z, rgb, placed ? 250 : 120, placed ? solidEdge : pendingEdge);
         }
     }

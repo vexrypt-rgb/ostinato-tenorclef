@@ -68,6 +68,7 @@ final class TileView {
     private Runnable onSelect = () -> {};
     private Runnable onToggleMulti = () -> {};
     private Runnable onOpen = () -> {};
+    private Runnable onWatchPov = () -> {};
 
     TileView(AppStyle style, Commands commands, String bot) {
         this.style = style;
@@ -95,9 +96,20 @@ final class TileView {
         glyph = named(style.label(TileStatus.Level.IDLE.glyph, style.muted(), Font.BOLD, 14f), "glyph");
         name = style.label(bot, style.text(), Font.BOLD, 14f);
         status = named(style.label(" ", style.muted(), Font.PLAIN, 12f), "status");
+        JPanel headRight = style.panel(new FlowLayout(FlowLayout.RIGHT, 4, 0), null);
+        JButton povBtn = style.button("POV");
+        povBtn.setName("tile:" + bot + ":pov");
+        povBtn.setFont(AppStyle.font(Font.PLAIN, 10f));
+        povBtn.setToolTipText("Watch / switch POV to " + bot);
+        povBtn.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(style.line(), 1),
+                BorderFactory.createEmptyBorder(1, 5, 1, 5)));
+        povBtn.addActionListener(e -> onWatchPov.run());
+        headRight.add(status);
+        headRight.add(povBtn);
         head.add(glyph, BorderLayout.WEST);
         head.add(name, BorderLayout.CENTER);
-        head.add(status, BorderLayout.EAST);
+        head.add(headRight, BorderLayout.EAST);
         root.add(head, BorderLayout.NORTH);
 
         JPanel body = style.panel(null, null);
@@ -225,6 +237,11 @@ final class TileView {
     /** A double-click opens this bot on the war-room map. */
     void onOpen(Runnable open) {
         onOpen = open == null ? () -> {} : open;
+    }
+
+    /** Ostinato: P4 Watch POV hook from tile header button. */
+    void onWatchPov(Runnable watch) {
+        onWatchPov = watch == null ? () -> {} : watch;
     }
 
     /** Border stays one width so a state change never shifts the grid. Selection uses the accent. */

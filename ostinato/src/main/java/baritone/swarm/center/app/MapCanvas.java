@@ -72,6 +72,9 @@ final class MapCanvas extends javax.swing.JComponent {
     boolean showTerrain = true;
     /** Ostinato: P2 Danger overlay (lava, steep falls, entity observations, endangered bots). */
     boolean showDanger;
+    /** Ostinato: P2 Y-level cave/maze slice cut (when enabled, blocks/blueprints above ySlice are cut away). */
+    boolean ySliceEnabled;
+    int ySlice = 64;
     /** Ostinato: when true, the war-room map renders and interacts in 3D isometric projection. */
     boolean isometric;
     private MapTerrain.Grid terrainGrid = MapTerrain.Grid.EMPTY;
@@ -483,6 +486,9 @@ final class MapCanvas extends javax.swing.JComponent {
         int zoom = Math.max(1, camera.zoom());
         Color edge = new Color(style.theme.accent());
         for (int[] cell : blueprint) {
+            if (ySliceEnabled && cell.length > 4 && cell[4] > ySlice) {
+                continue;
+            }
             int rgb = cell[2] == 0 ? style.theme.accent() : cell[2];
             boolean placedCell = cell.length > 3 && cell[3] == 1;
             int sx = (int) Math.floor(camera.screenX(cell[0]));
@@ -502,6 +508,9 @@ final class MapCanvas extends javax.swing.JComponent {
         }
         int zoom = Math.max(1, camera.zoom());
         for (int[] cell : ghost) {
+            if (ySliceEnabled && cell.length > 3 && cell[3] > ySlice) {
+                continue;
+            }
             int rgb = cell[2] == 0 ? style.theme.accent() : cell[2];
             g.setColor(new Color((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, 170));
             int sx = (int) Math.floor(camera.screenX(cell[0]));
@@ -730,10 +739,13 @@ final class MapCanvas extends javax.swing.JComponent {
         int z1 = (int) Math.ceil(camera.screenToWorld(w, h)[1]) + 1;
         for (int z = z0; z <= z1; z++) {
             for (int x = x0; x <= x1; x++) {
-                String id = MapTerrain.block(slices, dim, x, z);
-                int rgb = BlockColors.color(id);
+                MapTerrain.Column col = MapTerrain.column(slices, dim, x, z);
+                int rgb = BlockColors.color(col.block());
                 if (rgb == 0) {
                     continue;
+                }
+                if (ySliceEnabled && col.y() != TerrainFeed.UNKNOWN_Y && col.y() > ySlice) {
+                    rgb = IsoMapRenderer.shade(rgb, 0.45f);
                 }
                 int sx = (int) Math.floor(camera.screenX(x));
                 int sy = (int) Math.floor(camera.screenZ(z));
