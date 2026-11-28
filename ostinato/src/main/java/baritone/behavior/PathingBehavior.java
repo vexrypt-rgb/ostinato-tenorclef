@@ -160,7 +160,20 @@ public final class PathingBehavior extends Behavior implements IPathingBehavior,
         };
     }
 
+    private final baritone.pathing.PathFailureLog failureLog = new baritone.pathing.PathFailureLog();
+
+    public baritone.pathing.PathFailureLog failureLog() {
+        return failureLog;
+    }
+
     private void queuePathEvent(PathEvent event) {
+        if (event == PathEvent.CALC_FAILED || event == PathEvent.NEXT_CALC_FAILED
+                || event == PathEvent.CANCELED || event == PathEvent.CALC_FINISHED_NOW_EXECUTING
+                || event == PathEvent.AT_GOAL) {
+            String g = goal == null ? "" : goal.toString();
+            int nodes = current == null ? 0 : current.getPath().length();
+            failureLog.recordEvent(event, g, nodes, "", System.currentTimeMillis());
+        }
         toDispatch.add(event);
     }
 

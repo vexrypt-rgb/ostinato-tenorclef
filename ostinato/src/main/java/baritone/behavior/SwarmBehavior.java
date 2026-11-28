@@ -51,11 +51,15 @@ import baritone.swarm.protocol.CommandProtocol;
 import baritone.swarm.protocol.GameEffectCheck;
 import baritone.swarm.protocol.RegistryExecutor;
 import baritone.swarm.roster.SwarmRoster;
+import baritone.swarm.transport.ChatBudget;
 import baritone.swarm.transport.ChatSwarmTransport;
 import baritone.swarm.transport.LocalRoutingTransport;
+import baritone.swarm.transport.ServerChatStore;
+import baritone.swarm.transport.SharedChatBucket;
 import baritone.swarm.transport.SwarmChannel;
 import baritone.swarm.transport.SwarmPriority;
 import baritone.swarm.transport.SwarmRateLimiter;
+import baritone.swarm.transport.WhisperDetector;
 import baritone.structure.DetectedStructure;
 import baritone.structure.StructureBehavior;
 import baritone.swarm.world.AutoReport;
@@ -106,6 +110,9 @@ public final class SwarmBehavior extends Behavior implements Helper {
         final CommandProtocol protocol;
         /** Ostinato: builds this bot's status sample (perf strip and link monitor). */
         final Status status;
+        /** Ostinato: per-server adaptive chat budget & whisper command detector. */
+        final ChatBudget chatBudget;
+        final ChatSwarmTransport chat;
 
         // Ostinato: immutable loaded roster; restart the link when the file contents change.
         final Path rosterPath;
@@ -122,12 +129,14 @@ public final class SwarmBehavior extends Behavior implements Helper {
         Set<String> peers = Collections.emptySet();
 
         Link(String self, LocalRoutingTransport transport, SwarmControl control, CommandProtocol protocol,
-             Status status, Path rosterPath, byte[] rosterBytes) {
+             Status status, ChatBudget chatBudget, ChatSwarmTransport chat, Path rosterPath, byte[] rosterBytes) {
             this.self = self;
             this.transport = transport;
             this.control = control;
             this.protocol = protocol;
             this.status = status; // Ostinato:
+            this.chatBudget = chatBudget;
+            this.chat = chat;
             this.rosterPath = rosterPath; // Ostinato:
             this.rosterBytes = rosterBytes; // Ostinato:
         }
@@ -143,6 +152,7 @@ public final class SwarmBehavior extends Behavior implements Helper {
     private volatile boolean ownerEmergency;
     private volatile boolean immediateSafety;
     private volatile boolean localSurvival;
+    private volatile String latestSpeedrunSplits = "";
     // Ostinato: Phase 2a leases. Kept across link restarts so a lease outlives a reconnect; null while off.
     private BotLeaseGuard leaseGuard;
     private LeaseCoordinator leaseCoordinator;
@@ -394,6 +404,9 @@ public final class SwarmBehavior extends Behavior implements Helper {
             link.protocol.noteOnlineMembers(onlinePlayerNames());
         }
         link.control.tick();
+        if (link.chatBudget != null && link.chatBudget.tick(nowMs())) {
+            applyChatBudget(link);
+        }
         logLinkRate(link); // Ostinato:
         coordinatorTick(s); // Ostinato:
         obsTick(s); // Ostinato: Phase 2c
@@ -1232,6 +1245,10 @@ public final class SwarmBehavior extends Behavior implements Helper {
         final boolean coordinatorOn = s.swarmCoordinator.value; // Ostinato:
         final Set<String> online = protocolOn ? onlinePlayerNames() : Set.of(); // Ostinato: initial snapshot.
         final String atCatalog = protocolOn ? AtCatalogBridge.exportInstalled() : null;
+        final String serverAddress = currentServerAddress();
+        final List<String> treeCommands = s.swarmAutoDetectWhisper.value ? brigadierTwoArgCommands() : List.of();
+        final boolean adaptiveBudget = s.swarmAdaptiveChatBudget.value;
+        final String serverOverridesSpec = s.swarmServerOverrides.value;
         loading = CompletableFuture.supplyAsync(() -> {
             try {
                 Path rp = Paths.get(rosterFile);
@@ -1245,10 +1262,35 @@ public final class SwarmBehavior extends Behavior implements Helper {
                 SwarmRoster roster = SwarmRoster.parse(new String(rosterBytes, StandardCharsets.UTF_8));
                 Path sigilHome = SwarmKeys.sigilHome(home, env);
                 Map<String, SigilCircle> circles = SwarmKeys.circlesFor(roster, self, sigilHome);
-                SwarmRateLimiter limiter = new SwarmRateLimiter(rate, burst, unsafe, queueMax, nowMs());
+                ServerChatStore serverStore = new ServerChatStore(dir.resolve("swarm-servers.properties"));
+                serverStore.loadOverridesSpec(serverOverridesSpec);
+                ServerChatStore.ServerProfile effectiveProfile = serverStore.effectiveFor(serverAddress);
+                String manualTemplate = effectiveProfile.hasTemplate() && serverStore.overrideFor(serverAddress) != null
+                        && serverStore.overrideFor(serverAddress).hasTemplate()
+                        ? serverStore.overrideFor(serverAddress).whisperTemplate()
+                        : template;
+                WhisperDetector detector = WhisperDetector.create(treeCommands, manualTemplate,
+                        effectiveProfile.whisperTemplate());
+                SharedChatBucket sharedBucket = adaptiveBudget
+                        ? SharedChatBucket.forServer(serverAddress, rate, burst, nowMs()) : null;
+                ChatBudget chatBudget = adaptiveBudget
+                        ? new ChatBudget(serverAddress, serverStore, detector, sharedBucket,
+                                rate, cfg.maxLineChars, unsafe, nowMs(), this::logDirect)
+                        : null;
+                double initialRate = chatBudget != null ? chatBudget.effectiveRate() : rate;
+                int initialMaxChars = chatBudget != null ? chatBudget.effectiveMaxChars() : cfg.maxLineChars;
+                String initialTemplate = detector.currentTemplate() != null ? detector.currentTemplate() : template;
+                cfg.maxLineChars = initialMaxChars;
+                SwarmRateLimiter limiter = new SwarmRateLimiter(initialRate, burst, unsafe, queueMax, nowMs());
+                if (sharedBucket != null) {
+                    limiter.setSharedBucket(sharedBucket);
+                }
                 limiter.setLog(this::logDirect); // Ostinato: "expired still queued" lines
-                ChatSwarmTransport chat = new ChatSwarmTransport(self, channel, template, roster, limiter,
-                        cfg.maxLineChars);
+                ChatSwarmTransport chat = new ChatSwarmTransport(self, channel, initialTemplate, roster, limiter,
+                        initialMaxChars);
+                if (detector.currentTemplate() == null) {
+                    chat.setEffectiveTemplate(null);
+                }
                 for (SwarmRoster.Group g : roster.groupsOf(self)) {
                     int overhead = ChatSwarmTransport.templateOverhead(chat.templateFor(chat.channelFor(g.id())));
                     cfg.lineReserveChars = Math.max(cfg.lineReserveChars, overhead);
@@ -1344,7 +1386,7 @@ public final class SwarmBehavior extends Behavior implements Helper {
                     protocol = created;
                     status.protocol = created; // Ostinato: retried count for the link monitor.
                 }
-                Link made = new Link(self, transport, control, protocol, status, rp, rosterBytes); // Ostinato:
+                Link made = new Link(self, transport, control, protocol, status, chatBudget, chat, rp, rosterBytes); // Ostinato:
                 // Ostinato: Phase 2a SWL rides the same sealed link at HIGH priority. Off, nothing registers.
                 if (leasesOn || coordinatorOn) {
                     Set<String> peers = new HashSet<>();
@@ -1536,10 +1578,89 @@ public final class SwarmBehavior extends Behavior implements Helper {
         try {
             Link l = link;
             if (l != null && text != null) {
-                l.transport.onChat(text);
+                int tokens = l.transport.onChat(text);
+                if (l.chatBudget != null) {
+                    if (tokens > 0) {
+                        l.chatBudget.onSignedAck(WhisperDetector.matchesWhisperEcho(text), nowMs());
+                    } else if (l.chatBudget.onServerText(text, nowMs()) != ChatBudget.Signal.NONE) {
+                        applyChatBudget(l);
+                    }
+                }
             }
         } catch (Throwable t) {
         }
+    }
+
+    private void applyChatBudget(Link l) {
+        if (l == null || l.chatBudget == null) {
+            return;
+        }
+        l.status.limiter.setEffectiveRate(l.chatBudget.effectiveRate());
+        l.chat.setEffectiveMaxLineChars(l.chatBudget.effectiveMaxChars());
+        l.chat.setEffectiveTemplate(l.chatBudget.effectiveTemplate());
+    }
+
+    /** Resolved whisper template for the current server, shared with TenorClef via {@link baritone.api.swarm.ISwarm}. */
+    public String resolvedWhisperTemplate() {
+        Link l = link;
+        if (l != null && l.chatBudget != null && l.chatBudget.effectiveTemplate() != null) {
+            return l.chatBudget.effectiveTemplate();
+        }
+        if (l != null && l.chat != null) {
+            return l.chat.templateFor(SwarmChannel.WHISPER);
+        }
+        String custom = Baritone.settings().swarmCommandTemplate.value;
+        return SwarmChannel.WHISPER.template(custom);
+    }
+
+    /** Learned or configured max chat line length for the current server. */
+    public int resolvedChatMaxChars() {
+        Link l = link;
+        if (l != null && l.chatBudget != null) {
+            return l.chatBudget.effectiveMaxChars();
+        }
+        if (l != null && l.chat != null) {
+            return l.chat.maxLineChars();
+        }
+        return Baritone.settings().swarmMaxLineChars.value;
+    }
+
+    /** Active ChatBudget for the current link, or null. */
+    public ChatBudget chatBudget() {
+        Link l = link;
+        return l == null ? null : l.chatBudget;
+    }
+
+    /** Stores live speedrun split telemetry published from TenorClef via {@link baritone.api.swarm.ISwarm}. */
+    public void publishSpeedrunSplits(String encodedSplits) {
+        this.latestSpeedrunSplits = encodedSplits == null ? "" : encodedSplits;
+    }
+
+    /** Latest encoded TenorClef speedrun splits string, or empty. */
+    public String latestSpeedrunSplits() {
+        return latestSpeedrunSplits;
+    }
+
+    private String currentServerAddress() {
+        try {
+            var mc = ctx.minecraft();
+            if (mc != null && mc.getCurrentServer() != null && mc.getCurrentServer().ip != null) {
+                return mc.getCurrentServer().ip;
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return "local";
+    }
+
+    private List<String> brigadierTwoArgCommands() {
+        try {
+            LocalPlayer player = ctx.localPlayer();
+            if (player != null && player.connection != null && player.connection.getCommands() != null) {
+                return WhisperDetector.inspectDispatcher(player.connection.getCommands());
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return List.of();
     }
 
     public SwarmControl control() {

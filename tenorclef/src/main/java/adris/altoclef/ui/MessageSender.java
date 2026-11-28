@@ -106,7 +106,24 @@ public class MessageSender {
 
         @Override
         public String getChatInput() {
-            return "msg " + username + " " + message;
+            String tpl = resolveWhisperTemplate();
+            String formatted = tpl.replace("{to}", username).replace("{msg}", message);
+            return formatted.startsWith("/") ? formatted.substring(1) : formatted;
+        }
+
+        private static String resolveWhisperTemplate() {
+            try {
+                var baritone = baritone.api.BaritoneAPI.getProvider().getPrimaryBaritone();
+                if (baritone != null && baritone.getSwarm() != null) {
+                    String tpl = baritone.getSwarm().resolvedWhisperTemplate();
+                    if (tpl != null && tpl.contains("{to}") && tpl.contains("{msg}")) {
+                        return tpl;
+                    }
+                }
+            } catch (Throwable ignored) {
+                // Fall back to default msg command when swarm hook is unavailable.
+            }
+            return "/msg {to} {msg}";
         }
     }
 

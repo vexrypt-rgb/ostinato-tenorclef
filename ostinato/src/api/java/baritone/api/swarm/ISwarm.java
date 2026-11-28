@@ -97,6 +97,28 @@ public interface ISwarm {
     default void noteLocalSurvival(boolean on) {
     }
 
+    /**
+     * Ostinato: resolved whisper command template for the current server (e.g. {@code /msg {to} {msg}}),
+     * detected from the Brigadier tree or manual override. Falls back to {@code /msg {to} {msg}}.
+     */
+    default String resolvedWhisperTemplate() {
+        return "/msg {to} {msg}";
+    }
+
+    /**
+     * Ostinato: learned/configured max chat line length for the current server (chars).
+     */
+    default int resolvedChatMaxChars() {
+        return 256;
+    }
+
+    /**
+     * Ostinato: publish live TenorClef speedrun split telemetry to Ostinato's command-center feed without
+     * coupling TenorClef to Ostinato internals. Format: {@code phase|elapsedMs|elapsedTicks|pbMs|split1=ms:ticks:pbMs,...}.
+     */
+    default void publishSpeedrunSplits(String encodedSplits) {
+    }
+
     @FunctionalInterface
     interface SwarmHandler {
         void onMessage(String from, String group, String body);

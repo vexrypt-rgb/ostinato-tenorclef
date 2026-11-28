@@ -122,6 +122,16 @@ public final class MapDanger {
             if (p == null || p.dim() != dim) {
                 continue;
             }
+            for (BotFeed.Danger d : b.feed().dangers()) {
+                Kind k = switch (d.kind().toLowerCase(java.util.Locale.ROOT)) {
+                    case "lava" -> Kind.LAVA;
+                    case "fall", "cliff" -> Kind.FALL;
+                    default -> Kind.ENTITY;
+                };
+                String label = d.name().isEmpty() ? d.kind() : d.name();
+                String tip = label + " (" + d.kind() + ", " + Math.round(d.distance()) + "m from " + b.name() + ")";
+                out.add(new Hazard(k, d.x(), d.y(), d.z(), label, tip));
+            }
             TileStatus status = Alerts.status(b, view.alertsFor(b.name()));
             boolean lowHp = b.feed().health() >= 0 && b.feed().health() <= LOW_HEALTH;
             if (b.feed().dead() || lowHp || status.level() == TileStatus.Level.BAD) {

@@ -20,11 +20,15 @@ import java.util.Map;
 public record BotFeed(String name, long writtenAtMs, long seq, String server, String runMode, boolean commandHost,
                       boolean coordinator, Pos pos, int health, int maxHealth, int hunger, boolean dead, String process,
                       Route path, Inventory inventory, List<Execution> executions, List<HeldLease> leases, Perf perf,
-                      Link link, long gatherUs, String role, String roleState) {
+                      Link link, long gatherUs, String role, String roleState,
+                      WhyStuck whyStuck, List<Danger> dangers, List<TaskItem> tasks, Speedrun speedrun,
+                      LinkBudget linkBudget, ViewCap viewCap) {
 
     public static final int MAX_NODES = 32;
     public static final int MAX_EXECUTIONS = 8;
     public static final int MAX_ITEMS = 4;
+    public static final int MAX_DANGERS = 16;
+    public static final int MAX_TASKS = 16;
 
     public BotFeed {
         name = name == null ? "" : name;
@@ -39,6 +43,12 @@ public record BotFeed(String name, long writtenAtMs, long seq, String server, St
         link = link == null ? Link.DOWN : link;
         role = role == null || role.isBlank() ? "idle" : role;
         roleState = roleState == null ? "" : roleState;
+        whyStuck = whyStuck == null ? WhyStuck.NONE : whyStuck;
+        dangers = dangers == null ? List.of() : List.copyOf(dangers);
+        tasks = tasks == null ? List.of() : List.copyOf(tasks);
+        speedrun = speedrun == null ? Speedrun.NONE : speedrun;
+        linkBudget = linkBudget == null ? LinkBudget.NONE : linkBudget;
+        viewCap = viewCap == null ? ViewCap.NONE : viewCap;
     }
 
     /** Ostinato: the pre-RTS shape; a feed without a role is idle. */
@@ -47,7 +57,18 @@ public record BotFeed(String name, long writtenAtMs, long seq, String server, St
                    Route path, Inventory inventory, List<Execution> executions, List<HeldLease> leases, Perf perf,
                    Link link, long gatherUs) {
         this(name, writtenAtMs, seq, server, runMode, commandHost, coordinator, pos, health, maxHealth, hunger, dead,
-                process, path, inventory, executions, leases, perf, link, gatherUs, "idle", "");
+                process, path, inventory, executions, leases, perf, link, gatherUs, "idle", "",
+                WhyStuck.NONE, List.of(), List.of(), Speedrun.NONE, LinkBudget.NONE, ViewCap.NONE);
+    }
+
+    /** Ostinato: RTS shape without optional Phase 3/4 diagnostic extensions. */
+    public BotFeed(String name, long writtenAtMs, long seq, String server, String runMode, boolean commandHost,
+                   boolean coordinator, Pos pos, int health, int maxHealth, int hunger, boolean dead, String process,
+                   Route path, Inventory inventory, List<Execution> executions, List<HeldLease> leases, Perf perf,
+                   Link link, long gatherUs, String role, String roleState) {
+        this(name, writtenAtMs, seq, server, runMode, commandHost, coordinator, pos, health, maxHealth, hunger, dead,
+                process, path, inventory, executions, leases, perf, link, gatherUs, role, roleState,
+                WhyStuck.NONE, List.of(), List.of(), Speedrun.NONE, LinkBudget.NONE, ViewCap.NONE);
     }
 
     /** Where the bot stands. {@code dim} is o, n or e (the reservation-key letters), or ? for another dimension. */
@@ -257,6 +278,206 @@ public record BotFeed(String name, long writtenAtMs, long seq, String server, St
         }
     }
 
+    /** Additive v1: Why-stuck diagnostics from PathFailureLog and BuilderProcess stallDebug. */
+    public record WhyStuck(String lastGoal, int failCount, String reason, int triedNodes, long lastFailAgeMs,
+                           String stallDetail) {
+        public static final WhyStuck NONE = new WhyStuck("", 0, "", 0, -1, "");
+
+        public WhyStuck {
+            lastGoal = lastGoal == null ? "" : lastGoal;
+            reason = reason == null ? "" : reason;
+            stallDetail = stallDetail == null ? "" : stallDetail;
+        }
+
+        public boolean isEmpty() {
+            return failCount <= 0 && reason.isEmpty() && stallDetail.isEmpty() && lastGoal.isEmpty();
+        }
+
+        Map<String, Object> toJson() {
+            return Json.map("lastGoal", lastGoal, "failCount", failCount, "reason", reason, "triedNodes", triedNodes,
+                    "lastFailAgeMs", lastFailAgeMs, "stallDetail", stallDetail);
+        }
+
+        static WhyStuck fromJson(Map<String, Object> m) {
+            if (m == null) {
+                return NONE;
+            }
+            return new WhyStuck(Json.str(m, "lastGoal", ""), Json.i32(m, "failCount", 0), Json.str(m, "reason", ""),
+                    Json.i32(m, "triedNodes", 0), Json.num(m, "lastFailAgeMs", -1), Json.str(m, "stallDetail", ""));
+        }
+    }
+
+    /** Additive v1: Nearby hostile mob, non-swarm player, lava, or fall hazard for the Danger overlay. */
+    public record Danger(String kind, String name, double x, double y, double z, double distance, String severity) {
+        public Danger {
+            kind = kind == null ? "" : kind;
+            name = name == null ? "" : name;
+            severity = severity == null || severity.isBlank() ? "warn" : severity;
+        }
+
+        Map<String, Object> toJson() {
+            return Json.map("kind", kind, "name", name, "x", round(x), "y", round(y), "z", round(z),
+                    "distance", round(distance), "severity", severity);
+        }
+
+        static Danger fromJson(Map<String, Object> m) {
+            return new Danger(Json.str(m, "kind", ""), Json.str(m, "name", ""), Json.dbl(m, "x", 0),
+                    Json.dbl(m, "y", 0), Json.dbl(m, "z", 0), Json.dbl(m, "distance", -1),
+                    Json.str(m, "severity", "warn"));
+        }
+    }
+
+    /** Additive v1: One step in this bot's active task queue. */
+    public record TaskItem(int index, String type, String label, String state) {
+        public TaskItem {
+            type = type == null ? "" : type;
+            label = label == null ? "" : label;
+            state = state == null ? "queued" : state;
+        }
+
+        Map<String, Object> toJson() {
+            return Json.map("index", index, "type", type, "label", label, "state", state);
+        }
+
+        static TaskItem fromJson(Map<String, Object> m) {
+            return new TaskItem(Json.i32(m, "index", 0), Json.str(m, "type", ""), Json.str(m, "label", ""),
+                    Json.str(m, "state", "queued"));
+        }
+    }
+
+    /** Additive v1: Live TenorClef speedrun splits vs personal bests with ticks per phase. */
+    public record Speedrun(String phase, long elapsedMs, long elapsedTicks, long totalPbMs, List<Split> splits) {
+        public static final Speedrun NONE = new Speedrun("", 0, 0, -1, List.of());
+
+        public record Split(String name, long ms, long ticks, long pbMs) {
+            public Split {
+                name = name == null ? "" : name;
+            }
+
+            Map<String, Object> toJson() {
+                return Json.map("name", name, "ms", ms, "ticks", ticks, "pbMs", pbMs);
+            }
+
+            static Split fromJson(Map<String, Object> m) {
+                return new Split(Json.str(m, "name", ""), Json.num(m, "ms", 0), Json.num(m, "ticks", 0),
+                        Json.num(m, "pbMs", -1));
+            }
+        }
+
+        public Speedrun {
+            phase = phase == null ? "" : phase;
+            splits = splits == null ? List.of() : List.copyOf(splits);
+        }
+
+        public boolean isEmpty() {
+            return phase.isEmpty() && elapsedMs <= 0 && splits.isEmpty();
+        }
+
+        /** Parses the compact encoded string published via {@code ISwarm.publishSpeedrunSplits}. */
+        public static Speedrun parseEncoded(String encoded) {
+            if (encoded == null || encoded.isBlank()) {
+                return NONE;
+            }
+            String[] parts = encoded.split("\\|", -1);
+            if (parts.length < 4) {
+                return NONE;
+            }
+            String phase = parts[0];
+            long elapsedMs = parseLongSafe(parts[1], 0);
+            long elapsedTicks = parseLongSafe(parts[2], 0);
+            long totalPbMs = parseLongSafe(parts[3], -1);
+            List<Split> list = new ArrayList<>();
+            if (parts.length >= 5 && !parts[4].isBlank()) {
+                for (String token : parts[4].split(",")) {
+                    int eq = token.indexOf('=');
+                    if (eq <= 0) continue;
+                    String sName = token.substring(0, eq);
+                    String[] nums = token.substring(eq + 1).split(":", -1);
+                    if (nums.length >= 3) {
+                        list.add(new Split(sName, parseLongSafe(nums[0], 0), parseLongSafe(nums[1], 0),
+                                parseLongSafe(nums[2], -1)));
+                    }
+                }
+            }
+            return new Speedrun(phase, elapsedMs, elapsedTicks, totalPbMs, list);
+        }
+
+        private static long parseLongSafe(String s, long fallback) {
+            try {
+                return Long.parseLong(s.trim());
+            } catch (NumberFormatException e) {
+                return fallback;
+            }
+        }
+
+        Map<String, Object> toJson() {
+            List<Object> sp = new ArrayList<>();
+            for (Split s : splits) {
+                sp.add(s.toJson());
+            }
+            return Json.map("phase", phase, "elapsedMs", elapsedMs, "elapsedTicks", elapsedTicks,
+                    "totalPbMs", totalPbMs, "splits", sp);
+        }
+
+        static Speedrun fromJson(Map<String, Object> m) {
+            if (m == null) {
+                return NONE;
+            }
+            List<Split> sp = new ArrayList<>();
+            for (Map<String, Object> o : Json.objs(m, "splits")) {
+                sp.add(Split.fromJson(o));
+            }
+            return new Speedrun(Json.str(m, "phase", ""), Json.num(m, "elapsedMs", 0),
+                    Json.num(m, "elapsedTicks", 0), Json.num(m, "totalPbMs", -1), sp);
+        }
+    }
+
+    /** Additive v1: Learned per-server chat budget & detected whisper prefix for the Swarm Link Monitor. */
+    public record LinkBudget(String whisperCommand, int maxLineChars, int rateMilliPerSec, long backoffEvents) {
+        public static final LinkBudget NONE = new LinkBudget("", -1, -1, 0);
+
+        public LinkBudget {
+            whisperCommand = whisperCommand == null ? "" : whisperCommand;
+        }
+
+        public boolean isEmpty() {
+            return whisperCommand.isEmpty() && maxLineChars < 0 && rateMilliPerSec < 0 && backoffEvents <= 0;
+        }
+
+        Map<String, Object> toJson() {
+            return Json.map("whisperCommand", whisperCommand, "maxLineChars", maxLineChars,
+                    "rateMilliPerSec", rateMilliPerSec, "backoffEvents", backoffEvents);
+        }
+
+        static LinkBudget fromJson(Map<String, Object> m) {
+            if (m == null) {
+                return NONE;
+            }
+            return new LinkBudget(Json.str(m, "whisperCommand", ""), Json.i32(m, "maxLineChars", -1),
+                    Json.i32(m, "rateMilliPerSec", -1), Json.num(m, "backoffEvents", 0));
+        }
+    }
+
+    /** Additive v1: Bot POV switching view capability (Phase 4). */
+    public record ViewCap(boolean canRenderSwap, boolean canStreamView) {
+        public static final ViewCap NONE = new ViewCap(false, false);
+
+        public boolean isEmpty() {
+            return !canRenderSwap && !canStreamView;
+        }
+
+        Map<String, Object> toJson() {
+            return Json.map("canRenderSwap", canRenderSwap, "canStreamView", canStreamView);
+        }
+
+        static ViewCap fromJson(Map<String, Object> m) {
+            if (m == null) {
+                return NONE;
+            }
+            return new ViewCap(Json.bool(m, "canRenderSwap", false), Json.bool(m, "canStreamView", false));
+        }
+    }
+
     // ---- codec ----------------------------------------------------------------------------------------------------
 
     public String toJson() {
@@ -289,6 +510,32 @@ public record BotFeed(String name, long writtenAtMs, long seq, String server, St
         m.put("gatherUs", gatherUs);
         m.put("role", role);
         m.put("roleState", roleState);
+        if (!whyStuck.isEmpty()) {
+            m.put("whyStuck", whyStuck.toJson());
+        }
+        if (!dangers.isEmpty()) {
+            List<Object> ds = new ArrayList<>();
+            for (Danger d : dangers) {
+                ds.add(d.toJson());
+            }
+            m.put("dangers", ds);
+        }
+        if (!tasks.isEmpty()) {
+            List<Object> ts = new ArrayList<>();
+            for (TaskItem t : tasks) {
+                ts.add(t.toJson());
+            }
+            m.put("tasks", ts);
+        }
+        if (!speedrun.isEmpty()) {
+            m.put("speedrun", speedrun.toJson());
+        }
+        if (!linkBudget.isEmpty()) {
+            m.put("linkBudget", linkBudget.toJson());
+        }
+        if (!viewCap.isEmpty()) {
+            m.put("viewCap", viewCap.toJson());
+        }
         return Json.write(m);
     }
 
@@ -307,6 +554,14 @@ public record BotFeed(String name, long writtenAtMs, long seq, String server, St
         for (Map<String, Object> l : Json.objs(m, "leases")) {
             ls.add(HeldLease.fromJson(l));
         }
+        List<Danger> ds = new ArrayList<>();
+        for (Map<String, Object> d : Json.objs(m, "dangers")) {
+            ds.add(Danger.fromJson(d));
+        }
+        List<TaskItem> ts = new ArrayList<>();
+        for (Map<String, Object> t : Json.objs(m, "tasks")) {
+            ts.add(TaskItem.fromJson(t));
+        }
         return new BotFeed(Json.str(m, "name", ""), Json.num(m, "writtenAtMs", 0), Json.num(m, "seq", 0),
                 Json.str(m, "server", ""), Json.str(m, "runMode", ""), Json.bool(m, "commandHost", false),
                 Json.bool(m, "coordinator", false), Pos.fromJson(Json.obj(m, "pos")), Json.i32(m, "health", -1),
@@ -314,7 +569,9 @@ public record BotFeed(String name, long writtenAtMs, long seq, String server, St
                 Json.str(m, "process", "idle"), Route.fromJson(Json.obj(m, "path")),
                 Inventory.fromJson(Json.obj(m, "inventory")), ex, ls, Perf.fromJson(Json.obj(m, "perf")),
                 Link.fromJson(Json.obj(m, "link")), Json.num(m, "gatherUs", -1), Json.str(m, "role", "idle"),
-                Json.str(m, "roleState", ""));
+                Json.str(m, "roleState", ""), WhyStuck.fromJson(Json.obj(m, "whyStuck")), ds, ts,
+                Speedrun.fromJson(Json.obj(m, "speedrun")), LinkBudget.fromJson(Json.obj(m, "linkBudget")),
+                ViewCap.fromJson(Json.obj(m, "viewCap")));
     }
 
     static double round(double v) {

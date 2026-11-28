@@ -51,9 +51,11 @@ public final class SwarmRateLimiter {
     /** Ostinato: window the link monitor counts chat lines over. */
     public static final long CHAT_WINDOW_MS = 60_000L;
 
-    private final double rate;
+    private double rate;
+    private final boolean allowUnsafe;
     private final int burst;
     private final int queueMax;
+    private volatile SharedChatBucket sharedBucket;
     @SuppressWarnings("unchecked")
     private final ArrayDeque<Entry>[] queues = new ArrayDeque[SwarmPriority.values().length];
     private double tokens;
@@ -108,6 +110,7 @@ public final class SwarmRateLimiter {
             b = Math.min(b, SAFE_MAX_BURST);
         }
         this.rate = r;
+        this.allowUnsafe = allowUnsafe;
         this.burst = b;
         this.queueMax = Math.max(1, queueMax);
         this.tokens = b;
@@ -117,8 +120,22 @@ public final class SwarmRateLimiter {
         }
     }
 
-    public double rate() { return rate; }
+    public synchronized double rate() { return rate; }
     public int burst() { return burst; }
+
+    /** Dynamically adjusts the effective steady send rate (used by {@link ChatBudget}). */
+    public synchronized void setEffectiveRate(double ratePerSec) {
+        double r = Double.isNaN(ratePerSec) ? MIN_RATE : Math.max(MIN_RATE, ratePerSec);
+        if (!allowUnsafe) {
+            r = Math.min(r, SAFE_MAX_RATE);
+        }
+        this.rate = r;
+    }
+
+    /** Attaches a machine/IP-wide shared bucket drawn from alongside this bot's own bucket. */
+    public void setSharedBucket(SharedChatBucket bucket) {
+        this.sharedBucket = bucket;
+    }
 
     /** Ostinato: where the one-off "expired while still queued" lines go. */
     public synchronized void setLog(Consumer<String> log) {
@@ -183,7 +200,14 @@ public final class SwarmRateLimiter {
         if (tokens < 1.0) {
             return null;
         }
+        SharedChatBucket sb = this.sharedBucket;
         for (ArrayDeque<Entry> q : queues) {
+            if (q.isEmpty()) {
+                continue;
+            }
+            if (sb != null && !sb.tryAcquire(nowMs)) {
+                return null;
+            }
             Entry e = q.pollFirst();
             if (e != null) {
                 tokens -= 1.0;

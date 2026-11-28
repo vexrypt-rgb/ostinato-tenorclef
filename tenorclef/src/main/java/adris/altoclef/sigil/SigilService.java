@@ -22,8 +22,26 @@ import java.util.function.Consumer;
  */
 public final class SigilService {
 
-    /** Whisper command room: "/w " + a 16 char name + " " leaves this many characters of the 256 for the token. */
+    /** Whisper command room: default "/w " + a 16 char name + " " leaves 234 chars; adapts to resolved server budget. */
     public static final int WHISPER_LINE = 256 - 22;
+
+    /** Effective max token length using Ostinato's per-server resolved whisper template and learned chat budget. */
+    public static int effectiveWhisperLine() {
+        try {
+            var baritone = baritone.api.BaritoneAPI.getProvider().getPrimaryBaritone();
+            if (baritone != null && baritone.getSwarm() != null) {
+                String tpl = baritone.getSwarm().resolvedWhisperTemplate();
+                int maxChars = baritone.getSwarm().resolvedChatMaxChars();
+                if (tpl != null && tpl.contains("{to}") && tpl.contains("{msg}") && maxChars >= 128) {
+                    int overhead = tpl.replace("{to}", "0123456789abcdef").replace("{msg}", "").length();
+                    return Math.max(100, maxChars - overhead);
+                }
+            }
+        } catch (Throwable ignored) {
+            // Fall back to default constant when swarm hook is unavailable.
+        }
+        return WHISPER_LINE;
+    }
     private static final long FRAGMENT_TTL_MS = 120_000;
 
     /** A fully reassembled sealed message and how to answer it. */
@@ -127,14 +145,15 @@ public final class SigilService {
      */
     List<String> sealReplyBlocking(Sealed via, String toPlayer, String plaintext) {
         SigilKeyring kr = keyring();
+        int maxLine = effectiveWhisperLine();
         if (via != null && via.mode().equals("circle")) {
             Sigil.Circle c = kr.circle(via.label());
-            if (c != null) return Sigil.sealCircle(c, plaintext, WHISPER_LINE, true);
+            if (c != null) return Sigil.sealCircle(c, plaintext, maxLine, true);
         }
         if (via != null && via.mode().equals("signet")) {
             Sigil.Signet local = kr.signet(via.label());
             Sigil.Contact to = kr.contactByShort(via.fromShort());
-            if (local != null && to != null) return Sigil.sealToSignet(local, to, plaintext, false, WHISPER_LINE, true);
+            if (local != null && to != null) return Sigil.sealToSignet(local, to, plaintext, false, maxLine, true);
         }
         return sealToPlayerBlocking(toPlayer, plaintext);
     }
@@ -142,13 +161,14 @@ public final class SigilService {
     /** Directed to a contact whose alias is {@code player} if there is one, else the default circle. Null if neither. */
     List<String> sealToPlayerBlocking(String player, String plaintext) {
         SigilKeyring kr = keyring();
+        int maxLine = effectiveWhisperLine();
         ButlerConfig cfg = ButlerConfig.getInstance();
         Sigil.Contact to = kr.contact(player);
         Sigil.Signet local = kr.signet(cfg.sigilSignet);
         if (local == null && !kr.signets().isEmpty()) local = kr.signets().get(0);
-        if (to != null && local != null) return Sigil.sealToSignet(local, to, plaintext, false, WHISPER_LINE, true);
+        if (to != null && local != null) return Sigil.sealToSignet(local, to, plaintext, false, maxLine, true);
         Sigil.Circle c = kr.circle(cfg.sigilCircle);
-        if (c != null) return Sigil.sealCircle(c, plaintext, WHISPER_LINE, true);
+        if (c != null) return Sigil.sealCircle(c, plaintext, maxLine, true);
         return null;
     }
 

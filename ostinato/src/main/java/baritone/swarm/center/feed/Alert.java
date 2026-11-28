@@ -20,7 +20,9 @@ public record Alert(String bot, Code code, TileStatus.Level level, String text) 
         LINK_DOWN(TileStatus.Level.WARN, "link down"),
         LEASE_ENDED(TileStatus.Level.WARN, "lease ended"),
         LOW_TOOL(TileStatus.Level.WARN, "tool low"),
-        INVENTORY_FULL(TileStatus.Level.WARN, "inventory full");
+        INVENTORY_FULL(TileStatus.Level.WARN, "inventory full"),
+        PLAYER_NEARBY(TileStatus.Level.WARN, "player near"),
+        DANGER_NEARBY(TileStatus.Level.BAD, "hazard near");
 
         public final TileStatus.Level level;
         /** Short word for a tile badge. */

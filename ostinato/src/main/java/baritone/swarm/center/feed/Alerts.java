@@ -89,6 +89,19 @@ public final class Alerts {
         if (inv.freeSlots() == 0 && inv.totalSlots() > 0) {
             out.add(new Alert(n, Alert.Code.INVENTORY_FULL, "inventory full"));
         }
+        boolean playerWarned = false;
+        boolean dangerWarned = false;
+        for (BotFeed.Danger d : f.dangers()) {
+            if (!playerWarned && "player".equals(d.kind()) && d.distance() >= 0 && d.distance() <= 24.0) {
+                playerWarned = true;
+                out.add(new Alert(n, Alert.Code.PLAYER_NEARBY,
+                        "player " + d.name() + " " + Math.round(d.distance()) + "m"));
+            } else if (!dangerWarned && "danger".equals(d.severity()) && d.distance() >= 0 && d.distance() <= 10.0) {
+                dangerWarned = true;
+                out.add(new Alert(n, Alert.Code.DANGER_NEARBY,
+                        d.name() + " " + Math.round(d.distance()) + "m"));
+            }
+        }
         return out;
     }
 

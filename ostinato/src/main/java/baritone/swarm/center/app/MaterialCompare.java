@@ -21,7 +21,7 @@ import java.util.regex.Pattern;
  */
 public final class MaterialCompare {
 
-    private static final Pattern CHEST_ITEM = Pattern.compile("([a-z0-9_]+)\\s*[x×:=]\\s*(\\d+)|(\\d+)\\s*[x×]?\\s+([a-z0-9_]+)");
+    private static final Pattern CHEST_ITEM = Pattern.compile("([a-z0-9_]+)\\s*[x×:=.]\\s*(\\d+)|(\\d+)\\s*[x×]?\\s+([a-z0-9_]+)");
 
     public record Row(String block, int needed, int placed, int remaining, int inBots, int inChests, int missing) {
         public int available() {

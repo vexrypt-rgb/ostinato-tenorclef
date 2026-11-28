@@ -2268,6 +2268,24 @@ public final class Settings {
     public final Setting<String> swarmCommandTemplate = new Setting<>("");
 
     /**
+     * Swarm: detect the server's whisper command from its Brigadier command tree ({@code msg}, {@code tell},
+     * {@code w}, {@code whisper}, {@code m}, {@code pm}, {@code dm}) and cache the working template per server.
+     */
+    public final Setting<Boolean> swarmAutoDetectWhisper = new Setting<>(true);
+
+    /**
+     * Swarm: adapt chat send rate and line length per server from cooldown, too-long, and kick replies,
+     * sharing one token bucket across local bots on the same server.
+     */
+    public final Setting<Boolean> swarmAdaptiveChatBudget = new Setting<>(true);
+
+    /**
+     * Swarm: per-server manual chat overrides, semicolon-separated:
+     * {@code server=/tell {to} {msg}|200|0.4;other=/w {to} {msg}}. Always wins over detected/learned values.
+     */
+    public final Setting<String> swarmServerOverrides = new Setting<>("");
+
+    /**
      * Swarm: steady outgoing chat lines per second (token bucket). Vanilla 1.16.1 adds 20 to a spam
      * counter per chat message or command, removes 1 per server tick and kicks above 200, so the
      * neutral rate is 1 line/s at 20 TPS and less when the server lags. Clamped to at most 0.9

@@ -96,11 +96,12 @@ public final class WhyStuck {
         Track t = tracks.get(bot);
         BotFeed f = b.feed();
         List<Alert> alerts = view.alertsFor(bot);
-        int fails = t == null ? 0 : t.failCount;
+        int fails = Math.max(t == null ? 0 : t.failCount, f.whyStuck().failCount());
         int[] goalPos = f.path().goalPos() != null ? f.path().goalPos() : (t == null ? null : t.lastGoalPos);
         String goalStr = goalPos != null && goalPos.length >= 3
                 ? goalPos[0] + " " + goalPos[1] + " " + goalPos[2]
-                : (t != null && !t.lastGoalText.isEmpty() ? t.lastGoalText : "");
+                : (!f.whyStuck().lastGoal().isEmpty() ? f.whyStuck().lastGoal()
+                : (t != null && !t.lastGoalText.isEmpty() ? t.lastGoalText : ""));
         String repathLine = goalPos != null && goalPos.length >= 3
                 ? "goto " + goalPos[0] + " " + goalPos[1] + " " + goalPos[2]
                 : "path";
@@ -110,6 +111,17 @@ public final class WhyStuck {
             if ("failed".equalsIgnoreCase(ex.execution()) && fails == 0) {
                 fails = 1;
             }
+        }
+
+        // Surface bot-reported PathFailureLog diagnostics when present
+        BotFeed.WhyStuck ws = f.whyStuck();
+        if (!ws.isEmpty() && (!ws.reason().isEmpty() || !ws.stallDetail().isEmpty())) {
+            String detail = !ws.reason().isEmpty() ? ws.reason() : ws.stallDetail();
+            if (ws.triedNodes() > 0) {
+                detail += " (" + ws.triedNodes() + " nodes)";
+            }
+            return new Report(true, detail, Math.max(fails, Math.max(1, ws.failCount())), goalStr, repathLine,
+                    stalledMs(view, b, t));
         }
 
         if (f.dead()) {

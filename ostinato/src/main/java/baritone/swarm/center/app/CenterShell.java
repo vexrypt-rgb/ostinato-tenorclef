@@ -65,9 +65,23 @@ public final class CenterShell {
     private final PovSwitcher pov = new PovSwitcher(); // Ostinato: P4 Bot POV switching
     private PovStreamPanel povPanel;
     private ConsolePanel console; // Ostinato: P3 combined log & console drawer
+    private AlertToastBar toastBar; // Ostinato: P1 non-focus-stealing alert toast strip
+    private final ReplayBuffer replayBuffer = new ReplayBuffer(); // Ostinato: P3 replay scrubber buffer
+    private ReplayPanel replayPanel;
+    private JPanel opsDrawer; // Ostinato: P2/P3 Tasks, Stash, Links, Speedrun Splits drawer
+    private CardLayout opsCards;
+    private JPanel opsBody;
+    private final List<JToggleButton> opsTabBtns = new ArrayList<>();
+    private int opsTabIndex;
+    private TaskQueuePanel taskQueuePanel;
+    private SharedStashPanel sharedStashPanel;
+    private LinkMonitorPanel linkMonitorPanel;
+    private SpeedrunSplitsPanel speedrunSplitsPanel;
     private JToggleButton paletteToggle;
     private JToggleButton themeEditToggle;
+    private JToggleButton opsToggle;
     private JToggleButton consoleToggle;
+    private JToggleButton replayToggle;
     private javax.swing.JComboBox<String> moreThemes;
     private final Commands commands;
     private CenterLayout shown;
@@ -206,11 +220,22 @@ public final class CenterShell {
                 root.revalidate();
             }
         });
+        opsToggle = style.toggle("Ops");
+        opsToggle.setName("header.ops");
+        opsToggle.setFont(AppStyle.font(Font.PLAIN, 11f));
+        opsToggle.setToolTipText("Task Queue, Shared Stash, Swarm Link Monitor, and Speedrun Splits");
+        opsToggle.addActionListener(e -> {
+            if (opsDrawer != null) {
+                opsDrawer.setVisible(opsToggle.isSelected());
+                root.revalidate();
+            }
+        });
         subLeft.add(coordinator);
         subLeft.add(tierLabel);
         subLeft.add(paletteToggle);
         subLeft.add(moreThemes);
         subLeft.add(themeEditToggle);
+        subLeft.add(opsToggle);
         subRow.add(subLeft, BorderLayout.WEST);
 
         JPanel subRight = style.panel(new FlowLayout(FlowLayout.RIGHT, 4, 0), null);
@@ -255,10 +280,49 @@ public final class CenterShell {
                     root.revalidate();
                 });
         povPanel = new PovStreamPanel(style, () -> cyclePov(-1), () -> cyclePov(1), this::returnPov);
+        toastBar = new AlertToastBar(style);
+        taskQueuePanel = new TaskQueuePanel(style, commands);
+        sharedStashPanel = new SharedStashPanel(style);
+        linkMonitorPanel = new LinkMonitorPanel(style);
+        speedrunSplitsPanel = new SpeedrunSplitsPanel(style);
+        opsTabBtns.clear();
+        opsCards = new CardLayout();
+        opsBody = style.panel(opsCards, style.bg());
+        opsBody.add(taskQueuePanel, "0");
+        opsBody.add(sharedStashPanel, "1");
+        opsBody.add(linkMonitorPanel, "2");
+        opsBody.add(speedrunSplitsPanel, "3");
+
+        JPanel opsBar = style.panel(new FlowLayout(FlowLayout.LEFT, 4, 4), style.surface());
+        opsBar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, style.line()));
+        ButtonGroup opsGroup = new ButtonGroup();
+        String[] opsNames = {"Tasks", "Stash", "Links", "Splits"};
+        for (int i = 0; i < opsNames.length; i++) {
+            int idx = i;
+            JToggleButton tb = style.toggle(opsNames[i]);
+            tb.setName("ops:tab:" + opsNames[i].toLowerCase(java.util.Locale.ROOT));
+            tb.addActionListener(e -> selectOpsTab(idx));
+            opsGroup.add(tb);
+            opsTabBtns.add(tb);
+            opsBar.add(tb);
+        }
+        opsDrawer = style.panel(new BorderLayout(), style.surface());
+        opsDrawer.setName("ops:drawer");
+        opsDrawer.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, style.line()));
+        opsDrawer.setPreferredSize(new java.awt.Dimension(600, 235));
+        opsDrawer.add(opsBar, BorderLayout.NORTH);
+        opsDrawer.add(opsBody, BorderLayout.CENTER);
+        selectOpsTab(0);
+        opsDrawer.setVisible(false);
+
         JPanel drawers = style.panel(new BorderLayout(), null);
         drawers.add(povPanel.component(), BorderLayout.NORTH);
         drawers.add(palette.component(), BorderLayout.CENTER);
-        drawers.add(themeEditor.component(), BorderLayout.SOUTH);
+        JPanel lowerDrawers = style.panel(new BorderLayout(), null);
+        lowerDrawers.add(themeEditor.component(), BorderLayout.NORTH);
+        lowerDrawers.add(opsDrawer, BorderLayout.SOUTH);
+        drawers.add(lowerDrawers, BorderLayout.SOUTH);
+        northWrap.add(toastBar, BorderLayout.CENTER);
         northWrap.add(drawers, BorderLayout.SOUTH);
         root.add(northWrap, BorderLayout.NORTH);
 
@@ -291,11 +355,24 @@ public final class CenterShell {
         wall.onTierChanged(tier -> refreshTierBadge());
 
         console = new ConsolePanel(style, commands, this::activeSelection);
+        replayPanel = new ReplayPanel(style, replayBuffer, this::renderView);
+        replayPanel.setVisible(false);
         JPanel footerBar = style.panel(new BorderLayout(12, 0), style.surface());
         footerBar.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, style.line()),
                 BorderFactory.createEmptyBorder(5, 12, 5, 12)));
         reply = named(style.label("No command sent yet.", style.muted(), Font.PLAIN, 12f), "footer.reply");
         problems = named(style.label(" ", style.warn(), Font.PLAIN, 12f), "footer.problems");
+        replayToggle = style.toggle("Replay");
+        replayToggle.setName("footer.replay");
+        replayToggle.setFont(AppStyle.font(Font.PLAIN, 11f));
+        replayToggle.setToolTipText("Scrub back through recent bot positions, paths, alerts, and logs");
+        replayToggle.addActionListener(e -> {
+            replayPanel.setVisible(replayToggle.isSelected());
+            if (!replayToggle.isSelected() && replayPanel.isScrubbing()) {
+                replayPanel.returnToLive();
+            }
+            root.revalidate();
+        });
         consoleToggle = style.toggle("Console");
         consoleToggle.setName("footer.console");
         consoleToggle.setFont(AppStyle.font(Font.PLAIN, 11f));
@@ -306,11 +383,13 @@ public final class CenterShell {
         });
         JPanel footRight = style.panel(new FlowLayout(FlowLayout.RIGHT, 8, 0), null);
         footRight.add(problems);
+        footRight.add(replayToggle);
         footRight.add(consoleToggle);
         footerBar.add(reply, BorderLayout.WEST);
         footerBar.add(footRight, BorderLayout.EAST);
 
         JPanel southWrap = style.panel(new BorderLayout(), null);
+        southWrap.add(replayPanel, BorderLayout.NORTH);
         southWrap.add(console.component(), BorderLayout.CENTER);
         southWrap.add(footerBar, BorderLayout.SOUTH);
         root.add(southWrap, BorderLayout.SOUTH);
@@ -430,6 +509,30 @@ public final class CenterShell {
 
     public ConsolePanel console() {
         return console;
+    }
+
+    public ReplayBuffer replayBuffer() {
+        return replayBuffer;
+    }
+
+    public boolean opsVisible() {
+        return opsDrawer != null && opsDrawer.isVisible();
+    }
+
+    public int opsTabIndex() {
+        return opsTabIndex;
+    }
+
+    public void selectOpsTab(int idx) {
+        if (opsBody == null || opsCards == null || opsTabBtns.isEmpty()) {
+            return;
+        }
+        opsTabIndex = Math.max(0, Math.min(opsTabBtns.size() - 1, idx));
+        opsCards.show(opsBody, String.valueOf(opsTabIndex));
+        JToggleButton tb = opsTabBtns.get(opsTabIndex);
+        if (!tb.isSelected()) {
+            tb.setSelected(true);
+        }
     }
 
     /** Ostinato: P4 switch POV to {@code bot} (render-swap for hidden bots, stream preview for headless/other). */
@@ -643,6 +746,16 @@ public final class CenterShell {
                 consoleToggle.setSelected(snap.console.visible());
             }
         }
+        if (opsDrawer != null && snap.opsVisible) {
+            selectOpsTab(snap.opsTab);
+            opsDrawer.setVisible(true);
+            if (opsToggle != null) opsToggle.setSelected(true);
+        }
+        if (replayPanel != null && snap.replayVisible) {
+            replayPanel.setVisible(true);
+            replayPanel.onLiveFrameRecorded();
+            if (replayToggle != null) replayToggle.setSelected(true);
+        }
         if (snap.reply != null) {
             reply.setText(snap.reply);
             reply.setForeground(snap.replyColor);
@@ -684,6 +797,9 @@ public final class CenterShell {
         h.themeEditorVisible = themeEditor != null && themeEditor.visible();
         h.editor = editor == null ? null : editor.snapshot();
         h.console = console == null ? null : console.snapshot();
+        h.opsVisible = opsDrawer != null && opsDrawer.isVisible();
+        h.opsTab = opsTabIndex;
+        h.replayVisible = replayPanel != null && replayPanel.isVisible();
         collect(root, h.fields);
         return h;
     }
@@ -832,6 +948,29 @@ public final class CenterShell {
         Prefs p = prefs == null ? Prefs.NONE : prefs;
         followLayout(p.layout());
         followTheme(p.theme());
+        replayBuffer.record(view);
+        if (replayPanel != null) {
+            replayPanel.onLiveFrameRecorded();
+        }
+        if (toastBar != null) {
+            toastBar.update(view.alerts());
+        }
+        if (replayPanel == null || !replayPanel.isScrubbing()) {
+            renderView(view);
+        }
+        if (hold != null) {
+            restoreFields(hold);
+            WallView w = wall();
+            if (w != null && hold.wall != null) {
+                w.select(hold.wall);
+            }
+            map.refreshArea();
+            hold = null;
+        }
+    }
+
+    /** Renders a live or scrubbed historical {@link SwarmView} into the active cards and ops panels. */
+    private void renderView(SwarmView view) {
         server.setText("Server " + view.server());
         String h = view.hostBot();
         host.setText(h == null ? TileStatus.Level.WARN.glyph + " no command host" : "Host " + h);
@@ -857,16 +996,19 @@ public final class CenterShell {
         if (console != null) {
             console.update(view);
         }
-        refreshTierBadge();
-        if (hold != null) {
-            restoreFields(hold);
-            WallView w = wall();
-            if (w != null && hold.wall != null) {
-                w.select(hold.wall);
-            }
-            map.refreshArea();
-            hold = null;
+        if (taskQueuePanel != null) {
+            taskQueuePanel.update(view);
         }
+        if (sharedStashPanel != null) {
+            sharedStashPanel.update(view);
+        }
+        if (linkMonitorPanel != null) {
+            linkMonitorPanel.update(view);
+        }
+        if (speedrunSplitsPanel != null) {
+            speedrunSplitsPanel.update(view);
+        }
+        refreshTierBadge();
     }
 
     private void showReply(CenterReply r) {
@@ -875,6 +1017,7 @@ public final class CenterShell {
         if (console != null) {
             console.recordReply(r);
         }
+        replayBuffer.appendEvent(last.readAtMs(), r.admitted() ? "CMD" : "WARN", last.hostBot(), r.summary());
     }
 
     /** Camera, selection, wall filter/density and typed text carried across a theme rebuild. */
@@ -907,6 +1050,9 @@ public final class CenterShell {
         private boolean themeEditorVisible;
         private EditorView.Snapshot editor;
         private ConsolePanel.Snapshot console;
+        private boolean opsVisible;
+        private int opsTab;
+        private boolean replayVisible;
         private final Map<String, String> fields = new LinkedHashMap<>();
     }
 }

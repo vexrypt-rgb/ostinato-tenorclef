@@ -476,5 +476,8 @@
  "swarmCenterDir": "Ostinato: Phase 3 shared command-center directory, the same absolute path on every bot of this PC. Empty means center next to swarmLocalSpoolDir when that is set, else ostinato/center in the game directory (not shared across instances).",
  "headlessChunkRadiusCap": "Ostinato: maximum client chunk retention radius when running in headless mode (clamped >= 3). Ignored in normal and hidden graphical modes.",
  "headlessMaxCachedRegions": "Ostinato: maximum CachedRegion instances retained in RAM per world in headless mode. Ignored in normal and hidden graphical modes.",
- "headlessPruneDistance": "Ostinato: prune distance (in blocks) for CachedWorld regions in headless mode (normal mode uses 1024)."
+ "headlessPruneDistance": "Ostinato: prune distance (in blocks) for CachedWorld regions in headless mode (normal mode uses 1024).",
+ "swarmAutoDetectWhisper": "Swarm: detect the server's whisper command from its Brigadier command tree (msg, tell, w, whisper, m, pm, dm) and cache the working template per server.",
+ "swarmAdaptiveChatBudget": "Swarm: adapt chat send rate and line length per server from cooldown, too-long, and kick replies, sharing one token bucket across local bots on the same server.",
+ "swarmServerOverrides": "Swarm: per-server manual chat overrides, semicolon-separated: server=/tell {to {msg}|200|0.4;other=/w {to} {msg}}. Always wins over detected/learned values."
 }

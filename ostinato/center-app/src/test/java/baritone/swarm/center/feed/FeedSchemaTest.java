@@ -145,4 +145,33 @@ public class FeedSchemaTest {
         assertThrows(IllegalArgumentException.class, () -> CenterFeed.botFile(java.nio.file.Path.of("x"), ""));
         assertTrue(CenterFeed.safeName("Spelunker"));
     }
+
+    @Test public void additiveDiagnosticsAndPovCapRoundTrip() {
+        BotFeed base = sample();
+        BotFeed extended = new BotFeed(base.name(), base.writtenAtMs(), base.seq(), base.server(), base.runMode(),
+                base.commandHost(), base.coordinator(), base.pos(), base.health(), base.maxHealth(), base.hunger(),
+                base.dead(), base.process(), base.path(), base.inventory(), base.executions(), base.leases(),
+                base.perf(), base.link(), base.gatherUs(), "miner", "mining",
+                new BotFeed.WhyStuck("GoalBlock{x=5,y=64,z=5}", 3, "A* could not find path", 412, 1200, "stall=20"),
+                List.of(new BotFeed.Danger("mob", "creeper", 12.5, 64, -2.5, 2.2, "danger"),
+                        new BotFeed.Danger("player", "Stranger", 20, 64, 0, 10.0, "warn")),
+                List.of(new BotFeed.TaskItem(0, "goto", "goto 100 64 200", "running"),
+                        new BotFeed.TaskItem(1, "mine", "mine iron_ore", "queued")),
+                new BotFeed.Speedrun("nether", 180_000, 3600, 210_000,
+                        List.of(new BotFeed.Speedrun.Split("portal", 120_000, 2400, 125_000))),
+                new BotFeed.LinkBudget("/tell", 200, 500, 1),
+                new BotFeed.ViewCap(false, true));
+        BotFeed back = BotFeed.fromJson(extended.toJson());
+        assertEquals(3, back.whyStuck().failCount());
+        assertEquals("A* could not find path", back.whyStuck().reason());
+        assertEquals(2, back.dangers().size());
+        assertEquals("creeper", back.dangers().get(0).name());
+        assertEquals(2, back.tasks().size());
+        assertEquals("nether", back.speedrun().phase());
+        assertEquals(1, back.speedrun().splits().size());
+        assertEquals("/tell", back.linkBudget().whisperCommand());
+        assertTrue(back.viewCap().canStreamView());
+        assertFalse(back.viewCap().canRenderSwap());
+        assertEquals(extended.toJson(), back.toJson());
+    }
 }

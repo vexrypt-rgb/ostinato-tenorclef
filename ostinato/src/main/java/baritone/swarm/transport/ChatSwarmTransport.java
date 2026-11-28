@@ -42,10 +42,11 @@ public final class ChatSwarmTransport implements SwarmTransport {
 
     private final String self;
     private final SwarmChannel defaultChannel;
-    private final String customTemplate;
+    private volatile String customTemplate;
+    private volatile boolean whisperLinkDown;
     private final SwarmRoster roster;
     private final SwarmRateLimiter limiter;
-    private final int maxLineChars;
+    private volatile int maxLineChars;
     private final ArrayDeque<String> inbound = new ArrayDeque<>();
     private long tooLong;
     private long inboundDropped;
@@ -79,6 +80,29 @@ public final class ChatSwarmTransport implements SwarmTransport {
         return channel == defaultChannel ? channel.template(customTemplate) : channel.defaultTemplate();
     }
 
+    /** Dynamically updates the active whisper template (used by {@link WhisperDetector} / {@link ChatBudget}). */
+    public void setEffectiveTemplate(String template) {
+        if (template == null) {
+            this.whisperLinkDown = true;
+        } else {
+            this.whisperLinkDown = false;
+            this.customTemplate = template;
+        }
+    }
+
+    /** Dynamically updates the learned max chat line length for this server. */
+    public void setEffectiveMaxLineChars(int chars) {
+        this.maxLineChars = Math.max(baritone.swarm.SwarmConfig.MIN_SEAL_LINE, Math.min(256, chars));
+    }
+
+    public int maxLineChars() {
+        return maxLineChars;
+    }
+
+    public boolean isWhisperLinkDown() {
+        return whisperLinkDown;
+    }
+
     /** Characters a template adds around the token, assuming a 16-character recipient. */
     public static int templateOverhead(String template) {
         return template.replace("{to}", "0123456789abcdef").replace("{msg}", "").length();
@@ -99,6 +123,9 @@ public final class ChatSwarmTransport implements SwarmTransport {
                        SwarmRateLimiter.Deadline deadline) throws IOException {
         SwarmTransport.requireSealed(sealedLine);
         SwarmChannel channel = channelFor(group);
+        if (channel == SwarmChannel.WHISPER && whisperLinkDown) {
+            throw new IOException("swarm whisper link down: no working whisper command detected on this server");
+        }
         String template = templateFor(channel);
         List<String> commands = new ArrayList<>();
         List<String> tags = new ArrayList<>(); // Ostinato: who reads each line, for the heartbeat skip

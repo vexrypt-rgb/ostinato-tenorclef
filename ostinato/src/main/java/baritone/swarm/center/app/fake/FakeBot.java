@@ -32,6 +32,12 @@ public final class FakeBot {
     long gatherUs = 40;
     String role = "idle";
     String roleState = "";
+    BotFeed.WhyStuck whyStuck = BotFeed.WhyStuck.NONE;
+    final List<BotFeed.Danger> dangers = new ArrayList<>();
+    final List<BotFeed.TaskItem> tasks = new ArrayList<>();
+    BotFeed.Speedrun speedrun = BotFeed.Speedrun.NONE;
+    BotFeed.LinkBudget linkBudget = BotFeed.LinkBudget.NONE;
+    BotFeed.ViewCap viewCap = BotFeed.ViewCap.NONE;
 
     FakeBot(String name) {
         this.name = name;
@@ -79,6 +85,36 @@ public final class FakeBot {
         return this;
     }
 
+    public FakeBot whyStuck(BotFeed.WhyStuck w) {
+        this.whyStuck = w == null ? BotFeed.WhyStuck.NONE : w;
+        return this;
+    }
+
+    public FakeBot danger(String kind, String name, double x, double y, double z, double dist, String severity) {
+        dangers.add(new BotFeed.Danger(kind, name, x, y, z, dist, severity));
+        return this;
+    }
+
+    public FakeBot task(String type, String label, String state) {
+        tasks.add(new BotFeed.TaskItem(tasks.size(), type, label, state));
+        return this;
+    }
+
+    public FakeBot speedrun(BotFeed.Speedrun sr) {
+        this.speedrun = sr == null ? BotFeed.Speedrun.NONE : sr;
+        return this;
+    }
+
+    public FakeBot linkBudget(BotFeed.LinkBudget lb) {
+        this.linkBudget = lb == null ? BotFeed.LinkBudget.NONE : lb;
+        return this;
+    }
+
+    public FakeBot viewCap(boolean canRenderSwap, boolean canStreamView) {
+        this.viewCap = new BotFeed.ViewCap(canRenderSwap, canStreamView);
+        return this;
+    }
+
     public String name() {
         return name;
     }
@@ -87,6 +123,7 @@ public final class FakeBot {
     public BotFeed build(long nowMs, long seq) {
         return new BotFeed(name, nowMs - ageMs, seq, server, runMode, commandHost, coordinator,
                 inWorld ? new BotFeed.Pos(dim, x, y, z, yaw) : null, health, 20, hunger, dead, process, path, inventory,
-                executions, leases, perf, link, gatherUs, role, roleState);
+                executions, leases, perf, link, gatherUs, role, roleState,
+                whyStuck, dangers, tasks, speedrun, linkBudget, viewCap);
     }
 }

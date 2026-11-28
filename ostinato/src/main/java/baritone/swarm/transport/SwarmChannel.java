@@ -54,14 +54,16 @@ public enum SwarmChannel {
         }
     }
 
+    /** True when {@code custom} is a non-blank template containing the required placeholders for this channel. */
+    public boolean validTemplate(String custom) {
+        if (custom == null || custom.trim().isEmpty() || !custom.contains("{msg}")) {
+            return false;
+        }
+        return this != WHISPER || custom.contains("{to}");
+    }
+
     /** The template to use: {@code custom} if it is valid for this channel, else the default. */
     public String template(String custom) {
-        if (custom == null || custom.trim().isEmpty() || !custom.contains("{msg}")) {
-            return defaultTemplate;
-        }
-        if (this == WHISPER && !custom.contains("{to}")) {
-            return defaultTemplate;
-        }
-        return custom;
+        return validTemplate(custom) ? custom : defaultTemplate;
     }
 }

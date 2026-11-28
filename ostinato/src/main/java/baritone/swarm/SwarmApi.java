@@ -129,6 +129,21 @@ public final class SwarmApi implements ISwarm {
         behavior.noteLocalSurvival(on);
     }
 
+    @Override
+    public String resolvedWhisperTemplate() {
+        return behavior.resolvedWhisperTemplate();
+    }
+
+    @Override
+    public int resolvedChatMaxChars() {
+        return behavior.resolvedChatMaxChars();
+    }
+
+    @Override
+    public void publishSpeedrunSplits(String encodedSplits) {
+        behavior.publishSpeedrunSplits(encodedSplits);
+    }
+
     static SwarmPriority map(baritone.api.swarm.SwarmPriority p) {
         if (p == null) return SwarmPriority.NORMAL;
         switch (p) {
