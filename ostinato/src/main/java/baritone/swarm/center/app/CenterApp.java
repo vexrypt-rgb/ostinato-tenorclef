@@ -528,7 +528,34 @@ public final class CenterApp {
         }
         if (spec.equals("status")) {
             ed.readStatus();
-            return ed.blueprint().name() + " " + ed.blueprint().size() + " placed=" + ed.placed().size();
+            return ed.blueprint().name() + " " + ed.blueprint().size() + " placed=" + ed.placed().size()
+                    + " discrepancies=" + ed.discrepancies().size();
+        }
+        if (spec.equals("verify")) {
+            ed.verifyLive();
+            return "verify " + ed.blueprint().name() + " discrepancies=" + ed.discrepancies().size();
+        }
+        if (spec.equals("repair")) {
+            ed.repairMisoriented();
+            return "repair " + ed.blueprint().name() + " wrong_state=" + ed.wrongStateDiscrepancies().size();
+        }
+        if (spec.startsWith("repair:")) {
+            String raw = spec.substring("repair:".length()).trim();
+            List<int[]> cells = new ArrayList<>();
+            if (!raw.isEmpty()) {
+                for (String token : raw.split(";")) {
+                    String[] p = token.trim().split(",");
+                    if (p.length == 3) {
+                        cells.add(new int[]{
+                                Integer.parseInt(p[0].trim()),
+                                Integer.parseInt(p[1].trim()),
+                                Integer.parseInt(p[2].trim())
+                        });
+                    }
+                }
+            }
+            ed.repairCells(cells);
+            return "repair " + ed.blueprint().name() + " cells=" + cells.size();
         }
         return "bad editor spec";
     }

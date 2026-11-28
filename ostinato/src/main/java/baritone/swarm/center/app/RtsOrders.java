@@ -109,6 +109,31 @@ public final class RtsOrders {
         return new Order(bot, route(bot, host, "blueprint live " + name));
     }
 
+    /** Ostinato: request a live world comparison for a blueprint without mutating blocks. */
+    public static Order blueprintVerify(String bot, String host, String name) {
+        return new Order(bot, route(bot, host, "blueprint verify " + Blueprint.safeName(name)));
+    }
+
+    /**
+     * Ostinato: request a scoped repair for specific blueprint cells (or all wrong-state cells when {@code cells}
+     * is null/empty).
+     */
+    public static Order blueprintRepair(String bot, String host, String name, List<int[]> cells) {
+        String safe = Blueprint.safeName(name);
+        if (cells == null || cells.isEmpty()) {
+            return new Order(bot, route(bot, host, "blueprint repair " + safe + " wrong-state"));
+        }
+        StringBuilder sb = new StringBuilder("blueprint repair ").append(safe).append(" cells=");
+        for (int i = 0; i < cells.size(); i++) {
+            int[] c = cells.get(i);
+            if (i > 0) {
+                sb.append(';');
+            }
+            sb.append(c[0]).append(',').append(c[1]).append(',').append(c[2]);
+        }
+        return new Order(bot, route(bot, host, sb.toString()));
+    }
+
     /** The economy HUD line: bots per role, then crops, ores, food and free slots summed over every inventory feed. */
     public static String economy(SwarmView view) {
         Map<Role, Integer> roles = new EnumMap<>(Role.class);

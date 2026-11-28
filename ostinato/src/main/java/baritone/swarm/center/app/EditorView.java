@@ -4,7 +4,9 @@ import baritone.swarm.center.CenterLayout;
 import baritone.swarm.center.channel.CenterReply;
 import baritone.swarm.center.feed.CenterFeed;
 import baritone.swarm.center.feed.SwarmView;
+import baritone.swarm.rts.BlockStateSpec;
 import baritone.swarm.rts.Blueprint;
+import baritone.swarm.rts.BlueprintRepairSession;
 
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
@@ -27,7 +29,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
@@ -64,6 +68,8 @@ public final class EditorView implements LayoutView {
     private final JPanel bomPanel;
     private final JLabel bomSummary;
     private final JTextArea bomText;
+    private final JLabel diffSummary;
+    private final JTextArea diffText;
     private final JComboBox<BlueprintSplitter.Strategy> splitStrategy;
     private Consumer<Blueprint> onShowOnMap = bp -> {};
     private final Timer writeLater;
@@ -73,6 +79,7 @@ public final class EditorView implements LayoutView {
     private SwarmView view = SwarmView.EMPTY;
     private boolean live;
     private final Set<Long> placed = new HashSet<>();
+    private final List<Blueprint.Discrepancy> botDiscrepancies = new ArrayList<>();
     private Blueprint.Status lastStatus;
 
     public EditorView(AppStyle style, Commands commands, Supplier<List<String>> selection, IntSupplier dim) {
@@ -163,6 +170,14 @@ public final class EditorView implements LayoutView {
         JButton liveBtn = style.button("Build live");
         liveBtn.setName("ed:live");
         liveBtn.addActionListener(e -> buildLive());
+        JButton verifyBtn = style.button("Verify");
+        verifyBtn.setName("ed:verify");
+        verifyBtn.setToolTipText("Compare blueprint block types and explicit states against the live world");
+        verifyBtn.addActionListener(e -> verifyLive());
+        JButton repairBtn = style.button("Repair");
+        repairBtn.setName("ed:repair");
+        repairBtn.setToolTipText("Repair highlighted misoriented/wrong-state cells in the live world");
+        repairBtn.addActionListener(e -> repairMisoriented());
         JButton clear = style.button("Clear");
         clear.setName("ed:clear");
         clear.addActionListener(e -> clear());
@@ -171,6 +186,8 @@ public final class EditorView implements LayoutView {
         row3.add(imp);
         row3.add(exp);
         row3.add(liveBtn);
+        row3.add(verifyBtn);
+        row3.add(repairBtn);
         row3.add(clear);
         bar.add(row3);
 
@@ -204,7 +221,30 @@ public final class EditorView implements LayoutView {
         bomText.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
         JScrollPane bomScroll = new JScrollPane(bomText);
         bomScroll.setBorder(BorderFactory.createLineBorder(style.line(), 1));
-        bomPanel.add(bomScroll, BorderLayout.CENTER);
+
+        JPanel diffSection = style.panel(new BorderLayout(0, 4), style.surface());
+        JPanel diffHead = style.panel(new GridLayout(2, 1, 0, 2), null);
+        diffHead.add(style.label("Discrepancies", style.text(), Font.BOLD, 12f));
+        diffSummary = named(style.label("No discrepancies", style.muted(), Font.PLAIN, 11f), "ed:diff:summary");
+        diffHead.add(diffSummary);
+        diffSection.add(diffHead, BorderLayout.NORTH);
+        diffText = new JTextArea();
+        diffText.setName("ed:diff:text");
+        diffText.setEditable(false);
+        diffText.setLineWrap(true);
+        diffText.setWrapStyleWord(true);
+        diffText.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
+        diffText.setBackground(style.bg());
+        diffText.setForeground(style.text());
+        diffText.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
+        JScrollPane diffScroll = new JScrollPane(diffText);
+        diffScroll.setBorder(BorderFactory.createLineBorder(style.line(), 1));
+        diffSection.add(diffScroll, BorderLayout.CENTER);
+
+        JPanel sideCenter = style.panel(new GridLayout(2, 1, 0, 6), null);
+        sideCenter.add(bomScroll);
+        sideCenter.add(diffSection);
+        bomPanel.add(sideCenter, BorderLayout.CENTER);
 
         JPanel bomFoot = style.panel(new GridLayout(2, 1, 0, 4), null);
         JPanel splitRow = style.panel(new FlowLayout(FlowLayout.LEFT, 4, 0), null);
@@ -486,19 +526,33 @@ public final class EditorView implements LayoutView {
         if (!blueprint.name().equals(Blueprint.safeName(n))) {
             Blueprint next = new Blueprint(n);
             for (Blueprint.Cell c : blueprint.cells()) {
-                next.paint(c.x(), c.y(), c.z(), c.block());
+                next.paint(c.x(), c.y(), c.z(), c.block(), c.properties());
             }
             blueprint = next;
         }
     }
 
     private void changed() {
+        pruneStaleTracking();
         canvas.setBlueprint(blueprint);
         // setBlueprint also fits the camera; keep the user's orbit after the first cell
         publish();
         if (live) {
             writeLater.restart();
         }
+    }
+
+    private void pruneStaleTracking() {
+        Set<Long> validKeys = new HashSet<>();
+        for (Blueprint.Cell c : blueprint.cells()) {
+            long k = Blueprint.cellKey(c.x(), c.y(), c.z());
+            validKeys.add(k);
+            if (!BlockStateSpec.isSupported(c.block(), c.properties())) {
+                placed.remove(k);
+            }
+        }
+        placed.retainAll(validKeys);
+        botDiscrepancies.removeIf(d -> !validKeys.contains(Blueprint.cellKey(d.x(), d.y(), d.z())));
     }
 
     public void writeNow() {
@@ -542,6 +596,7 @@ public final class EditorView implements LayoutView {
             canvas.camera.fit(blueprint.bounds());
             canvas.setBlueprint(blueprint);
             placed.clear();
+            botDiscrepancies.clear();
             lastStatus = null;
             publish();
             status.setText("loaded " + blueprint.size() + " blocks · v" + blueprint.version());
@@ -564,12 +619,15 @@ public final class EditorView implements LayoutView {
             canvas.camera.fit(blueprint.bounds());
             canvas.setBlueprint(blueprint);
             placed.clear();
+            botDiscrepancies.clear();
             lastStatus = null;
             if (live) {
                 writeLater.restart();
             }
             publish();
-            status.setText("imported " + blueprint.size() + " blocks at " + o[0] + "," + o[1] + "," + o[2]);
+            int unsup = unsupportedDiscrepancies().size();
+            status.setText("imported " + blueprint.size() + " blocks at " + o[0] + "," + o[1] + "," + o[2]
+                    + (unsup > 0 ? " · " + unsup + " unsupported" : ""));
         } catch (Exception e) {
             status.setText("import failed: " + e.getMessage());
         }
@@ -613,18 +671,115 @@ public final class EditorView implements LayoutView {
             name.setText("untitled");
         }
         placed.clear();
+        botDiscrepancies.clear();
         lastStatus = null;
         canvas.setBlueprint(blueprint);
         canvas.camera.fit(null);
         publish();
     }
 
+    /** Merged discrepancy list: bot-reported discrepancies + static unsupported explicit-state checks. */
+    public List<Blueprint.Discrepancy> discrepancies() {
+        Map<Long, Blueprint.Discrepancy> merged = new LinkedHashMap<>();
+        for (Blueprint.Discrepancy d : botDiscrepancies) {
+            if (blueprint.at(d.x(), d.y(), d.z()) != null) {
+                merged.put(Blueprint.cellKey(d.x(), d.y(), d.z()), d);
+            }
+        }
+        for (Blueprint.Discrepancy u : BlueprintRepairSession.unsupportedCells(blueprint)) {
+            // Static unsupported requirements always take precedence and can never be marked complete.
+            merged.put(Blueprint.cellKey(u.x(), u.y(), u.z()), u);
+        }
+        return List.copyOf(merged.values());
+    }
+
+    public List<Blueprint.Discrepancy> wrongStateDiscrepancies() {
+        List<Blueprint.Discrepancy> out = new ArrayList<>();
+        for (Blueprint.Discrepancy d : discrepancies()) {
+            if (d.kind() == Blueprint.DiscrepancyKind.WRONG_STATE) {
+                out.add(d);
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    public List<Blueprint.Discrepancy> unsupportedDiscrepancies() {
+        List<Blueprint.Discrepancy> out = new ArrayList<>();
+        for (Blueprint.Discrepancy d : discrepancies()) {
+            if (d.kind() == Blueprint.DiscrepancyKind.UNSUPPORTED) {
+                out.add(d);
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    public void verifyLive() {
+        setLive(true);
+        writeNow();
+        List<String> bots = targetBots();
+        if (bots.isEmpty()) {
+            reply.setText("no bot to verify with");
+            return;
+        }
+        send(List.of(RtsOrders.blueprintVerify(bots.get(0), host(), blueprint.name())));
+    }
+
+    /** Repairs all currently highlighted WRONG_STATE cells (or requests wrong-state repair if none read yet). */
+    public void repairMisoriented() {
+        List<int[]> cells = new ArrayList<>();
+        for (Blueprint.Discrepancy d : wrongStateDiscrepancies()) {
+            cells.add(new int[]{d.x(), d.y(), d.z()});
+        }
+        repairCells(cells);
+    }
+
+    /** Requests a scoped repair for the given cells (ignoring unsupported cells). */
+    public void repairCells(List<int[]> requested) {
+        setLive(true);
+        writeNow();
+        List<String> bots = targetBots();
+        if (bots.isEmpty()) {
+            reply.setText("no bot to repair with");
+            return;
+        }
+        List<int[]> scoped = new ArrayList<>();
+        int skippedUnsupported = 0;
+        if (requested != null) {
+            for (int[] c : requested) {
+                if (c == null || c.length < 3) {
+                    continue;
+                }
+                Blueprint.Cell cell = blueprint.at(c[0], c[1], c[2]);
+                if (cell == null) {
+                    continue;
+                }
+                if (!BlockStateSpec.isSupported(cell.block(), cell.properties())) {
+                    skippedUnsupported++;
+                    continue;
+                }
+                scoped.add(new int[]{c[0], c[1], c[2]});
+            }
+        }
+        if (requested != null && !requested.isEmpty() && scoped.isEmpty()) {
+            reply.setText(skippedUnsupported > 0
+                    ? "cannot repair " + skippedUnsupported + " unsupported cell(s)"
+                    : "no matching blueprint cells to repair");
+            return;
+        }
+        send(List.of(RtsOrders.blueprintRepair(bots.get(0), host(), blueprint.name(), scoped)));
+    }
+
+    private List<String> targetBots() {
+        List<String> sel = selection.get();
+        String host = host();
+        return sel.isEmpty() ? (host.isEmpty() ? List.of() : List.of(host)) : sel;
+    }
+
     public void buildLive() {
         setLive(true);
         writeNow();
-        List<String> sel = selection.get();
+        List<String> bots = targetBots();
         String host = host();
-        List<String> bots = sel.isEmpty() ? (host.isEmpty() ? List.of() : List.of(host)) : sel;
         if (bots.isEmpty()) {
             reply.setText("no bot to build with");
             return;
@@ -666,18 +821,36 @@ public final class EditorView implements LayoutView {
             return;
         }
         placed.clear();
+        botDiscrepancies.clear();
+        Map<Long, Blueprint.Discrepancy> diffMap = new LinkedHashMap<>();
         List<String> notes = new ArrayList<>();
         int total = 0;
         for (Blueprint.Status s : all) {
             for (int[] c : s.cells()) {
-                placed.add(Blueprint.cellKey(c[0], c[1], c[2]));
+                Blueprint.Cell cell = blueprint.at(c[0], c[1], c[2]);
+                if (cell != null && BlockStateSpec.isSupported(cell.block(), cell.properties())) {
+                    placed.add(Blueprint.cellKey(c[0], c[1], c[2]));
+                }
+            }
+            for (Blueprint.Discrepancy d : s.discrepancies()) {
+                long k = Blueprint.cellKey(d.x(), d.y(), d.z());
+                if (blueprint.at(d.x(), d.y(), d.z()) != null) {
+                    diffMap.put(k, d);
+                    placed.remove(k);
+                }
             }
             notes.add(s.note());
             total = Math.max(total, s.total());
         }
-        lastStatus = new Blueprint.Status(all.get(0).version(), placed.size(), total,
-                all.size() == 1 ? notes.get(0) : all.size() + " bots: " + String.join(", ", notes), List.of());
+        botDiscrepancies.addAll(diffMap.values());
+        List<Blueprint.Discrepancy> merged = discrepancies();
+        String note = all.size() == 1 ? notes.get(0) : all.size() + " bots: " + String.join(", ", notes);
+        if (!merged.isEmpty() && "done".equalsIgnoreCase(note)) {
+            note = merged.size() + " unresolved";
+        }
+        lastStatus = new Blueprint.Status(all.get(0).version(), placed.size(), total, note, List.of(), merged);
         canvas.setPlaced(placed);
+        canvas.setDiscrepancies(merged);
         publish();
     }
 
@@ -685,7 +858,10 @@ public final class EditorView implements LayoutView {
     public void setPlacedForTest(List<int[]> cells) {
         placed.clear();
         for (int[] c : cells) {
-            placed.add(Blueprint.cellKey(c[0], c[1], c[2]));
+            Blueprint.Cell cell = blueprint.at(c[0], c[1], c[2]);
+            if (cell != null && BlockStateSpec.isSupported(cell.block(), cell.properties())) {
+                placed.add(Blueprint.cellKey(c[0], c[1], c[2]));
+            }
         }
         canvas.setPlaced(placed);
         publish();
@@ -709,17 +885,80 @@ public final class EditorView implements LayoutView {
 
     private void publish() {
         syncLayer();
+        pruneStaleTracking();
+        List<Blueprint.Discrepancy> diffs = discrepancies();
         canvas.setBlueprintKeepCamera(blueprint);
         canvas.setPlaced(placed);
+        canvas.setDiscrepancies(diffs);
+        int wrongState = 0, unsupported = 0;
+        for (Blueprint.Discrepancy d : diffs) {
+            if (d.kind() == Blueprint.DiscrepancyKind.WRONG_STATE) {
+                wrongState++;
+            } else if (d.kind() == Blueprint.DiscrepancyKind.UNSUPPORTED) {
+                unsupported++;
+            }
+        }
         String s = blueprint.size() + " blocks · v" + blueprint.version();
         if (live && lastStatus != null) {
+            String note = lastStatus.note();
+            if (!diffs.isEmpty() && "done".equalsIgnoreCase(note)) {
+                note = diffs.size() + " unresolved";
+            }
             s += " · bot: v" + lastStatus.version() + " " + placed.size() + "/" + blueprint.size()
-                    + " placed · " + lastStatus.note();
+                    + " placed · " + note;
         } else if (live) {
             s += " · live, waiting for status";
         }
+        if (wrongState > 0) {
+            s += " · " + wrongState + " wrong-state";
+        }
+        if (unsupported > 0) {
+            s += " · " + unsupported + " unsupported";
+        }
         status.setText(s);
         refreshBom();
+        refreshDiscrepancies(diffs);
+    }
+
+    private void refreshDiscrepancies(List<Blueprint.Discrepancy> diffs) {
+        if (diffSummary == null || diffText == null) {
+            return;
+        }
+        if (diffs.isEmpty()) {
+            diffSummary.setText(live && lastStatus != null ? "All matched" : "No discrepancies");
+            diffSummary.setForeground(live && lastStatus != null ? style.ok() : style.muted());
+            diffText.setText(live ? "World matches every blueprint cell." : "Verify in Live mode to compare states.");
+            return;
+        }
+        int wrongState = 0, unsup = 0, other = 0;
+        StringBuilder sb = new StringBuilder();
+        for (Blueprint.Discrepancy d : diffs) {
+            if (d.kind() == Blueprint.DiscrepancyKind.WRONG_STATE) {
+                wrongState++;
+            } else if (d.kind() == Blueprint.DiscrepancyKind.UNSUPPORTED) {
+                unsup++;
+            } else {
+                other++;
+            }
+            sb.append(d.kind()).append(' ')
+                    .append(d.x()).append(',').append(d.y()).append(',').append(d.z())
+                    .append(' ').append(d.expected());
+            if (!"-".equals(d.actual()) && !d.actual().isEmpty()) {
+                sb.append(" (was ").append(d.actual()).append(')');
+            }
+            if (!d.reason().isEmpty()) {
+                sb.append(" — ").append(d.reason());
+            }
+            sb.append('\n');
+        }
+        List<String> summaryParts = new ArrayList<>();
+        if (wrongState > 0) summaryParts.add(wrongState + " wrong-state");
+        if (unsup > 0) summaryParts.add(unsup + " unsupported");
+        if (other > 0) summaryParts.add(other + " other");
+        diffSummary.setText(baritone.swarm.center.TileStatus.Level.WARN.glyph + " " + String.join(" · ", summaryParts));
+        diffSummary.setForeground(style.warn());
+        diffText.setText(sb.toString().trim());
+        diffText.setCaretPosition(0);
     }
 
     public Snapshot snapshot() {

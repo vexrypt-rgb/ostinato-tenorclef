@@ -17,7 +17,6 @@
 
 package baritone.command.defaults;
 
-import baritone.swarm.rts.RoleOrder;
 import baritone.Baritone;
 import baritone.api.IBaritone;
 import baritone.api.command.Command;
@@ -25,12 +24,22 @@ import baritone.api.command.CommandPermission;
 import baritone.api.command.argument.IArgConsumer;
 import baritone.api.command.exception.CommandException;
 import baritone.api.command.exception.CommandInvalidStateException;
+import baritone.swarm.rts.Blueprint;
+import baritone.swarm.rts.RoleOrder;
 
 import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.stream.Stream;
 
-/** Ostinato: RTS live build. {@code #blueprint live <name>}, {@code #blueprint stop}, {@code #blueprint status}. */
+/**
+ * Ostinato: RTS live blueprint command.
+ * {@code #blueprint live <name> [part=...]}, {@code #blueprint verify [<name>]},
+ * {@code #blueprint repair [<name>] [cells=x,y,z;... | wrong-state | all]},
+ * {@code #blueprint stop}, {@code #blueprint status}.
+ */
 public class BlueprintCommand extends Command {
 
     public BlueprintCommand(IBaritone baritone) {
@@ -47,7 +56,7 @@ public class BlueprintCommand extends Command {
         if (!(baritone instanceof Baritone b)) {
             throw new CommandInvalidStateException("blueprints are not available");
         }
-        String sub = args.hasAny() ? args.getString() : "status";
+        String sub = args.hasAny() ? args.getString().toLowerCase(Locale.ROOT) : "status";
         switch (sub) {
             case "live" -> {
                 args.requireMin(1);
@@ -68,34 +77,103 @@ public class BlueprintCommand extends Command {
                 }
                 logDirect("blueprint: " + b.getBlueprintBehavior().describe());
             }
+            case "verify", "diff" -> {
+                args.requireMax(1);
+                String name = args.hasAny() ? args.getString() : null;
+                try {
+                    logDirect("blueprint: " + b.getBlueprintBehavior().verify(name));
+                } catch (IllegalArgumentException e) {
+                    throw new CommandInvalidStateException(e.getMessage());
+                }
+            }
+            case "repair" -> {
+                args.requireMax(2);
+                String name = null;
+                Set<Long> requested = null;
+                boolean wrongStateOnly = true;
+                while (args.hasAny()) {
+                    String tok = args.getString();
+                    String low = tok.toLowerCase(Locale.ROOT);
+                    if (low.startsWith("cells=")) {
+                        requested = parseCells(tok.substring(6));
+                        wrongStateOnly = false;
+                    } else if ("wrong-state".equals(low) || "misoriented".equals(low)) {
+                        wrongStateOnly = true;
+                    } else if ("all".equals(low)) {
+                        wrongStateOnly = false;
+                    } else if (name == null) {
+                        name = tok;
+                    } else {
+                        throw new CommandInvalidStateException(
+                                "blueprint repair [<name>] [cells=x,y,z;... | wrong-state | all]");
+                    }
+                }
+                try {
+                    logDirect("blueprint: " + b.getBlueprintBehavior().repair(name, requested, wrongStateOnly));
+                } catch (IllegalArgumentException e) {
+                    throw new CommandInvalidStateException(e.getMessage());
+                }
+            }
             case "stop" -> {
                 args.requireMax(0);
                 b.getBlueprintBehavior().stop();
                 logDirect("blueprint: stopping");
             }
             case "status" -> logDirect("blueprint: " + b.getBlueprintBehavior().describe());
-            default -> throw new CommandInvalidStateException("blueprint live <name> [part=x1,y1,z1:x2,y2,z2] | stop | status");
+            default -> throw new CommandInvalidStateException(
+                    "blueprint live <name> [part=...] | verify [<name>] | repair [<name>] [cells=... | wrong-state | all] | stop | status");
         }
+    }
+
+    static Set<Long> parseCells(String raw) throws CommandInvalidStateException {
+        if (raw == null || raw.isBlank()) {
+            throw new CommandInvalidStateException("cells= expects x,y,z[;x,y,z...]");
+        }
+        Set<Long> out = new LinkedHashSet<>();
+        for (String item : raw.split(";")) {
+            String trimmed = item.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            String[] coords = trimmed.split(",");
+            if (coords.length != 3) {
+                throw new CommandInvalidStateException("bad cell coordinate: " + trimmed);
+            }
+            try {
+                int x = Integer.parseInt(coords[0].trim());
+                int y = Integer.parseInt(coords[1].trim());
+                int z = Integer.parseInt(coords[2].trim());
+                out.add(Blueprint.cellKey(x, y, z));
+            } catch (NumberFormatException e) {
+                throw new CommandInvalidStateException("bad cell coordinate: " + trimmed);
+            }
+        }
+        if (out.isEmpty()) {
+            throw new CommandInvalidStateException("cells= expects at least one x,y,z coordinate");
+        }
+        return out;
     }
 
     @Override
     public Stream<String> tabComplete(String label, IArgConsumer args) {
-        return args.hasExactlyOne() ? Stream.of("live", "stop", "status") : Stream.empty();
+        return args.hasExactlyOne() ? Stream.of("live", "verify", "repair", "stop", "status") : Stream.empty();
     }
 
     @Override
     public String getShortDesc() {
-        return "Build a command-center blueprint live as it is edited";
+        return "Build, verify, or repair a command-center blueprint live as it is edited";
     }
 
     @Override
     public List<String> getLongDesc() {
         return Arrays.asList(
-                "Watches <swarmCenterDir>/blueprints/<name>.ost (written by the command center's RTS panel) and",
-                "rebuilds whenever it changes. Cells already right in the world are skipped.",
+                "Watches <swarmCenterDir>/blueprints/<name>.ost (written by the command center's editor/RTS panel)",
+                "and compares/builds/repairs blocks and supported explicit states (log axis, slab type, straight stair facing/half).",
                 "",
                 "Usage:",
-                "> blueprint live <name> [part=x1,y1,z1:x2,y2,z2] - with part, only those columns (a split build)",
+                "> blueprint live <name> [part=x1,y1,z1:x2,y2,z2] - watch and build live",
+                "> blueprint verify [<name>] - compare against live world and list discrepancies",
+                "> blueprint repair [<name>] [cells=x,y,z;... | wrong-state | all] - repair scoped cells",
                 "> blueprint stop",
                 "> blueprint status"
         );

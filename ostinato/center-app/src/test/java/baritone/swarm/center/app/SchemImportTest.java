@@ -82,6 +82,33 @@ public class SchemImportTest {
         assertTrue(e.getMessage(), e.getMessage().contains("numeric ids"));
     }
 
+    @Test public void explicitPropertiesSurviveSchemLitematicAndStructureNbtRoundTrips() throws Exception {
+        List<OstSchematic.Cell> cells = List.of(
+                new OstSchematic.Cell(0, 0, 0, "oak_log[axis=x]"),
+                new OstSchematic.Cell(1, 0, 0, "oak_slab[type=top,waterlogged=false]"),
+                new OstSchematic.Cell(2, 0, 0, "oak_stairs[facing=east,half=top,shape=straight]"),
+                new OstSchematic.Cell(3, 0, 0, "cobblestone"),
+                new OstSchematic.Cell(0, 1, 0, "oak_stairs[facing=north,half=bottom,waterlogged=true]"));
+
+        for (byte[] data : List.of(
+                SchemImport.writeSchem(4, 2, 1, cells),
+                SchemImport.writeLitematic(4, 2, 1, cells),
+                SchemImport.writeStructureNbt(4, 2, 1, cells))) {
+            OstSchematic back = SchemImport.fromBytes(data);
+            assertEquals(5, back.cells().size());
+            Blueprint bp = SchemImport.toBlueprint("landing", back, new int[]{10, -60, 20});
+            assertEquals("oak_log[axis=x]", bp.at(10, -60, 20).spec());
+            assertEquals("oak_slab[type=top,waterlogged=false]", bp.at(11, -60, 20).spec());
+            assertEquals("oak_stairs[facing=east,half=top,shape=straight]", bp.at(12, -60, 20).spec());
+            assertEquals("cobblestone", bp.at(13, -60, 20).spec());
+            assertFalse(bp.at(13, -60, 20).hasExplicitProperties());
+            // Unsupported property must be preserved, never silently dropped
+            assertEquals("oak_stairs[facing=north,half=bottom,waterlogged=true]", bp.at(10, -59, 20).spec());
+            Blueprint reloaded = Blueprint.read("landing", bp.write());
+            assertEquals(bp.cells(), reloaded.cells());
+        }
+    }
+
     private static String find(OstSchematic s, int x, int y, int z) {
         for (OstSchematic.Cell c : s.cells()) {
             if (c.x() == x && c.y() == y && c.z() == z) {
