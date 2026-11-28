@@ -87,7 +87,8 @@ public class AltoClefCommands {
                 new ReplenishCommand(),
                 new BrewCommand(),
                 new TeachCommand(),
-                new BreedCommand()
+                new BreedCommand(),
+                new RoadCommand()
         );
     }
 }

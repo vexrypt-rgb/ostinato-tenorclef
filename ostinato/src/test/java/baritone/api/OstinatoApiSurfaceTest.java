@@ -45,4 +45,9 @@ public class OstinatoApiSurfaceTest {
     public void worldQueriesImplementsApi() {
         assertTrue(baritone.api.utils.IWorldQueries.class.isAssignableFrom(baritone.utils.WorldQueries.class));
     }
+
+    @Test
+    public void roadProcessImplementsApi() {
+        assertTrue(baritone.api.process.IRoadProcess.class.isAssignableFrom(baritone.process.RoadBuildProcess.class));
+    }
 }

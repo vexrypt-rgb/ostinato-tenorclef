@@ -808,6 +808,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         for (BetterBlockPos p : candidates) {
             if (p.y < feet.y) continue;
             BlockState st = bcc.bsi.get0(p.x, p.y, p.z);
+            if (bcc.isPossiblyProtected(p.x, p.y, p.z) || AltoClefSettings.getInstance().shouldAvoidBreaking(p.x, p.y, p.z)) continue;
             Block b = st.getBlock();
             if (b instanceof AirBlock || b == Blocks.WATER || b == Blocks.LAVA || b == Blocks.BEDROCK) continue;
             if (st.getCollisionShape(ctx.world(), p).isEmpty()) continue;
@@ -839,6 +840,9 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
                     int z = center.z + dz;
                     if (dy == -1 && x == pathStart.x && z == pathStart.z && !digUnderFeet) {
                         continue; // dont mine what we're supported by, but not directly standing on
+                    }
+                    if (bcc.isPossiblyProtected(x, y, z) || AltoClefSettings.getInstance().shouldAvoidBreaking(x, y, z)) {
+                        continue;
                     }
                     BlockState desired = bcc.getSchematic(x, y, z, bcc.bsi.get0(x, y, z));
                     if (desired == null) {
@@ -904,6 +908,9 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
                     }
                     BlockState curr = bcc.bsi.get0(x, y, z);
                     if (MovementHelper.isReplaceable(x, y, z, curr, bcc.bsi) && !valid(curr, desired, false)) {
+                        if (bcc.isPossiblyProtected(x, y, z) || AltoClefSettings.getInstance().shouldAvoidPlacingAt(x, y, z)) {
+                            continue; // protected zone: never place into guarded cells
+                        }
                         if (LeaseFence.placeBlocked(x, y, z)) {
                             continue; // live cell is occupied or unreadable; do not click a place into it
                         }
@@ -1990,8 +1997,11 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
 
         @Override
         public boolean isPossiblyProtected(int x, int y, int z) {
-            // buildRegion + buildRegionProtectForeign: other bots' regions are off limits for breaking and placing
-            return super.isPossiblyProtected(x, y, z) || (regionGuard != null && regionGuard.isForeign(x, y, z));
+            // buildRegion + buildRegionProtectForeign + ostinatoGuard: protected cells are off limits for breaking and placing
+            AltoClefSettings.CellGuard guard = AltoClefSettings.getInstance().ostinatoGuard();
+            return super.isPossiblyProtected(x, y, z)
+                    || (regionGuard != null && regionGuard.isForeign(x, y, z))
+                    || (guard != null && guard.test(x, y, z));
         }
 
         private BlockState getSchematic(int x, int y, int z, BlockState current) {
@@ -2004,7 +2014,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
 
         @Override
         public double costOfPlacingAt(int x, int y, int z, BlockState current) {
-            if (isPossiblyProtected(x, y, z) || !worldBorder.canPlaceAt(x, z)) { // make calculation fail properly if we can't build
+            if (isPossiblyProtected(x, y, z) || AltoClefSettings.getInstance().shouldAvoidPlacingAt(x, y, z) || !worldBorder.canPlaceAt(x, z)) { // make calculation fail properly if we can't build
                 return COST_INF;
             }
             BlockState sch = getSchematic(x, y, z, current);
@@ -2038,7 +2048,8 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
 
         @Override
         public double breakCostMultiplierAt(int x, int y, int z, BlockState current) {
-            if ((!allowBreak && !allowBreakAnyway.contains(current.getBlock())) || isPossiblyProtected(x, y, z)) {
+            if ((!allowBreak && !allowBreakAnyway.contains(current.getBlock())) || isPossiblyProtected(x, y, z)
+                    || AltoClefSettings.getInstance().shouldAvoidBreaking(x, y, z)) {
                 return COST_INF;
             }
             BlockState sch = getSchematic(x, y, z, current);

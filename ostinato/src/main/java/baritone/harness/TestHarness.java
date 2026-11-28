@@ -41,6 +41,7 @@ public final class TestHarness {
         if (Boolean.getBoolean("ostinato.bombardtest")) sb.append("ostinato.bombardtest ");
         if (Boolean.getBoolean("ostinato.tolerancetrace")) sb.append("ostinato.tolerancetrace ");
         if (Boolean.getBoolean("ostinato.interacttest")) sb.append("ostinato.interacttest ");
+        if (Boolean.getBoolean("ostinato.roadtest")) sb.append("ostinato.roadtest ");
         return sb.toString().trim();
     }
 
@@ -66,5 +67,6 @@ public final class TestHarness {
         baritone.contract.ToleranceTraceTest.install(b); // Ostinato 2.0 Phase 04 validation: live PredictionTolerance traces
         InteractLiveTest.install(b); // Ostinato 2.0 Phase 08: navigate -> interact -> verify
         InteractTerrainLiveTest.install(b); // Ostinato 2.0 Phase 10: the same check on natural terrain
+        RoadLiveTest.install(b); // Ostinato: terrain road 5-corridor acceptance fixture
     }
 }
