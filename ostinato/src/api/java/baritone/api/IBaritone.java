@@ -193,4 +193,9 @@ public interface IBaritone {
 
     /** Ostinato: companion coordinator. Idle unless secondoEnabled and a follow session are both on. */
     ISecondoProcess getSecondoProcess();
+
+    /** Ostinato: terrain-aware road planning, preview, guarded construction, and verification process. */
+    default IRoadProcess getRoadProcess() {
+        return null;
+    }
 }

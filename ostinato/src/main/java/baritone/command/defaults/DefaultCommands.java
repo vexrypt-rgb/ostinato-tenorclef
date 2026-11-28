@@ -81,6 +81,7 @@ public final class DefaultCommands {
                 new RoleCommand(baritone), // Ostinato: RTS mode
                 new BlueprintCommand(baritone), // Ostinato: RTS live build
                 new PortalCommand(baritone),
+                new RoadCommand(baritone), // Ostinato: public #road terrain road planner & builder
                 new TunnelsCommand(baritone), // Ostinato: public #maze.tunnels
                 new AllBlocksCommand(baritone), // Ostinato: public #allblocks (runner registered by TenorClef)
                 new ShopCommand(baritone), // Ostinato: public #shop shopping list menu + gather runner

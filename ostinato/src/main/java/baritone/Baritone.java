@@ -101,6 +101,7 @@ public class Baritone implements IBaritone, baritone.pathing.IPathingHost {
     private final InventoryPauserProcess inventoryPauserProcess;
     private final IElytraProcess elytraProcess;
     private final PortalBuildProcess portalBuildProcess;
+    private final RoadBuildProcess roadBuildProcess; // Ostinato: #road terrain road planner & builder
     private final TunnelProcess tunnelProcess; // Ostinato: #maze.tunnels
     private final MazeProcess mazeProcess; // Ostinato: underground maze, idle unless mazeMode
     private final SecondoProcess secondoProcess; // Ostinato: companion, idle unless secondoEnabled
@@ -179,6 +180,7 @@ public class Baritone implements IBaritone, baritone.pathing.IPathingHost {
             this.registerProcess(AirProcess::new);
             this.registerProcess(BoatProcess::new);
             this.portalBuildProcess      = this.registerProcess(PortalBuildProcess::new);
+            this.roadBuildProcess        = this.registerProcess(RoadBuildProcess::new); // Ostinato: #road, idle until started
             this.tunnelProcess           = this.registerProcess(TunnelProcess::new); // Ostinato: #maze.tunnels, idle until started
             this.mazeProcess             = this.registerProcess(MazeProcess::new); // Ostinato: idle unless mazeMode
             this.secondoProcess          = this.registerProcess(SecondoProcess::new); // Ostinato: #secondo, idle unless secondoEnabled
@@ -357,6 +359,11 @@ public class Baritone implements IBaritone, baritone.pathing.IPathingHost {
     @Override
     public BuilderProcess getBuilderProcess() {
         return this.builderProcess;
+    }
+
+    @Override
+    public RoadBuildProcess getRoadProcess() {
+        return this.roadBuildProcess;
     }
 
     public InventoryBehavior getInventoryBehavior() {
