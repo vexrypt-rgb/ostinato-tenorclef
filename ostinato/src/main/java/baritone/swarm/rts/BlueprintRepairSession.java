@@ -26,6 +26,8 @@ public final class BlueprintRepairSession {
 
     public static final int DEFAULT_SETTLE_TICKS = 5;
     public static final int DEFAULT_MAX_RETRIES = 3;
+    /** Ticks without a single target reaching its approved state before a repair gives up (60 s). */
+    public static final int DEFAULT_STALL_TICKS = 1200;
 
     public record CellObservation(boolean loaded, String block, Map<String, String> properties) {
         public CellObservation {
@@ -347,6 +349,37 @@ public final class BlueprintRepairSession {
             }
         }
         return List.copyOf(out);
+    }
+
+    /** Targets that currently read as their approved state (settling or confirmed): the repair's measure of progress. */
+    public int progress() {
+        int n = 0;
+        for (Target t : targets.values()) {
+            if (t.phase == CellPhase.SETTLING || t.phase == CellPhase.CONFIRMED) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /**
+     * The builder has made no progress for too long (it is searching for a route that does not exist, or has no
+     * materials): every target still pending or settling is failed with {@code reason} and the session ends.
+     * Bounds a repair whose builder never stops by itself, which the per-attempt retry count cannot.
+     */
+    public Action failStalled(String reason, boolean builderActive) {
+        if (state != SessionState.ACTIVE) {
+            return Action.NONE;
+        }
+        for (Target t : targets.values()) {
+            if (t.phase == CellPhase.PENDING || t.phase == CellPhase.SETTLING) {
+                t.phase = CellPhase.FAILED;
+                t.lastReason = reason;
+            }
+        }
+        needsBuilderRestart = false;
+        finishState();
+        return builderActive ? Action.STOP_BUILDER : Action.NONE;
     }
 
     public void cancel() {

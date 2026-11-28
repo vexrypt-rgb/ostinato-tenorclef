@@ -18,6 +18,7 @@
 package baritone.behavior;
 
 import baritone.Baritone;
+import baritone.altoclef.AltoClefSettings;
 import baritone.api.event.events.TickEvent;
 import baritone.api.schematic.ISchematic;
 import baritone.api.utils.Helper;
@@ -57,6 +58,11 @@ public final class BlueprintBehavior extends Behavior implements Helper {
     private boolean leased;
     private long leaseMissingSince = -1;
     private volatile boolean stopRequested;
+    private volatile boolean inMemory; // Ostinato: scoped repair of a baseline's cells; no .ost file backs it
+    private int repairProgress = -1;
+    private int repairProgressTick;
+    private AltoClefSettings.CellGuard installedGuard; // Ostinato: keeps a baseline repair off every other managed cell
+    private AltoClefSettings.CellGuard previousGuard;
     private String lastText;
     private long lastFileMtime = Long.MIN_VALUE;
     private long lastFileSize = -1;
@@ -87,6 +93,7 @@ public final class BlueprintBehavior extends Behavior implements Helper {
      * split build runs under a region lease on {@code part}; once held, losing it stops this bot's share.
      */
     public void live(String name, int[] part) {
+        releaseGuard();
         watching = Blueprint.safeName(name);
         this.part = part == null ? null : part.clone();
         lastText = null;
@@ -100,6 +107,7 @@ public final class BlueprintBehavior extends Behavior implements Helper {
         leaseMissingSince = -1;
         generation++;
         stopRequested = false;
+        inMemory = false;
     }
 
     /**
@@ -162,6 +170,7 @@ public final class BlueprintBehavior extends Behavior implements Helper {
         if (ctx.world() == null) {
             throw new IllegalArgumentException("world is not loaded");
         }
+        releaseGuard();
         Path file = dir().resolve(Blueprint.fileName(targetName));
         String text = readFileText(file);
         Blueprint bp = Blueprint.read(targetName, text);
@@ -177,8 +186,70 @@ public final class BlueprintBehavior extends Behavior implements Helper {
         leased = false;
         leaseMissingSince = -1;
         stopRequested = false;
+        inMemory = false;
         generation++;
+        return beginRepair(targetName, bp, requestedKeys, wrongStateOnly);
+    }
 
+    /**
+     * Ostinato: settle-verified repair of exactly the cells of {@code bp}, a blueprint built in memory from the
+     * authorized restore cells of a {@link baritone.swarm.rts.RegionBaseline} ({@code #baseline repair}). No file is
+     * watched, so a live edit of a design of the same name cannot redirect it, and nothing outside {@code bp} is
+     * ever targeted. {@code protect} marks cells the builder and pathfinder must neither break nor place into (the
+     * rest of the baseline: approved masonry, accepted openings, unclassified differences) for as long as the repair
+     * runs.
+     */
+    public String repairCells(Blueprint bp, AltoClefSettings.CellGuard protect) {
+        if (bp == null || bp.size() == 0) {
+            throw new IllegalArgumentException("nothing to repair");
+        }
+        if (ctx.world() == null) {
+            throw new IllegalArgumentException("world is not loaded");
+        }
+        releaseGuard();
+        installGuard(protect);
+        String targetName = bp.name();
+        part = null;
+        watching = targetName;
+        current = bp;
+        lastText = null;
+        lastFileMtime = Long.MIN_VALUE;
+        lastFileSize = -1;
+        leased = false;
+        leaseMissingSince = -1;
+        stopRequested = false;
+        inMemory = true;
+        generation++;
+        return beginRepair(targetName, bp, null, false);
+    }
+
+    private void installGuard(AltoClefSettings.CellGuard protect) {
+        if (protect == null) {
+            return;
+        }
+        AltoClefSettings acs = AltoClefSettings.getInstance();
+        previousGuard = acs.ostinatoGuard();
+        AltoClefSettings.CellGuard prev = previousGuard;
+        installedGuard = (x, y, z) -> protect.test(x, y, z) || (prev != null && prev.test(x, y, z));
+        acs.setOstinatoGuard(installedGuard);
+    }
+
+    /** Puts back the guard that was there before a baseline repair; idempotent, and leaves a newer guard alone. */
+    private void releaseGuard() {
+        if (installedGuard == null) {
+            return;
+        }
+        AltoClefSettings acs = AltoClefSettings.getInstance();
+        if (acs.ostinatoGuard() == installedGuard) {
+            acs.setOstinatoGuard(previousGuard);
+        }
+        installedGuard = null;
+        previousGuard = null;
+    }
+
+    private String beginRepair(String targetName, Blueprint bp, Set<Long> requestedKeys, boolean wrongStateOnly) {
+        repairProgress = -1;
+        repairProgressTick = tick;
         BlueprintRepairSession.WorldReader reader = worldReader();
         repairSession = new BlueprintRepairSession(bp, requestedKeys, wrongStateOnly, reader,
                 BlueprintStateHelper::validateAgainstRegistry,
@@ -262,8 +333,10 @@ public final class BlueprintBehavior extends Behavior implements Helper {
                         repairSession != null ? "repair cancelled" : "stopped", repairSession);
             }
             logDirect("blueprint: stopped " + watching);
+            releaseGuard();
             watching = null;
             part = null;
+            inMemory = false;
             generation++;
             current = null;
             repairSession = null;
@@ -285,7 +358,7 @@ public final class BlueprintBehavior extends Behavior implements Helper {
         // Keep background work proportional to active blueprints: only do full tick checks during active repair,
         // on periodic 1 s ticks, or when the single active blueprint file's mtime/size changed.
         Path file = dir().resolve(Blueprint.fileName(name));
-        boolean fileChanged = hasFileChanged(file);
+        boolean fileChanged = !inMemory && hasFileChanged(file);
         if (!activeRepair && !periodicCheck && !fileChanged) {
             return;
         }
@@ -314,7 +387,7 @@ public final class BlueprintBehavior extends Behavior implements Helper {
             }
         }
 
-        if (fileChanged || current == null) {
+        if (!inMemory && (fileChanged || current == null)) {
             String text;
             try {
                 text = Files.isRegularFile(file) ? Files.readString(file) : null;
@@ -362,12 +435,28 @@ public final class BlueprintBehavior extends Behavior implements Helper {
             if (!repairSession.isActive()) {
                 // Scoped repair already reached a terminal state (SUCCEEDED/PARTIAL/FAILED/CANCELLED):
                 // never fall through and auto-restart full live building.
+                releaseGuard();
                 return;
             }
             boolean building = baritone.getBuilderProcess().isActive();
             boolean paused = building && baritone.getBuilderProcess().isPaused();
             BlueprintRepairSession.Action act = repairSession.tick(worldReader(), building, paused);
             applyRepairAction(b, act);
+            // Ostinato: a builder that searches forever never trips the retry count; no cell reaching its approved
+            // state for DEFAULT_STALL_TICKS fails what is left and stops the builder.
+            if (repairSession.isActive()) {
+                int progress = repairSession.progress();
+                if (progress != repairProgress) {
+                    repairProgress = progress;
+                    repairProgressTick = tick;
+                } else if (tick - repairProgressTick >= BlueprintRepairSession.DEFAULT_STALL_TICKS) {
+                    logDirect("blueprint: " + name + " made no progress for " + BlueprintRepairSession.DEFAULT_STALL_TICKS / 20
+                            + " s; giving up on the remaining cells");
+                    applyRepairAction(b, repairSession.failStalled(
+                            "no progress for " + BlueprintRepairSession.DEFAULT_STALL_TICKS / 20 + " s (no route or no materials)",
+                            baritone.getBuilderProcess().isActive()));
+                }
+            }
             if (!repairSession.isActive() || periodicCheck || fileChanged || act.kind() != BlueprintRepairSession.ActionKind.NONE) {
                 BlueprintRepairSession.Comparison cmp = compareWorld(b);
                 lastComparison = cmp;
@@ -375,6 +464,7 @@ public final class BlueprintBehavior extends Behavior implements Helper {
                 note = BlueprintRepairSession.summaryNote(cmp, baritone.getBuilderProcess().isActive(), repairSession);
                 writeStatusFile(name, b, cmp, note, repairSession);
                 if (!repairSession.isActive()) {
+                    releaseGuard();
                     logDirect("blueprint: " + name + " " + repairSession.statusNote());
                     generation++;
                 }

@@ -75,7 +75,8 @@ public final class BlueprintStateHelper {
 
     /** Client-visible world observation at {@code pos}; returns unloaded when chunk is not present. */
     public static BlueprintRepairSession.CellObservation observe(Level world, BlockPos pos) {
-        if (world == null || pos == null || !world.hasChunk(pos.getX() >> 4, pos.getZ() >> 4)) {
+        // 26.3: Level.hasChunk is true for every chunk on a client, so ask the chunk source (a missing chunk reads as air)
+        if (world == null || pos == null || !world.getChunkSource().hasChunk(pos.getX() >> 4, pos.getZ() >> 4)) {
             return BlueprintRepairSession.CellObservation.unloaded();
         }
         return observeState(world.getBlockState(pos));
