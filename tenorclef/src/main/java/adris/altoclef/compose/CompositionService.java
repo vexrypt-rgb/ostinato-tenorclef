@@ -66,6 +66,30 @@ public final class CompositionService {
         return perform(mod, name, source, false);
     }
 
+    /**
+     * Performs an already-constructed {@link Composition} directly through the normal
+     * {@link CompositionTask} / {@link CompositionRun} lifecycle (no dynamic javac step).
+     * Returns null on success, else the reason Perform was refused.
+     */
+    public synchronized String performComposition(AltoClef mod, String name, Composition instance) {
+        reconcile(mod);
+        if (isPerforming()) return "A Composition is already being performed (" + current.compositionName + "). Stop it first.";
+        if (!AltoClef.inGame()) return "Not in a world.";
+        if (mod.getUserTaskChain().isActive()
+                && !(mod.getUserTaskChain().getCurrentTask() instanceof CompositionTask)) {
+            return "Another user task is running. Stop it first.";
+        }
+        if (instance == null) return "Composition instance is null.";
+        registerListener(mod);
+        moveActive = false;
+        moveTerminalLogged = false;
+        CompositionRun run = new CompositionRun(name);
+        current = run;
+        CompositionTask root = new CompositionTask(mod, instance, run);
+        mod.runUserTask(root, () -> onChainFinish(run, root));
+        return null;
+    }
+
     /** Runs the last successful compile again without recompiling (the editor text may have changed since). */
     public synchronized String reperform(AltoClef mod) {
         if (lastCompile == null || !lastCompile.ok()) return "Nothing compiled to re-perform. Use Perform.";
