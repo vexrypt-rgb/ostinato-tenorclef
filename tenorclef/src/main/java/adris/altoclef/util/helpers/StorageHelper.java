@@ -636,6 +636,10 @@ public class StorageHelper {
         return isScreenOpenInner(screen -> screen instanceof MerchantScreenHandler);
     }
 
+    public static boolean isBrewingStandOpen() {
+        return isScreenOpenInner(screen -> screen instanceof BrewingStandScreenHandler);
+    }
+
     public static boolean isArmorEquippedAll(Item... items) {
         return Arrays.stream(items).allMatch(item -> isArmorEquipped(item));
     }
@@ -800,6 +804,18 @@ public class StorageHelper {
 
     public static int getBrewingStandFuel(BrewingStandScreenHandler handler) {
         return handler.getFuel();
+    }
+
+    public static int getBrewingStandBrewTime() {
+        PlayerEntity player = BotClientBridge.player();
+        if (player != null && player.currentScreenHandler instanceof BrewingStandScreenHandler stand)
+            return getBrewingStandBrewTime(stand);
+        return -1;
+    }
+
+    public static int getBrewingStandBrewTime(BrewingStandScreenHandler handler) {
+        // Yarn getBrewTime() == Mojang 26.3 BrewingStandMenu.getBrewingTicks() (remapped by the preprocessor).
+        return handler.getBrewTime();
     }
 
     public static double getFurnaceFuel(AbstractFurnaceScreenHandler handler) {
