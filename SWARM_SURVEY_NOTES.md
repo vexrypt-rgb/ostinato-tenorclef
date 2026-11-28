@@ -112,7 +112,10 @@ computed unobservable set; the survey ends and stays quiet.
   because Gradle cannot run in the authoring environment (`maven.fabricmc.net` refused, so no Loom/Minecraft).
 * **Live fixture unavailable.** No Fabric client, no Minecraft 26.3, no display, no roster/link in the authoring environment. The
   live pieces (`AltoClefSurveyPort`, the survey branch in `AltoClefExecutor`, the `survey` case in `SwarmCommand`, `cov` routing in
-  `SwarmRuntime`) were only syntax-checked, never type-checked or run. `SwarmContextIsolationTest`, `SwarmRuntimeLinkTest` and
+  `SwarmRuntime`) were never run. Every external signature they use was checked by hand against the repo sources (AltoClef,
+  SimpleChunkTracker, WorldHelper, Debug, and the baritone.api goal/pathing/selection interfaces), and `AltoClefSurveyPort` was
+  type-checked with `javac` against stubs that mirror those signatures. `AltoClefExecutor` and `SwarmCommand` were only
+  syntax-checked, because they pull in too much of the mod to stub. `SwarmContextIsolationTest`, `SwarmRuntimeLinkTest` and
   `Phase1AtAdapterTest` need the full TenorClef build and were not run.
 * Not claimed: headless mode, older versions, real Baritone pathing, chat-link rate limits, real chunk streaming.
 * Not done: a center-app map overlay (center-app is unchanged, still free of Minecraft classes), distributed bidding,
