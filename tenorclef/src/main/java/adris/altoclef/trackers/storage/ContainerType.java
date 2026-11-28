@@ -1,5 +1,6 @@
 package adris.altoclef.trackers.storage;
 
+import adris.altoclef.util.slots.BrewingStandSlot;
 import adris.altoclef.util.slots.ChestSlot;
 import adris.altoclef.util.slots.FurnaceSlot;
 import adris.altoclef.util.slots.Slot;
@@ -103,7 +104,9 @@ public enum ContainerType {
             case FURNACE -> {
                 return slot instanceof FurnaceSlot;
             }
-            case BREWING -> throw new NotImplementedException("Brewing slots not implemented yet.");
+            case BREWING -> {
+                return slot instanceof BrewingStandSlot;
+            }
             case MISC -> {
                 return true;
             }

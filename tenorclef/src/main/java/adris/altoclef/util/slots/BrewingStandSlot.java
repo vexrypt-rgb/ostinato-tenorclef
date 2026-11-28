@@ -4,6 +4,9 @@ public class BrewingStandSlot extends Slot {
     public static final BrewingStandSlot LEFT_POTION = new BrewingStandSlot(0);
     public static final BrewingStandSlot MIDDLE_POTION = new BrewingStandSlot(1);
     public static final BrewingStandSlot RIGHT_POTION = new BrewingStandSlot(2);
+    public static final BrewingStandSlot[] BOTTLE_SLOTS = new BrewingStandSlot[]{
+            LEFT_POTION, MIDDLE_POTION, RIGHT_POTION
+    };
     public static final BrewingStandSlot INGREDIENT = new BrewingStandSlot(3);
     public static final BrewingStandSlot FUEL = new BrewingStandSlot(4);
 
@@ -11,7 +14,7 @@ public class BrewingStandSlot extends Slot {
         this(slot, false);
     }
 
-    protected BrewingStandSlot(int slot, boolean inventory) {
+    public BrewingStandSlot(int slot, boolean inventory) {
         super(slot, inventory);
     }
 

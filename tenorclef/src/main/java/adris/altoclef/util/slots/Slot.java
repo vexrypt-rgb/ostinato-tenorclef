@@ -9,6 +9,7 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.ingame.*;
 //#else
 //$$ import net.minecraft.client.gui.screens.inventory.BlastFurnaceScreen;
+//$$ import net.minecraft.client.gui.screens.inventory.BrewingStandScreen;
 //$$ import net.minecraft.client.gui.screens.inventory.CraftingScreen;
 //$$ import net.minecraft.client.gui.screens.inventory.FurnaceScreen;
 //$$ import net.minecraft.client.gui.screens.inventory.ContainerScreen;
@@ -22,6 +23,7 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.screen.*;
 //#else
 //$$ import net.minecraft.world.inventory.AbstractFurnaceMenu;
+//$$ import net.minecraft.world.inventory.BrewingStandMenu;
 //$$ import net.minecraft.world.inventory.CraftingMenu;
 //$$ import net.minecraft.world.inventory.EnchantmentMenu;
 //$$ import net.minecraft.world.inventory.ChestMenu;
@@ -79,6 +81,8 @@ public abstract class Slot {
                 return new EnchantingTableSlot(slot, inventory);
             case MERCHANT:
                 return new MerchantSlot(slot, inventory);
+            case BREWING_STAND:
+                return new BrewingStandSlot(slot, inventory);
             default:
                 Debug.logWarning("Unhandled slot for inventory check: " + getCurrentType());
                 return null;
@@ -112,6 +116,9 @@ public abstract class Slot {
             if (handler instanceof MerchantScreenHandler) {
                 return ContainerType.MERCHANT;
             }
+            if (handler instanceof BrewingStandScreenHandler) {
+                return ContainerType.BREWING_STAND;
+            }
             return ContainerType.PLAYER;
         }
         Screen screen = BotClientBridge.currentScreenOrNull();
@@ -132,6 +139,9 @@ public abstract class Slot {
         }
         if (screen instanceof MerchantScreen) {
             return ContainerType.MERCHANT;
+        }
+        if (screen instanceof BrewingStandScreen) {
+            return ContainerType.BREWING_STAND;
         }
         return ContainerType.PLAYER;
     }
@@ -228,6 +238,7 @@ public abstract class Slot {
         CHEST_LARGE,
         FURNACE_OR_SMITH_OR_SMOKER_OR_BLAST,
         ENCHANTING_TABLE,
-        MERCHANT
+        MERCHANT,
+        BREWING_STAND
     }
 }

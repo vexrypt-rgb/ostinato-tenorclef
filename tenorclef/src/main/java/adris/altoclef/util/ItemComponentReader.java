@@ -103,4 +103,59 @@ public final class ItemComponentReader {
         }
         return spec.matchesEnchantments(readEnchantments(stack));
     }
+
+    /**
+     * Reads the canonical lowercase potion registry ID (e.g. {@code minecraft:water},
+     * {@code minecraft:awkward}, {@code minecraft:healing}, {@code minecraft:strong_healing})
+     * from a potion/bottle {@link ItemStack}, or {@code ""} if absent.
+     */
+    public static String readPotionId(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return "";
+        }
+        //#if MC >= 260000
+        //$$ net.minecraft.world.item.alchemy.PotionContents contents = stack.get(net.minecraft.core.component.DataComponents.POTION_CONTENTS);
+        //$$ if (contents == null) {
+        //$$     return "";
+        //$$ }
+        //$$ return contents.potion()
+        //$$         .flatMap(net.minecraft.core.Holder::unwrapKey)
+        //$$         .map(key -> key.identifier().toString().toLowerCase(Locale.ROOT))
+        //$$         .orElse("");
+        //#elseif MC >= 12005
+        net.minecraft.component.type.PotionContentsComponent contents = stack.get(net.minecraft.component.DataComponentTypes.POTION_CONTENTS);
+        if (contents == null) {
+            return "";
+        }
+        return contents.potion()
+                .flatMap(net.minecraft.registry.entry.RegistryEntry::getKey)
+                .map(key -> key.getValue().toString().toLowerCase(Locale.ROOT))
+                .orElse("");
+        //#else
+        //$$ net.minecraft.potion.Potion potion = net.minecraft.potion.PotionUtil.getPotion(stack);
+        //$$ if (potion == null || potion == net.minecraft.potion.Potions.EMPTY) {
+        //$$     return "";
+        //$$ }
+        //$$ net.minecraft.util.Identifier id = net.minecraft.registry.Registries.POTION.getId(potion);
+        //$$ return id == null ? "" : id.toString().toLowerCase(Locale.ROOT);
+        //#endif
+    }
+
+    /**
+     * Returns {@code true} if the stack carries custom potion effects beyond a standard base potion.
+     */
+    public static boolean hasCustomPotionEffects(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return false;
+        }
+        //#if MC >= 260000
+        //$$ net.minecraft.world.item.alchemy.PotionContents contents = stack.get(net.minecraft.core.component.DataComponents.POTION_CONTENTS);
+        //$$ return contents != null && !contents.customEffects().isEmpty();
+        //#elseif MC >= 12005
+        net.minecraft.component.type.PotionContentsComponent contents = stack.get(net.minecraft.component.DataComponentTypes.POTION_CONTENTS);
+        return contents != null && !contents.customEffects().isEmpty();
+        //#else
+        //$$ return !net.minecraft.potion.PotionUtil.getCustomPotionEffects(stack).isEmpty();
+        //#endif
+    }
 }
