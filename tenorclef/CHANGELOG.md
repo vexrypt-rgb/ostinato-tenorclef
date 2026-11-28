@@ -1,3 +1,12 @@
+# Unreleased
+
+- **`@swarm survey`** (26.3): scouts that joined a leader survey a marked area. The area is cut into bounded regions handed out
+  through the normal swarm assignment path; each scout reports the chunks its own client loaded in the survey's dimension; the
+  leader merges them and shows claimed / observed / unknown / unreachable exactly (`@swarm survey status`). A scout that
+  disconnects or stalls loses its claim and only the unfinished remainder is reassigned; ground nobody can see is marked
+  unreachable with a reason after bounded retries. See [SWARM_SURVEY_NOTES.md](../SWARM_SURVEY_NOTES.md). Verified in
+  simulation and unit tests only; not yet run on a live client.
+
 # TenorClef 0.29.0
 
 Pairs with Ostinato v1.28.0 (26.3). Released from the monorepo

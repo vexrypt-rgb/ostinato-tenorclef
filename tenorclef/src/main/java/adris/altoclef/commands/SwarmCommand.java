@@ -34,6 +34,70 @@ public class SwarmCommand extends Command {
                 new StringArg("arg5", ""));
     }
 
+    /**
+     * {@code @swarm survey}: scouts that joined this leader survey the marked area; the leader hands out bounded regions,
+     * merges what each scout's client actually loaded, takes back claims of scouts that vanish or stall, and shows exactly
+     * what is claimed, observed, unknown or unreachable.
+     */
+    private static void survey(AltoClef mod, String[] p) {
+        SwarmCoordinator leader = SwarmRuntime.leader();
+        if (leader == null) {
+            Debug.logWarning("SWARM not leading (run @swarm lead first)");
+            return;
+        }
+        adris.altoclef.swarm.survey.SurveyCommandSpec.Request req;
+        try {
+            req = adris.altoclef.swarm.survey.SurveyCommandSpec.parse(p);
+        } catch (IllegalArgumentException e) {
+            Debug.logWarning("SWARM " + e.getMessage());
+            return;
+        }
+        long now = System.currentTimeMillis();
+        switch (req.action()) {
+            case START -> {
+                int[] c = req.corners();
+                if (c == null) {
+                    baritone.api.selection.ISelection[] marked = mod.getClientBaritone().getSelectionManager().getSelections();
+                    if (marked.length != 1) {
+                        Debug.logWarning("SWARM mark exactly one area first (#sel pos1 / pos2), or give x1 z1 x2 z2 (marked: " + marked.length + ")");
+                        return;
+                    }
+                    c = new int[]{marked[0].pos1().x, marked[0].pos1().z, marked[0].pos2().x, marked[0].pos2().z};
+                }
+                adris.altoclef.swarm.survey.SurveyArea area = adris.altoclef.swarm.survey.SurveyArea.fromBlocks(
+                        adris.altoclef.util.helpers.WorldHelper.getCurrentDimension().name(), c[0], c[1], c[2], c[3]);
+                try {
+                    adris.altoclef.swarm.survey.SurveyBoard b = leader.startSurvey(area, now);
+                    Debug.logMessage("SWARM survey " + b.id() + " started: " + area + " as " + b.regionCount()
+                            + " regions; scouts: " + leader.agents().stream().filter(a -> !a.lifecycle().isGone()
+                            && a.capabilities().contains(Capability.CAN_SCOUT)).count() + " (@swarm survey status)");
+                } catch (IllegalArgumentException | IllegalStateException e) {
+                    Debug.logWarning("SWARM survey refused: " + e.getMessage());
+                }
+            }
+            case STATUS -> {
+                adris.altoclef.swarm.survey.SurveyBoard b = pickSurvey(leader, req.surveyId());
+                if (b == null) {
+                    Debug.logMessage("SWARM no survey" + (req.surveyId() == null ? "" : " " + req.surveyId()));
+                    return;
+                }
+                for (String line : b.describe()) Debug.logMessage("SWARM " + line);
+                Debug.logMessage("SWARM " + b.metrics().summary());
+            }
+            case STOP -> {
+                adris.altoclef.swarm.survey.SurveyBoard b = pickSurvey(leader, req.surveyId());
+                boolean stopped = b != null && leader.stopSurvey(b.id(), now);
+                Debug.logMessage(stopped ? "SWARM survey " + b.id() + " stopped; observed chunks are kept" : "SWARM no running survey to stop");
+            }
+        }
+    }
+
+    private static adris.altoclef.swarm.survey.SurveyBoard pickSurvey(SwarmCoordinator leader, String id) {
+        if (id != null) return leader.survey(id);
+        java.util.List<adris.altoclef.swarm.survey.SurveyBoard> all = leader.surveys();
+        return all.isEmpty() ? null : all.get(all.size() - 1);
+    }
+
     @Override
     protected void call(AltoClef mod, ArgParser parser) throws CommandException {
         java.util.List<String> tokens = new java.util.ArrayList<>();
@@ -50,7 +114,7 @@ public class SwarmCommand extends Command {
         String sub = p[0].toLowerCase();
         boolean coordOp = sub.equals("lead") || sub.equals("join") || sub.equals("leave")
                 || sub.equals("acquire") || sub.equals("split") || sub.equals("jobs")
-                || sub.equals("coord") || sub.equals("why") || sub.equals("local");
+                || sub.equals("coord") || sub.equals("why") || sub.equals("local") || sub.equals("survey");
 
         if (!coordOp && !SwarmAdapter.available() && SwarmRuntime.problem() != null) {
             Debug.logWarning("SWARM " + SwarmAdapter.detail());
@@ -122,6 +186,7 @@ public class SwarmCommand extends Command {
                     Debug.logMessage("SWARM submitted " + a.id + " (" + obj.describe() + ")");
                 }
             }
+            case "survey" -> survey(mod, p);
             case "jobs", "coord" -> {
                 SwarmCoordinator leader = SwarmRuntime.leader();
                 if (leader != null) {

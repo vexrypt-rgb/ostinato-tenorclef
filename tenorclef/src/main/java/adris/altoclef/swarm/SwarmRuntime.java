@@ -16,7 +16,7 @@ import java.util.Set;
  * cleanly to a single shared instance in standard single-client graphical mode.
  */
 public final class SwarmRuntime {
-    private static final Set<String> TO_LEADER = Set.of("reg", "bye", "hb", "accept", "reject", "prog", "result", "obs");
+    private static final Set<String> TO_LEADER = Set.of("reg", "bye", "hb", "accept", "reject", "prog", "result", "obs", "cov");
 
     private static final class State {
         SwarmLink link = SwarmLink.create();

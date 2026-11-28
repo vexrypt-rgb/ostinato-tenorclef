@@ -1,6 +1,7 @@
 package adris.altoclef.swarm;
 
 import java.util.Map;
+import java.util.Set;
 
 /**
  * The worker's only link to "how the game does it". The live implementation hands the objective to
@@ -22,6 +23,18 @@ public interface AssignmentExecutor {
     Status poll();
 
     void cancel();
+
+    /**
+     * Survey objectives: packed chunks ({@code SurveyGrid.pack}) this client has newly had loaded, inside the survey area
+     * and in the survey's dimension, since the last call. The worker reports them; the executor never decides coverage.
+     */
+    default Set<Long> drainObserved() { return Set.of(); }
+
+    /** The dimension this client is in right now; reported with observations so the leader can refuse the wrong one. */
+    default String dimension() { return ""; }
+
+    /** The leader changed the work in flight (survey: chunks others already observed need no visit). */
+    default void update(Map<String, String> fields) { }
 
     /** Latest local facts for heartbeats; may return null for any field it does not know. */
     default double[] position() { return null; }
