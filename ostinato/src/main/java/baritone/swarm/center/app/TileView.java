@@ -1,13 +1,14 @@
 package baritone.swarm.center.app;
 
+import baritone.api.command.ArgDecl;
 import baritone.swarm.center.ButtonModel;
 import baritone.swarm.center.TileStatus;
 import baritone.swarm.center.channel.CenterReply;
 import baritone.swarm.center.feed.Alert;
 import baritone.swarm.center.feed.Alerts;
 import baritone.swarm.center.feed.SwarmView;
-import baritone.api.command.ArgDecl;
 
+import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
@@ -20,8 +21,11 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.BorderLayout;
 import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
@@ -30,14 +34,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Ostinato: Phase 3 window, one bot's tile on the Mission control wall: status glyph and word, task line, health and
- * hunger bars, inventory summary, alerts, and the catalog's tile forms. Each form shows its equivalent {@code #} line
- * as you type and the host's reply after a press. Built once per bot; {@link #update} only changes text, so typed
- * values survive refreshes.
+ * Ostinato: Phase 3 window, one bot's tile on the Mission control wall: status glyph and word, task line, inline
+ * {@code HeldLease} chip, compact path progress bar, health and hunger bars, inventory summary, alerts, and the
+ * catalog's tile forms. Each form shows its equivalent {@code #} line as you type and the host's reply after a press.
+ * Built once per bot; {@link #update} only changes text, so typed values survive refreshes.
  *
  * <p>Component names (tests and the review checklist use them): {@code tile:<bot>} and
- * {@code tile:<bot>:status|task|bars|inventory|position|alerts|preview|result}, plus
- * {@code tile:<bot>:button:<formId>} and {@code tile:<bot>:field:<formId>:<arg>}.
+ * {@code tile:<bot>:glyph|status|task|lease|progress|progressBar|bars|inventory|position|perf|alerts|preview|result},
+ * plus {@code tile:<bot>:button:<formId>} and {@code tile:<bot>:field:<formId>:<arg>}.
  */
 final class TileView {
 
@@ -48,7 +52,8 @@ final class TileView {
     private final Commands commands;
     final String bot;
     final JPanel root;
-    private final JLabel glyph, name, status, task, inventory, position, perf, progress, preview, result;
+    private final JLabel glyph, name, status, task, lease, inventory, position, perf, progress, preview, result;
+    private final PathProgressBar progressBar;
     private final Bars bars;
     private final JPanel alerts;
     private final JPanel actions;
@@ -58,8 +63,10 @@ final class TileView {
     private String armedDespawn;
     private String cancelTarget;
     private boolean selected;
+    private boolean multiSelected;
     private TileStatus lastStatus = new TileStatus(TileStatus.Level.IDLE, "idle");
     private Runnable onSelect = () -> {};
+    private Runnable onToggleMulti = () -> {};
     private Runnable onOpen = () -> {};
 
     TileView(AppStyle style, Commands commands, String bot) {
@@ -72,7 +79,11 @@ final class TileView {
             @Override
             public void mouseClicked(MouseEvent e) {
                 if (e.getButton() == MouseEvent.BUTTON1) {
-                    onSelect.run();
+                    if (e.isShiftDown()) {
+                        onToggleMulti.run();
+                    } else {
+                        onSelect.run();
+                    }
                     if (e.getClickCount() >= 2) {
                         onOpen.run();
                     }
@@ -92,7 +103,22 @@ final class TileView {
         JPanel body = style.panel(null, null);
         body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
         task = named(style.label(" ", style.text(), Font.PLAIN, 12f), "task");
+        lease = named(style.label(" ", style.accent(), Font.PLAIN, 10.5f), "lease");
+        lease.setOpaque(true);
+        lease.setBackground(style.raised());
+        lease.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(style.line(), 1),
+                BorderFactory.createEmptyBorder(1, 5, 1, 5)));
+        lease.setVisible(false);
+
+        JPanel progressRow = style.panel(new BorderLayout(6, 0), null);
         progress = named(style.label(" ", style.accent(), Font.PLAIN, 11f), "progress");
+        progressBar = new PathProgressBar(style);
+        progressBar.setName("tile:" + bot + ":progressBar");
+        progressRow.add(progress, BorderLayout.WEST);
+        progressRow.add(progressBar, BorderLayout.CENTER);
+        progressRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+
         position = named(style.label(" ", style.faint(), Font.PLAIN, 11f), "position");
         bars = new Bars(style);
         bars.setName("tile:" + bot + ":bars");
@@ -101,7 +127,7 @@ final class TileView {
         alerts = style.panel(null, null);
         alerts.setLayout(new BoxLayout(alerts, BoxLayout.Y_AXIS));
         alerts.setName("tile:" + bot + ":alerts");
-        for (JComponent c : new JComponent[]{task, progress, position, bars, perf, inventory, alerts}) {
+        for (JComponent c : new JComponent[]{task, lease, progressRow, position, bars, perf, inventory, alerts}) {
             c.setAlignmentX(Component.LEFT_ALIGNMENT);
             body.add(c);
             body.add(Box.createVerticalStrut(3));
@@ -135,9 +161,16 @@ final class TileView {
         status.setText(s.word());
         status.setForeground(s.alert() ? style.level(s.level()) : style.muted());
         task.setText(TileText.task(b.feed()));
+
+        String leaseText = FleetFilterBar.leaseSummary(view, b);
+        lease.setText(leaseText.isEmpty() ? " " : "Lease: " + leaseText);
+        lease.setVisible(!leaseText.isEmpty());
+
         String step = TileDetails.progress(b.feed().path());
         progress.setText(step.isEmpty() ? " " : step);
         progress.setVisible(!step.isEmpty());
+        progressBar.set(b.feed().path().position(), b.feed().path().length(), !step.isEmpty());
+
         String age = TileText.age(b);
         position.setText(TileText.position(b.feed()) + (age.isEmpty() ? "" : " · " + age));
         bars.set(b.feed().health(), b.feed().hunger());
@@ -176,8 +209,17 @@ final class TileView {
         applyBorder();
     }
 
+    void setMultiSelected(boolean on) {
+        multiSelected = on;
+        applyBorder();
+    }
+
     void onSelect(Runnable select) {
         onSelect = select == null ? () -> {} : select;
+    }
+
+    void onToggleMulti(Runnable toggle) {
+        onToggleMulti = toggle == null ? () -> {} : toggle;
     }
 
     /** A double-click opens this bot on the war-room map. */
@@ -187,7 +229,7 @@ final class TileView {
 
     /** Border stays one width so a state change never shifts the grid. Selection uses the accent. */
     private void applyBorder() {
-        root.setBorder(style.box(selected ? style.accent()
+        root.setBorder(style.box((selected || multiSelected) ? style.accent()
                 : lastStatus.alert() ? style.level(lastStatus.level()) : style.line(), 2, 8));
     }
 
@@ -270,7 +312,7 @@ final class TileView {
             result.setForeground(style.warn());
             return;
         }
-        // Ostinato: a despawn needs a second click within 3 s; no dialog, so nothing takes focus.
+        // Ostinato: a despawn needs a second click within 3 s; inline only, never takes focus.
         if (b.form().id().startsWith("despawn") && !b.form().id().equals(armedDespawn)) {
             armedDespawn = b.form().id();
             go.setText("Confirm " + b.form().label().toLowerCase(java.util.Locale.ROOT));
@@ -318,5 +360,53 @@ final class TileView {
         @Override public void insertUpdate(DocumentEvent e) { run.run(); }
         @Override public void removeUpdate(DocumentEvent e) { run.run(); }
         @Override public void changedUpdate(DocumentEvent e) { run.run(); }
+    }
+
+    /** Compact inline path progress bar drawn alongside the numeric progress label. */
+    private static final class PathProgressBar extends JComponent {
+        private final AppStyle style;
+        private int position;
+        private int length;
+
+        PathProgressBar(AppStyle style) {
+            this.style = style;
+            setOpaque(false);
+            setFocusable(false);
+            setVisible(false);
+        }
+
+        void set(int position, int length, boolean visible) {
+            this.position = Math.max(0, position);
+            this.length = Math.max(0, length);
+            setVisible(visible);
+            repaint();
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            return new Dimension(80, 10);
+        }
+
+        @Override
+        protected void paintComponent(Graphics graphics) {
+            if (length <= 0) {
+                return;
+            }
+            Graphics2D g = (Graphics2D) graphics.create();
+            try {
+                int w = Math.max(12, getWidth());
+                int h = 6;
+                int y = Math.max(0, (getHeight() - h) / 2);
+                g.setColor(style.raised());
+                g.fillRect(0, y, w, h);
+                int fill = (int) Math.round(w * Math.min(1.0, position / (double) length));
+                g.setColor(style.accent());
+                g.fillRect(0, y, fill, h);
+                g.setColor(style.line());
+                g.drawRect(0, y, w - 1, h - 1);
+            } finally {
+                g.dispose();
+            }
+        }
     }
 }

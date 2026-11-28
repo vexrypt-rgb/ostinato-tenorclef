@@ -35,10 +35,12 @@ import java.util.function.Consumer;
 
 /**
  * Ostinato: Phase 3 window, everything inside the frame: header (title, server, command host, alert count, theme
- * picker, layout toggle), one card per {@link LayoutView}, and a footer with the last command reply and any refused
- * feed files. A plain panel, so tests build and click it without a display; {@link CenterApp} puts it in a frame.
+ * picker, layout toggle, coordinator summary, and adaptive density override toggle), one card per {@link LayoutView},
+ * and a footer with the last command reply and any refused feed files. A plain panel, so tests build and click it
+ * without a display; {@link CenterApp} puts it in a frame.
  *
- * <p>Names: {@code header.server}, {@code header.host}, {@code header.alerts}, {@code header.theme.dark},
+ * <p>Names: {@code header.server}, {@code header.host}, {@code header.alerts}, {@code header.coordinator},
+ * {@code header.tier}, {@code header.density.auto|cards|roster|cluster}, {@code header.theme.dark},
  * {@code header.theme.light}, {@code header.theme.high-contrast}, {@code header.theme.colorblind},
  * {@code header.layout.wall}, {@code header.layout.map}, {@code footer.reply}, {@code footer.problems}.
  */
@@ -48,12 +50,14 @@ public final class CenterShell {
 
     private AppStyle style;
     private final JPanel root;
-    private JLabel server, host, alerts, reply, problems;
+    private JLabel server, host, alerts, coordinator, tierLabel, reply, problems;
     private CardLayout cards = new CardLayout();
     private JPanel body;
     private final List<LayoutView> views = new ArrayList<>();
     private final Map<CenterLayout, JToggleButton> toggles = new EnumMap<>(CenterLayout.class);
     private final Map<String, JToggleButton> themeToggles = new LinkedHashMap<>();
+    private final Map<DensityPolicy.Override, JToggleButton> densityToggles = new EnumMap<>(DensityPolicy.Override.class);
+    private WallView wall;
     private MapView map;
     private final Commands commands;
     private CenterLayout shown;
@@ -94,11 +98,14 @@ public final class CenterShell {
         views.clear();
         toggles.clear();
         themeToggles.clear();
+        densityToggles.clear();
         cards = new CardLayout();
 
-        JPanel header = style.panel(new BorderLayout(12, 0), style.surface());
+        JPanel header = style.panel(new BorderLayout(0, 4), style.surface());
         header.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, style.line()),
-                BorderFactory.createEmptyBorder(8, 12, 8, 12)));
+                BorderFactory.createEmptyBorder(6, 12, 6, 12)));
+
+        JPanel topRow = style.panel(new BorderLayout(12, 0), null);
         JPanel left = style.panel(new FlowLayout(FlowLayout.LEFT, 12, 0), null);
         left.add(style.label("Ostinato command center", style.text(), Font.BOLD, 15f));
         server = named(style.label(" ", style.muted(), Font.PLAIN, 12f), "header.server");
@@ -107,7 +114,8 @@ public final class CenterShell {
         left.add(server);
         left.add(host);
         left.add(alerts);
-        header.add(left, BorderLayout.WEST);
+        topRow.add(left, BorderLayout.WEST);
+
         JPanel right = style.panel(new FlowLayout(FlowLayout.RIGHT, 4, 0), null);
         ButtonGroup themes = new ButtonGroup();
         for (String name : THEMES) {
@@ -127,12 +135,41 @@ public final class CenterShell {
             toggles.put(l, t);
             right.add(t);
         }
-        header.add(right, BorderLayout.EAST);
+        topRow.add(right, BorderLayout.EAST);
+        header.add(topRow, BorderLayout.NORTH);
+
+        JPanel subRow = style.panel(new BorderLayout(12, 0), null);
+        JPanel subLeft = style.panel(new FlowLayout(FlowLayout.LEFT, 12, 0), null);
+        coordinator = named(style.label("Coord none", style.muted(), Font.PLAIN, 11f), "header.coordinator");
+        tierLabel = named(style.label("View: Cards (auto)", style.muted(), Font.PLAIN, 11f), "header.tier");
+        subLeft.add(coordinator);
+        subLeft.add(tierLabel);
+        subRow.add(subLeft, BorderLayout.WEST);
+
+        JPanel subRight = style.panel(new FlowLayout(FlowLayout.RIGHT, 4, 0), null);
+        subRight.add(style.label("Density:", style.faint(), Font.PLAIN, 11f));
+        ButtonGroup densityGroup = new ButtonGroup();
+        for (DensityPolicy.Override ov : DensityPolicy.Override.values()) {
+            JToggleButton t = style.toggle(ov.label());
+            t.setName("header.density." + ov.wire());
+            t.setFont(AppStyle.font(Font.PLAIN, 11f));
+            t.setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(style.line(), 1),
+                    BorderFactory.createEmptyBorder(1, 7, 1, 7)));
+            t.addActionListener(e -> setDensityOverride(ov));
+            densityGroup.add(t);
+            densityToggles.put(ov, t);
+            subRight.add(t);
+        }
+        densityToggles.get(DensityPolicy.Override.AUTO).setSelected(true);
+        subRow.add(subRight, BorderLayout.EAST);
+        header.add(subRow, BorderLayout.SOUTH);
+
         root.add(header, BorderLayout.NORTH);
 
         body = style.panel(cards, style.bg());
         root.add(body, BorderLayout.CENTER);
-        WallView wall = new WallView(style, commands);
+        wall = new WallView(style, commands);
         map = new MapView(style, commands);
         add(wall);
         add(map);
@@ -140,6 +177,7 @@ public final class CenterShell {
             pick(CenterLayout.MAP);
             map.centerOn(name);
         });
+        wall.onTierChanged(tier -> refreshTierBadge());
 
         JPanel footer = style.panel(new BorderLayout(12, 0), style.surface());
         footer.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, style.line()),
@@ -154,6 +192,7 @@ public final class CenterShell {
         if (theme != null) {
             theme.setSelected(true);
         }
+        refreshTierBadge();
     }
 
     private JLabel named(JLabel l, String n) {
@@ -177,6 +216,42 @@ public final class CenterShell {
 
     public String themeName() {
         return themeName;
+    }
+
+    public DensityPolicy.Tier activeWallTier() {
+        return wall == null ? DensityPolicy.Tier.CARDS : wall.activeTier();
+    }
+
+    public DensityPolicy.Override densityOverride() {
+        return wall == null ? DensityPolicy.Override.AUTO : wall.densityOverride();
+    }
+
+    public void setDensityOverride(DensityPolicy.Override override) {
+        DensityPolicy.Override next = override == null ? DensityPolicy.Override.AUTO : override;
+        JToggleButton btn = densityToggles.get(next);
+        if (btn != null && !btn.isSelected()) {
+            btn.setSelected(true);
+        }
+        if (wall != null) {
+            wall.setDensityOverride(next);
+        }
+        refreshTierBadge();
+    }
+
+    private void refreshTierBadge() {
+        if (tierLabel == null || wall == null) {
+            return;
+        }
+        DensityPolicy.Tier tier = wall.activeTier();
+        DensityPolicy.Override ov = wall.densityOverride();
+        String mode = ov == DensityPolicy.Override.AUTO ? "auto" : "manual";
+        tierLabel.setText("View: " + tier.label() + " (" + mode + ")");
+        for (Map.Entry<DensityPolicy.Override, JToggleButton> e : densityToggles.entrySet()) {
+            boolean sel = e.getKey() == ov;
+            e.getValue().setBorder(BorderFactory.createCompoundBorder(
+                    BorderFactory.createLineBorder(sel ? style.accent() : style.line(), sel ? 2 : 1),
+                    BorderFactory.createEmptyBorder(sel ? 0 : 1, sel ? 6 : 7, sel ? 0 : 1, sel ? 6 : 7)));
+        }
     }
 
     /** Called when the user picks a layout in the header (the layout slice saves and sends it). */
@@ -255,8 +330,9 @@ public final class CenterShell {
     }
 
     /**
-     * Rebuilds the cards with {@code theme} and keeps the layout, selection, camera, typed text and last reply.
-     * The text is put back at the end of {@link #update}, after the new tiles exist.
+     * Rebuilds the cards with {@code theme} and keeps the layout, selection, wall filter/multi-selection/density
+     * override, camera, typed text and last reply. The text is put back at the end of {@link #update}, after the new
+     * tiles exist.
      */
     private void applyTheme(CenterTheme theme, String name) {
         Hold snap = capture();
@@ -268,6 +344,10 @@ public final class CenterShell {
         if (prefsDir != null) {
             map.setPrefsDir(prefsDir);
         }
+        setDensityOverride(snap.densityOverride);
+        wall.setActiveFilter(snap.wallFilter);
+        wall.setSearchQuery(snap.wallQuery);
+        wall.setMultiSelected(snap.wallMultiSelected);
         map.restoreMap(snap.zoom, snap.cx, snap.cz, snap.dim, snap.selected, snap.groups, snap.area, snap.armed,
                 snap.mine, snap.build);
         if (snap.reply != null) {
@@ -283,8 +363,12 @@ public final class CenterShell {
     private Hold capture() {
         Hold h = new Hold();
         h.layout = shown == null ? CenterLayout.WALL : shown;
-        WallView wall = wall();
-        h.wall = wall == null ? null : wall.selected();
+        WallView w = wall();
+        h.wall = w == null ? null : w.selected();
+        h.densityOverride = w == null ? DensityPolicy.Override.AUTO : w.densityOverride();
+        h.wallFilter = w == null ? FleetFilterBar.Filter.ALL : w.activeFilter();
+        h.wallQuery = w == null ? "" : w.searchQuery();
+        h.wallMultiSelected = w == null ? List.of() : List.copyOf(w.multiSelected());
         h.reply = reply == null ? null : reply.getText();
         h.replyColor = reply == null ? style.muted() : reply.getForeground();
         h.zoom = map == null ? 4 : map.camera().zoom();
@@ -321,13 +405,8 @@ public final class CenterShell {
         }
     }
 
-    private WallView wall() {
-        for (LayoutView v : views) {
-            if (v instanceof WallView wall) {
-                return wall;
-            }
-        }
-        return null;
+    WallView wall() {
+        return wall;
     }
 
     private void saveLayout(CenterLayout l) {
@@ -437,16 +516,20 @@ public final class CenterShell {
         alerts.setText(n == 0 ? TileStatus.Level.IDLE.glyph + " No alerts"
                 : TileStatus.Level.WARN.glyph + " " + n + (n == 1 ? " alert" : " alerts"));
         alerts.setForeground(n == 0 ? style.muted() : style.warn());
+        coordinator.setText(FleetFilterBar.coordinatorSummary(view.coordinator()));
+        coordinator.setForeground(view.coordinator() == null ? style.muted()
+                : "refused".equalsIgnoreCase(view.coordinator().mode()) ? style.warn() : style.text());
         problems.setText(view.problems().isEmpty() ? " " : TileStatus.Level.WARN.glyph + " " + view.problems().get(0)
                 + (view.problems().size() > 1 ? " (+" + (view.problems().size() - 1) + ")" : ""));
         for (LayoutView v : views) {
             v.update(view);
         }
+        refreshTierBadge();
         if (hold != null) {
             restoreFields(hold);
-            WallView wall = wall();
-            if (wall != null && hold.wall != null) {
-                wall.select(hold.wall);
+            WallView w = wall();
+            if (w != null && hold.wall != null) {
+                w.select(hold.wall);
             }
             map.refreshArea();
             hold = null;
@@ -458,10 +541,14 @@ public final class CenterShell {
         reply.setForeground(r.admitted() ? style.ok() : style.warn());
     }
 
-    /** Camera, selection and typed text carried across a theme rebuild. */
+    /** Camera, selection, wall filter/density and typed text carried across a theme rebuild. */
     private static final class Hold {
         private CenterLayout layout;
         private String wall;
+        private DensityPolicy.Override densityOverride = DensityPolicy.Override.AUTO;
+        private FleetFilterBar.Filter wallFilter = FleetFilterBar.Filter.ALL;
+        private String wallQuery = "";
+        private List<String> wallMultiSelected = List.of();
         private String reply;
         private Color replyColor;
         private int zoom;

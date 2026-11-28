@@ -239,3 +239,26 @@ Run configuration: `--bots 50 --host 127.0.0.1 --port 25570 --prefix StressBot -
   - In-JVM Swarm (`@swarm lead` on `CleanLead`, `@swarm join` on `CleanA`/`CleanB`) divided `@swarm acquire dirt 2` (`a1 -> CleanA`) and `@swarm acquire oak_log 2` (`a2 -> CleanB`) concurrently over `HeadlessSwarmBus` (`58/58` local messages delivered, `SWARM_CHAT_PACKETS=0`, both `released` / `progress=100` / `reason=succeeded`).
   - Compliance & timing: `ROT_CHECKS=192`, `GCD_VIOLATIONS=0`, `SLEW_VIOLATIONS=0`, `ORDER_VIOLATIONS=0`, `SWARM_STEADY_TICKS=896`, `SWARM_STEADY_OVERRUNS=0`, `TPS_X10=199`.
 
+---
+
+## Phase E — Adaptive `CenterShell` Redesign (Viewport-Relative Density)
+
+- [x] **Viewport-Relative `DensityPolicy` (`ostinato/src/main/java/baritone/swarm/center/app/DensityPolicy.java`):**
+  - Computes active tier (`CARDS`, `ROSTER`, `CLUSTER`) dynamically from `(botCount, viewportWidth, viewportHeight, manualOverride)` using visible card grid capacity (`cols * visibleCardRows * 2.0`) and shallow roster scroll budget (`visibleRosterRows * 2.5`) with downward hysteresis (`15%`, min `1` bot) so window resizing near a boundary never flickers.
+  - Supports operator override (`Auto | Cards | Roster | Cluster`) via header toggles (`header.density.*`).
+- [x] **Fleet Filter & Batch Dispatch Bars (`FleetFilterBar.java`, `BatchDispatchBar.java`):**
+  - `FleetFilterBar`: Live filter pills (`All`, `▲ Alerts`, `● Active`, `Leased`, `○ Idle`) with live counts, incremental search (`filter.search`), `CoordinatorFeed` mode/lease summary, and aggregate TPS / JVM RAM readouts.
+  - `BatchDispatchBar`: Multi-bot selection (`Select Filtered`, `Select Alerts`, `Clear`) plus unified `goto`, `mine`, `@swarm acquire`, `cancel`, `stop`, and inline 3-second two-click `despawn` routed through `Commands` / `HeadlessControlCommandPort`.
+- [x] **Tier 2 Virtualized Roster (`RosterTableView.java`):**
+  - `O(1)` Swing component `JTable` sorted exceptions-first (`✖ BAD` -> `▲ WARN` -> `● OK` -> `○ IDLE`), with multi-select checkboxes, inline `HeldLease` status, vitals, coordinates, TPS/ping, and single-click row `Cancel`.
+- [x] **Tier 3 Exception-First Cluster Heatmap (`ClusterHeatmapView.java`):**
+  - Pinned Exception Rail with `Cancel All Exceptions`, Squad / Lease Rollup Strip with one-click `Select Group`, and custom-painted `O(1)` `HeatmapCanvas` supporting click-to-inspect, Shift-click / drag range selection, and hover tooltips at 50–500+ bots.
+- [x] **`TileView`, `FocusPanel`, `WallView`, and `CenterShell` Wiring:**
+  - `TileView`: Inline `HeldLease` chip (`tile:<bot>:lease`) and compact `PathProgressBar` (`tile:<bot>:progressBar`) preserving all existing `tile:<bot>:*` component names.
+  - `FocusPanel`: Docked single-bot quick command controls (`goto`, `mine`, `cancel`, 3 s two-click `despawn`, `Open on Map`) keeping `WIDTH = 210`.
+  - `WallView` & `CenterShell`: `CardLayout` tier host with `ComponentListener` + layout density re-evaluation (dropping per-bot `TileView` panels outside `CARDS` for `O(1)` memory/component overhead), header coordinator summary + density override toggles, and full preservation of active filter, search query, multi-selection, and density override across theme rebuilds (`Hold`).
+- [x] **Verification (`PASS`):**
+  - **Gate 1 (`ostinato/scripts/center-app.ps1 test`):** `tests: 163, failed: 0` (`SourceLintTest`, `WallViewTest`, `FocusViewTest`, `HeadlessControlAdapterTest`, `DensityPolicyTest`, `AdaptiveWallViewTest`, plus all 4 WCAG `CenterTheme` screenshots).
+  - **Gate 2 (`ostinato` `:fabric:remapJar :compileHeadlessJava :test -x nativeHost`):** `364 suites / 2,387 tests, 0 failed` (`BUILD SUCCESSFUL`).
+
+
