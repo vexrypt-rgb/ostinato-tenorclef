@@ -119,6 +119,28 @@ public interface ISwarm {
     default void publishSpeedrunSplits(String encodedSplits) {
     }
 
+    /**
+     * Ostinato: cooperative chest lease API for container-using policies (e.g. worksite replenishment).
+     * {@code chestKey} uses canonical RTS format {@code c:<dim>:x,y,z}. Returns {@code true} when acquired
+     * or renewed for {@code owner}, {@code false} if actively held by another owner or swarm lease.
+     */
+    default boolean tryAcquireChestLease(String chestKey, String owner, long ttlMs) {
+        return true;
+    }
+
+    /** Releases a cooperative chest lease previously acquired by {@code owner}. */
+    default void releaseChestLease(String chestKey, String owner) {
+    }
+
+    /** Releases every cooperative chest lease currently held by {@code owner}. */
+    default void releaseAllChestLeases(String owner) {
+    }
+
+    /** True when {@code owner} currently holds a valid cooperative chest lease on {@code chestKey}. */
+    default boolean holdsChestLease(String chestKey, String owner) {
+        return false;
+    }
+
     @FunctionalInterface
     interface SwarmHandler {
         void onMessage(String from, String group, String body);

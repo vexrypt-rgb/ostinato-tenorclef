@@ -121,6 +121,12 @@ public class Playground {
             case "villager_trade_fixture":
                 Debug.logMessage(adris.altoclef.benchmark.VillagerTradeFixture.start(mod));
                 break;
+            case "worksite_replenish_fixture":
+                Debug.logMessage(adris.altoclef.benchmark.WorksiteReplenishmentFixture.start(mod, false));
+                break;
+            case "worksite_replenish_fixture_exit":
+                Debug.logMessage(adris.altoclef.benchmark.WorksiteReplenishmentFixture.start(mod, true));
+                break;
             case "":
                 // None specified
                 Debug.logWarning("Please specify a test (ex. stacked, bed, terminate)");

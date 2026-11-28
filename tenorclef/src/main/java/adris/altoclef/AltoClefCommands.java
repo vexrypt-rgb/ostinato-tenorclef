@@ -83,7 +83,8 @@ public class AltoClefCommands {
                 new FugueCommand(),
                 new FugueBenchCommand(),
                 new AllBlocksCommand(), // Ostinato: @allblocks (also Ostinato #allblocks)
-                new ShopCommand() // Ostinato: @shop (also Ostinato #shop shopping list)
+                new ShopCommand(), // Ostinato: @shop (also Ostinato #shop shopping list)
+                new ReplenishCommand()
         );
     }
 }

@@ -144,6 +144,26 @@ public final class SwarmApi implements ISwarm {
         behavior.publishSpeedrunSplits(encodedSplits);
     }
 
+    @Override
+    public boolean tryAcquireChestLease(String chestKey, String owner, long ttlMs) {
+        return behavior.tryAcquireChestLease(chestKey, owner, ttlMs);
+    }
+
+    @Override
+    public void releaseChestLease(String chestKey, String owner) {
+        behavior.releaseChestLease(chestKey, owner);
+    }
+
+    @Override
+    public void releaseAllChestLeases(String owner) {
+        behavior.releaseAllChestLeases(owner);
+    }
+
+    @Override
+    public boolean holdsChestLease(String chestKey, String owner) {
+        return behavior.holdsChestLease(chestKey, owner);
+    }
+
     static SwarmPriority map(baritone.api.swarm.SwarmPriority p) {
         if (p == null) return SwarmPriority.NORMAL;
         switch (p) {
