@@ -31,7 +31,7 @@ public class CenterThemeTest {
     }
 
     @Test public void everyBuiltInMeetsAa() {
-        assertEquals(List.of("dark", "light", "high-contrast", "colorblind"), List.copyOf(ThemeStore.builtIns().keySet()));
+        assertEquals(CenterTheme.BUILT_IN_NAMES, List.copyOf(ThemeStore.builtIns().keySet()));
         for (java.util.Map.Entry<String, CenterTheme> entry : ThemeStore.builtIns().entrySet()) {
             assertEquals(entry.getKey(), List.of(), entry.getValue().aaProblems());
         }

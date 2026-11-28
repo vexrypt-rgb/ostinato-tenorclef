@@ -27,8 +27,10 @@ public class ThemeStoreTest {
         assertEquals("high-contrast", ThemeStore.resolve(dir(), "High contrast"));
         assertEquals("colorblind", ThemeStore.resolve(dir(), "colorblind_safe"));
         assertEquals("light", ThemeStore.resolve(dir(), "LIGHT"));
-        assertNull(ThemeStore.resolve(dir(), "nether"));
-        assertEquals(CenterTheme.DEFAULT_DARK, ThemeStore.theme(dir(), "nether"));
+        assertEquals("nether", ThemeStore.resolve(dir(), "nether"));
+        assertEquals(CenterTheme.NETHER, ThemeStore.theme(dir(), "nether"));
+        assertNull(ThemeStore.resolve(dir(), "bogus"));
+        assertEquals(CenterTheme.DEFAULT_DARK, ThemeStore.theme(dir(), "bogus"));
     }
 
     @Test public void customJsonFillsFromBaseAndSkipsBadFiles() throws Exception {
@@ -38,14 +40,14 @@ public class ThemeStoreTest {
         Files.writeString(themes.resolve("broken.json"), "{\"text\":\"blue\"}");
         Files.writeString(themes.resolve("light.json"), "{\"text\":\"#000000\"}");
         Files.writeString(themes.resolve("notes.txt"), "not a theme");
-        assertEquals(java.util.List.of("dark", "light", "high-contrast", "colorblind", "ocean-night"), ThemeStore.names(dir()));
+        assertEquals(java.util.List.of("dark", "light", "high-contrast", "colorblind", "nether", "end", "ocean", "rust", "ocean-night"), ThemeStore.names(dir()));
         CenterTheme ocean = ThemeStore.theme(dir(), "ocean night");
         assertEquals(0x0055AA, ocean.accent());
         assertEquals(0x117733, ocean.ok());
         assertEquals(CenterTheme.LIGHT.background(), ocean.background());
         assertEquals(CenterTheme.LIGHT, ThemeStore.theme(dir(), "light"));
         try {
-            ThemeStore.parse("{\"base\":\"rust\"}");
+            ThemeStore.parse("{\"base\":\"bogus\"}");
             fail("unknown base accepted");
         } catch (IllegalArgumentException expected) {
             assertTrue(expected.getMessage().contains("base"));
