@@ -206,6 +206,7 @@ public class AltoClef implements ModInitializer {
         threatMonitor = new ThreatMonitor();
 
         initializeCommands();
+        adris.altoclef.compose.DemoService.INSTANCE.ensureInstalled(this);
         adris.altoclef.maze.TunnelProvisionBridge.install(); // Ostinato: #maze.tunnels survival kit
         adris.altoclef.allblocks.AllBlocksBridge.install(); // Ostinato: #allblocks runner
         adris.altoclef.shop.ShoppingBridge.install(); // Ostinato: #shop shopping list runner
@@ -389,6 +390,7 @@ public class AltoClef implements ModInitializer {
         // TODO: should this go here?
         storageTracker.setDirty();
         containerSubTracker.onServerTick();
+        adris.altoclef.compose.DemoService.INSTANCE.onClientTick(this);
         miscBlockTracker.tick();
         trackerManager.tick();
         blockScanner.tick();

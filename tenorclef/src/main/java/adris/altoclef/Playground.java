@@ -133,6 +133,12 @@ public class Playground {
             case "potion_brew_fixture_exit":
                 Debug.logMessage(adris.altoclef.benchmark.PotionBrewingFixture.start(mod, true));
                 break;
+            case "teach_by_demo_fixture":
+                Debug.logMessage(adris.altoclef.benchmark.TeachByDemoFixture.start(mod, false));
+                break;
+            case "teach_by_demo_fixture_exit":
+                Debug.logMessage(adris.altoclef.benchmark.TeachByDemoFixture.start(mod, true));
+                break;
             case "":
                 // None specified
                 Debug.logWarning("Please specify a test (ex. stacked, bed, terminate)");
