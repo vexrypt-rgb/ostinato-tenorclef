@@ -208,6 +208,7 @@ public class AltoClef implements ModInitializer {
         initializeCommands();
         adris.altoclef.maze.TunnelProvisionBridge.install(); // Ostinato: #maze.tunnels survival kit
         adris.altoclef.allblocks.AllBlocksBridge.install(); // Ostinato: #allblocks runner
+        adris.altoclef.shop.ShoppingBridge.install(); // Ostinato: #shop shopping list runner
         adris.altoclef.maze.MazeFurnishBridge.install(); // no-op unless the Ostinato jar has the maze API (26.3)
 
         // Load settings

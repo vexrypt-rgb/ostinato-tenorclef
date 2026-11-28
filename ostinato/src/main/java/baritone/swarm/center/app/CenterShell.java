@@ -5,6 +5,8 @@ import baritone.swarm.center.ButtonModel;
 import baritone.swarm.center.CenterLayout;
 import baritone.swarm.center.CenterTheme;
 import baritone.swarm.center.LayoutStore;
+import baritone.swarm.center.ShoppingCatalog;
+import baritone.swarm.center.ShoppingListModel;
 import baritone.swarm.center.ThemeChoice;
 import baritone.swarm.center.TileStatus;
 import baritone.swarm.center.channel.CenterReply;
@@ -80,8 +82,12 @@ public final class CenterShell {
     private JToggleButton paletteToggle;
     private JToggleButton themeEditToggle;
     private JToggleButton opsToggle;
+    private JToggleButton shopToggle;
     private JToggleButton consoleToggle;
     private JToggleButton replayToggle;
+    private final ShoppingListModel shoppingCart = new ShoppingListModel();
+    private ShopPanel shopPanel;
+    private boolean shopOpen;
     private javax.swing.JComboBox<String> moreThemes;
     private final Commands commands;
     private CenterLayout shown;
@@ -230,12 +236,18 @@ public final class CenterShell {
                 root.revalidate();
             }
         });
+        shopToggle = style.toggle("Shop");
+        shopToggle.setName("header.shop");
+        shopToggle.setFont(AppStyle.font(Font.BOLD, 11f));
+        shopToggle.setToolTipText("Shopping List: pick any Minecraft items and amounts for the bot to gather");
+        shopToggle.addActionListener(e -> setShopVisible(shopToggle.isSelected()));
         subLeft.add(coordinator);
         subLeft.add(tierLabel);
         subLeft.add(paletteToggle);
         subLeft.add(moreThemes);
         subLeft.add(themeEditToggle);
         subLeft.add(opsToggle);
+        subLeft.add(shopToggle);
         subRow.add(subLeft, BorderLayout.WEST);
 
         JPanel subRight = style.panel(new FlowLayout(FlowLayout.RIGHT, 4, 0), null);
@@ -342,6 +354,8 @@ public final class CenterShell {
         add(wall);
         add(map);
         add(editor);
+        shopPanel = new ShopPanel(style, commands, shoppingCart, this::activeSelection, () -> setShopVisible(false));
+        body.add(shopPanel, "shop");
         wall.onOpenOnMap(name -> {
             pick(CenterLayout.MAP);
             map.centerOn(name);
@@ -467,11 +481,37 @@ public final class CenterShell {
 
     public void show(CenterLayout l) {
         shown = l == null ? CenterLayout.WALL : l;
+        shopOpen = false;
+        if (shopToggle != null && shopToggle.isSelected()) {
+            shopToggle.setSelected(false);
+        }
         cards.show(body, shown.wire());
         JToggleButton t = toggles.get(shown);
         if (t != null && !t.isSelected()) {
             t.setSelected(true);
         }
+    }
+
+    public ShopPanel shopPanel() {
+        return shopPanel;
+    }
+
+    public boolean shopVisible() {
+        return shopOpen;
+    }
+
+    public void setShopVisible(boolean open) {
+        shopOpen = open;
+        if (shopToggle != null && shopToggle.isSelected() != open) {
+            shopToggle.setSelected(open);
+        }
+        if (open) {
+            cards.show(body, "shop");
+        } else {
+            cards.show(body, (shown == null ? CenterLayout.WALL : shown).wire());
+        }
+        root.revalidate();
+        root.repaint();
     }
 
     public List<LayoutView> views() {
@@ -761,6 +801,12 @@ public final class CenterShell {
             reply.setForeground(snap.replyColor);
         }
         show(snap.layout);
+        if (shopPanel != null) {
+            shopPanel.restoreState(snap.shopQuery, snap.shopCategory, snap.shopTarget);
+            if (snap.shopOpen) {
+                setShopVisible(true);
+            }
+        }
         hold = snap;
         root.revalidate();
         root.repaint();
@@ -799,6 +845,10 @@ public final class CenterShell {
         h.console = console == null ? null : console.snapshot();
         h.opsVisible = opsDrawer != null && opsDrawer.isVisible();
         h.opsTab = opsTabIndex;
+        h.shopOpen = shopOpen;
+        h.shopQuery = shopPanel == null ? "" : shopPanel.searchQuery();
+        h.shopCategory = shopPanel == null ? ShoppingCatalog.Category.ALL : shopPanel.selectedCategory();
+        h.shopTarget = shopPanel == null ? ShopPanel.TARGET_HOST : shopPanel.selectedTarget();
         h.replayVisible = replayPanel != null && replayPanel.isVisible();
         collect(root, h.fields);
         return h;
@@ -1008,6 +1058,9 @@ public final class CenterShell {
         if (speedrunSplitsPanel != null) {
             speedrunSplitsPanel.update(view);
         }
+        if (shopPanel != null) {
+            shopPanel.update(view);
+        }
         refreshTierBadge();
     }
 
@@ -1052,6 +1105,10 @@ public final class CenterShell {
         private ConsolePanel.Snapshot console;
         private boolean opsVisible;
         private int opsTab;
+        private boolean shopOpen;
+        private String shopQuery = "";
+        private ShoppingCatalog.Category shopCategory = ShoppingCatalog.Category.ALL;
+        private String shopTarget = ShopPanel.TARGET_HOST;
         private boolean replayVisible;
         private final Map<String, String> fields = new LinkedHashMap<>();
     }

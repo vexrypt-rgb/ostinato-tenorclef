@@ -83,6 +83,7 @@ public final class DefaultCommands {
                 new PortalCommand(baritone),
                 new TunnelsCommand(baritone), // Ostinato: public #maze.tunnels
                 new AllBlocksCommand(baritone), // Ostinato: public #allblocks (runner registered by TenorClef)
+                new ShopCommand(baritone), // Ostinato: public #shop shopping list menu + gather runner
                 new MazeCommand(baritone), // Ostinato: underground maze, off unless mazeMode
                 new MazeConnectedCommand(baritone), // Ostinato: run107, backrooms joined by tunnels, hidden
                 new AutoSpectateCommand(baritone), // Ostinato: watch-only server spectating

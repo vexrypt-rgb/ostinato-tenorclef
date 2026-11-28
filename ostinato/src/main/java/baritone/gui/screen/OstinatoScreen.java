@@ -56,7 +56,7 @@ public final class OstinatoScreen extends Screen {
 
     private enum Filter { ALL, TOGGLES, MODIFIED }
 
-    private enum Desk { SETTINGS, TASKS, COMMANDS, STUDIO, ARCADE }
+    private enum Desk { SETTINGS, TASKS, COMMANDS, SHOP, STUDIO, ARCADE }
 
     private static final class Entry {
         final Settings.Setting<?> s;
@@ -138,10 +138,12 @@ public final class OstinatoScreen extends Screen {
     private final Anim modHover = new Anim(0, 18);
     private final Anim tasksHover = new Anim(0, 18);
     private final Anim commandsHover = new Anim(0, 18);
+    private final Anim shopHover = new Anim(0, 18);
     private final Anim studioHover = new Anim(0, 18);
     private final Anim arcadeHover = new Anim(0, 18);
     private static final ItemStack TASKS_ICON = new ItemStack(Items.MAP);
     private static final ItemStack COMMANDS_ICON = new ItemStack(Items.COMMAND_BLOCK);
+    private static final ItemStack SHOP_ICON = new ItemStack(Items.CHEST);
     private static final ItemStack STUDIO_ICON = new ItemStack(Items.STRUCTURE_BLOCK);
     private static final ItemStack ARCADE_ICON = new ItemStack(Items.NOTE_BLOCK);
     private final Anim open = new Anim(0, 14);
@@ -154,6 +156,7 @@ public final class OstinatoScreen extends Screen {
     private Desk desk = Desk.SETTINGS;
     private final TasksPanel tasks = new TasksPanel(this);
     private final CommandsPanel commandsPanel = new CommandsPanel(this);
+    private final ShopPanel shopPanel = new ShopPanel(this);
     private final StudioPanel studio = new StudioPanel(this);
     private final ArcadePanel arcade = new ArcadePanel(this);
     private Filter filter = Filter.ALL;
@@ -183,6 +186,13 @@ public final class OstinatoScreen extends Screen {
     private List<Orbit.Body> bodies = new ArrayList<>();
     private boolean sing, closing;
     private long flungAt;
+
+    public static OstinatoScreen openShop() {
+        OstinatoScreen s = new OstinatoScreen();
+        s.desk = Desk.SHOP;
+        s.shopPanel.reloadItems();
+        return s;
+    }
 
     public OstinatoScreen() {
         super(Component.literal("Ostinato"));
@@ -458,9 +468,9 @@ public final class OstinatoScreen extends Screen {
 
     // ------------------------------------------------------------------ layout
 
-    /** Studio, Arcade, Tasks, Commands, and Modified, then one row per category that has settings. */
+    /** Studio, Arcade, Tasks, Commands, Shop, and Modified, then one row per category that has settings. */
     private int sideItemCount() {
-        int n = 5;
+        int n = 6;
         for (SettingCategory c : SettingCategory.values()) {
             List<Entry> l = byCat.get(c);
             if (l != null && !l.isEmpty()) {
@@ -487,7 +497,7 @@ public final class OstinatoScreen extends Screen {
     }
 
     private void layout() {
-        boolean roomy = (desk == Desk.STUDIO || desk == Desk.ARCADE) && search.get().trim().isEmpty();
+        boolean roomy = (desk == Desk.STUDIO || desk == Desk.ARCADE || desk == Desk.SHOP) && search.get().trim().isEmpty();
         float w = width >= 444 ? Math.max(340, Math.min(roomy ? 760 : 620, width - (roomy ? 48 : 104))) : width - 16;
         float h = Math.max(200, Math.min(roomy ? 460 : 400, height - (roomy ? 32 : 46)));
         if (h > height - 8) {
@@ -533,6 +543,7 @@ public final class OstinatoScreen extends Screen {
         out.add(new Orbit.Body("Arcade", 3, ARCADE_ICON, false, false, false));
         out.add(new Orbit.Body("Tasks", TaskService.INSTANCE.list().size(), TASKS_ICON, false, TaskService.INSTANCE.runner.active(), false));
         out.add(new Orbit.Body("Commands", commandsPanel.formCount(), COMMANDS_ICON, false, false, false));
+        out.add(new Orbit.Body("Shop", shopPanel.cartItemTypes(), SHOP_ICON, false, shopPanel.cartItemTypes() > 0, false));
         out.add(new Orbit.Body("Modified", countModified(), null, true, false, true));
         boolean first = true;
         for (SettingCategory c : navCategories()) {
@@ -567,8 +578,10 @@ public final class OstinatoScreen extends Screen {
                 return 2;
             case COMMANDS:
                 return 3;
+            case SHOP:
+                return 4;
             default:
-                return modifiedView ? 4 : 5 + navCategories().indexOf(selected);
+                return modifiedView ? 5 : 6 + navCategories().indexOf(selected);
         }
     }
 
@@ -576,17 +589,19 @@ public final class OstinatoScreen extends Screen {
     private void selectNav(int i) {
         search.set("");
         searchFocused = false;
-        modifiedView = i == 4;
-        if (i < 4) {
-            desk = i == 0 ? Desk.STUDIO : i == 1 ? Desk.ARCADE : i == 2 ? Desk.TASKS : Desk.COMMANDS;
+        modifiedView = i == 5;
+        if (i < 5) {
+            desk = i == 0 ? Desk.STUDIO : i == 1 ? Desk.ARCADE : i == 2 ? Desk.TASKS : i == 3 ? Desk.COMMANDS : Desk.SHOP;
             if (desk == Desk.COMMANDS) {
                 commandsPanel.reloadForms();
+            } else if (desk == Desk.SHOP) {
+                shopPanel.reloadItems();
             }
         } else {
             desk = Desk.SETTINGS;
             filter = Filter.ALL;
-            if (i > 4) {
-                selected = navCategories().get(i - 5);
+            if (i > 5) {
+                selected = navCategories().get(i - 6);
             }
         }
         flungAt = System.currentTimeMillis();
@@ -770,6 +785,8 @@ public final class OstinatoScreen extends Screen {
         iy = sideItem(ms, iy, "Tasks", TaskService.INSTANCE.list().size(), TASKS_ICON, desk == Desk.TASKS && !searching, tasksHover, mx, my, accent, false,
                 TaskService.INSTANCE.runner.active());
         iy = sideItem(ms, iy, "Commands", commandsPanel.formCount(), COMMANDS_ICON, desk == Desk.COMMANDS && !searching, commandsHover, mx, my, accent, false, false);
+        iy = sideItem(ms, iy, "Shop", shopPanel.cartItemTypes(), SHOP_ICON, desk == Desk.SHOP && !searching, shopHover, mx, my, accent, false,
+                shopPanel.cartItemTypes() > 0);
         GuiDraw.rect(ms, x0 + 10, iy + 2, sbx1 - 10, iy + 3, 0x10FFFFFF);
         iy += 6;
         iy = sideItem(ms, iy, "Modified", countModified(), null, modifiedView && onSettings && !searching, modHover, mx, my, accent, true, false);
@@ -868,6 +885,10 @@ public final class OstinatoScreen extends Screen {
         return desk == Desk.COMMANDS && search.get().trim().isEmpty();
     }
 
+    private boolean showShop() {
+        return desk == Desk.SHOP && search.get().trim().isEmpty();
+    }
+
     private boolean showStudio() {
         return desk == Desk.STUDIO && search.get().trim().isEmpty();
     }
@@ -962,6 +983,11 @@ public final class OstinatoScreen extends Screen {
         if (showCommands()) {
             commandsPanel.layout(px0, px1, hb, fy);
             commandsPanel.draw(ms, mx, my, accent, now);
+            return null;
+        }
+        if (showShop()) {
+            shopPanel.layout(px0, px1, hb, fy);
+            shopPanel.draw(ms, mx, my, accent, now);
             return null;
         }
         String title = title();
@@ -1186,6 +1212,7 @@ public final class OstinatoScreen extends Screen {
         boolean tv = showTasks();
         boolean studioOn = showStudio();
         boolean arcadeOn = showArcade();
+        boolean shopOn = showShop();
         if (tv) {
             int n = TaskService.INSTANCE.list().size();
             fx += GuiDraw.text(ms, n + (n == 1 ? " step" : " steps"), fx, ty, Theme.MUTED, false) + 5;
@@ -1198,6 +1225,9 @@ public final class OstinatoScreen extends Screen {
             fx += GuiDraw.text(ms, n + (n == 1 ? " block" : " blocks"), fx, ty, Theme.MUTED, false) + 5;
         } else if (arcadeOn) {
             fx += GuiDraw.text(ms, "Arcade", fx, ty, Theme.MUTED, false) + 5;
+        } else if (shopOn) {
+            int n = shopPanel.cartItemTypes();
+            fx += GuiDraw.text(ms, n + (n == 1 ? " item type" : " item types") + " in cart", fx, ty, n > 0 ? accent : Theme.MUTED, false) + 5;
         } else {
             fx += GuiDraw.text(ms, all.size() + " settings", fx, ty, Theme.MUTED, false) + 5;
             GuiDraw.rect(ms, fx, ty + 3, fx + 1.5f, ty + 4.5f, Theme.DIM);
@@ -1221,6 +1251,9 @@ public final class OstinatoScreen extends Screen {
         } else if (arcadeOn) {
             info = arcade.hint();
             infoCol = Theme.DIM;
+        } else if (shopOn) {
+            info = "Click items to add · Shift +64 · Ctrl +16 · R-click -1";
+            infoCol = Theme.DIM;
         } else if (store.lastError() != null) {
             info = "Save failed: " + store.lastError();
             infoCol = Theme.DANGER;
@@ -1239,7 +1272,7 @@ public final class OstinatoScreen extends Screen {
         bxr = button(ms, freecamLabel(), bxr, false, mx, my, accent) - 5;
         bxr = button(ms, autoSpecLabel(), bxr, false, mx, my, accent) - 5; // Ostinato: temporary Auto-spectate
         boolean confirm = now < resetConfirmUntil;
-        if (!tv && !studioOn && !arcadeOn) {
+        if (!tv && !studioOn && !arcadeOn && !shopOn) {
             bxr = button(ms, confirm ? "Click to confirm" : resetLabel(), bxr, false, mx, my, confirm ? Theme.DANGER : accent) - 10;
         } else {
             bxr -= 5;
@@ -1457,6 +1490,16 @@ public final class OstinatoScreen extends Screen {
             rebuild();
             return true;
         }
+        iy += sideH + 1;
+        if (inSide && in(mx, my, x0 + 6, iy, sbx1 - 6, iy + sideH)) {
+            desk = Desk.SHOP;
+            modifiedView = false;
+            search.set("");
+            searchFocused = false;
+            shopPanel.reloadItems();
+            rebuild();
+            return true;
+        }
         iy += sideH + 1 + 6;
         if (inSide && in(mx, my, x0 + 6, iy, sbx1 - 6, iy + sideH)) {
             desk = Desk.SETTINGS;
@@ -1514,7 +1557,7 @@ public final class OstinatoScreen extends Screen {
             }
             return true;
         }
-        if (showStudio() || showArcade() || showTasks() || showCommands()) {
+        if (showStudio() || showArcade() || showTasks() || showCommands() || showShop()) {
             if (in(mx, my, x1 - 10 - doneW0, fy + 5, x1 - 10, fy + 19)) {
                 dismiss();
                 return true;
@@ -1535,6 +1578,10 @@ public final class OstinatoScreen extends Screen {
         if (showCommands()) {
             commandsPanel.layout(px0, px1, hb, fy);
             return commandsPanel.mouseClicked(mx, my, button);
+        }
+        if (showShop()) {
+            shopPanel.layout(px0, px1, hb, fy);
+            return shopPanel.mouseClicked(mx, my, button);
         }
         // filter chips
         float chx = px1;
@@ -1741,6 +1788,10 @@ public final class OstinatoScreen extends Screen {
             commandsPanel.layout(px0, px1, hb, fy);
             return commandsPanel.mouseScrolled(mx, my, delta);
         }
+        if (showShop()) {
+            shopPanel.layout(px0, px1, hb, fy);
+            return shopPanel.mouseScrolled(mx, my, delta);
+        }
         if (maxSideScroll > 0 && in(mx, my, x0, hb + 1, sbx1, fy)) {
             sideScroll = Math.max(0, Math.min(maxSideScroll, sideScroll - (float) delta * 16));
             return true;
@@ -1791,6 +1842,9 @@ public final class OstinatoScreen extends Screen {
         }
         if (showCommands() && commandsPanel.editing()) {
             return commandsPanel.keyPressed(key);
+        }
+        if (showShop() && shopPanel.editing()) {
+            return shopPanel.keyPressed(key);
         }
         if (showTasks() && key == InputConstants.KEY_S && Keys.ctrl()) {
             tasks.save();
@@ -1927,14 +1981,17 @@ public final class OstinatoScreen extends Screen {
             commandsPanel.charTyped(c);
             return true;
         }
+        if (showShop() && !searchFocused && shopPanel.charTyped(c)) {
+            return true;
+        }
         if (showStudio() && studio.nameFocused()) {
             return studio.charTyped(c);
         }
         if (showStudio() && !searchFocused && studio.charTyped(c)) {
             return true;
         }
-        if (!searchFocused && (showTasks() || showCommands() || showStudio() || showArcade())) {
-            return false; // typing in Studio, Arcade, Commands, or Tasks does not jump to settings search
+        if (!searchFocused && (showTasks() || showCommands() || showShop() || showStudio() || showArcade())) {
+            return false; // typing in Studio, Arcade, Commands, Shop, or Tasks does not jump to settings search
         }
         if (!searchFocused) {
             searchFocused = true;

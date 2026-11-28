@@ -33,6 +33,8 @@ def shared = [
         'baritone/swarm/center/BotSnapshot.java',
         'baritone/swarm/center/CenterLayout.java',
         'baritone/swarm/center/LayoutStore.java',
+        'baritone/swarm/center/ShoppingCatalog.java',
+        'baritone/swarm/center/ShoppingListModel.java',
         'baritone/swarm/center/ThemeChoice.java',
         'baritone/swarm/center/CenterTheme.java',
         'baritone/swarm/SwarmSample.java',
@@ -52,7 +54,8 @@ sourceSets {
             include shared
         }
         resources {
-            srcDirs = []
+            srcDirs = ['../src/main/resources']
+            include 'baritone/swarm/center/items-26.3.txt'
         }
     }
 }
