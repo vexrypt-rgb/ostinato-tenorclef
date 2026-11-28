@@ -54,6 +54,7 @@ import net.minecraft.screen.*;
 //$$ import net.minecraft.world.inventory.InventoryMenu;
 //$$ import net.minecraft.world.inventory.ContainerData;
 //$$ import net.minecraft.world.inventory.AbstractContainerMenu;
+//$$ import net.minecraft.world.inventory.MerchantMenu;
 //$$ import net.minecraft.world.inventory.SmokerMenu;
 //#endif
 import org.apache.commons.lang3.ArrayUtils;
@@ -478,11 +479,39 @@ public class StorageHelper {
 
 
 
+    public static int countMatchingInventory(AltoClef mod, ItemTarget target, boolean includeCursor) {
+        if (target == null || target.isEmpty()) {
+            return 0;
+        }
+        if (!target.hasStackFilter()) {
+            int count = mod.getItemStorage().getItemCountInventoryOnly(target.getMatches());
+            if (!includeCursor) {
+                ItemStack cursorStack = getItemStackInCursorSlot();
+                if (target.matches(cursorStack.getItem())) {
+                    count -= cursorStack.getCount();
+                }
+            }
+            return Math.max(0, count);
+        }
+        int total = 0;
+        for (ItemStack stack : mod.getItemStorage().getItemStacksPlayerInventory(includeCursor)) {
+            if (target.matches(stack)) {
+                total += stack.getCount();
+            }
+        }
+        return total;
+    }
+
     /**
      * @return whether EVERY item target in {@code targetsToMeet} is met in our inventory or conversion slots.
      */
     public static boolean itemTargetsMet(AltoClef mod, ItemTarget... targetsToMeet) {
-        return Arrays.stream(targetsToMeet).allMatch(target -> mod.getItemStorage().getItemCount(target.getMatches()) >= target.getTargetCount());
+        return Arrays.stream(targetsToMeet).allMatch(target -> {
+            if (target.hasStackFilter()) {
+                return countMatchingInventory(mod, target, true) >= target.getTargetCount();
+            }
+            return mod.getItemStorage().getItemCount(target.getMatches()) >= target.getTargetCount();
+        });
     }
 
     /**
@@ -491,20 +520,16 @@ public class StorageHelper {
      * @return whether EVERY item target in {@code targetsToMeet} is strictly in our inventory.
      */
     public static boolean itemTargetsMetInventory(ItemTarget... targetsToMeet) {
-        return Arrays.stream(targetsToMeet).allMatch(target -> AltoClef.getInstance().getItemStorage().getItemCountInventoryOnly(target.getMatches()) >= target.getTargetCount());
+        AltoClef mod = AltoClef.getInstance();
+        return Arrays.stream(targetsToMeet).allMatch(target -> countMatchingInventory(mod, target, true) >= target.getTargetCount());
     }
 
     /**
      * Same as {@code itemTargetsMetInventory} but it ignores the cursor slot.
      */
     public static boolean itemTargetsMetInventoryNoCursor(ItemTarget... targetsToMeet) {
-        ItemStack cursorStack = getItemStackInCursorSlot();
-        return Arrays.stream(targetsToMeet).allMatch(target -> {
-            int count = AltoClef.getInstance().getItemStorage().getItemCountInventoryOnly(target.getMatches());
-            if (target.matches(cursorStack.getItem()))
-                count -= cursorStack.getCount();
-            return count >= target.getTargetCount();
-        });
+        AltoClef mod = AltoClef.getInstance();
+        return Arrays.stream(targetsToMeet).allMatch(target -> countMatchingInventory(mod, target, false) >= target.getTargetCount());
     }
 
     public static boolean isArmorEquipped(Item... any) {
@@ -605,6 +630,10 @@ public class StorageHelper {
 
     public static boolean isBlastFurnaceOpen() {
         return isScreenOpenInner(screen -> screen instanceof BlastFurnaceScreenHandler);
+    }
+
+    public static boolean isMerchantOpen() {
+        return isScreenOpenInner(screen -> screen instanceof MerchantScreenHandler);
     }
 
     public static boolean isArmorEquippedAll(Item... items) {

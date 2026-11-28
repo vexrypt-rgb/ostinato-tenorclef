@@ -112,17 +112,19 @@ public class MessageSender {
         }
 
         private static String resolveWhisperTemplate() {
-            try {
-                var baritone = baritone.api.BaritoneAPI.getProvider().getPrimaryBaritone();
-                if (baritone != null && baritone.getSwarm() != null) {
-                    String tpl = baritone.getSwarm().resolvedWhisperTemplate();
-                    if (tpl != null && tpl.contains("{to}") && tpl.contains("{msg}")) {
-                        return tpl;
-                    }
-                }
-            } catch (Throwable ignored) {
-                // Fall back to default msg command when swarm hook is unavailable.
-            }
+            //#if MC >= 260000
+            //$$ try {
+            //$$     baritone.api.IBaritone primary = baritone.api.BaritoneAPI.getProvider().getPrimaryBaritone();
+            //$$     if (primary != null && primary.getSwarm() != null) {
+            //$$         String tpl = primary.getSwarm().resolvedWhisperTemplate();
+            //$$         if (tpl != null && tpl.contains("{to}") && tpl.contains("{msg}")) {
+            //$$             return tpl;
+            //$$         }
+            //$$     }
+            //$$ } catch (Throwable ignored) {
+            //$$     // Fall back to default msg command when swarm hook is unavailable.
+            //$$ }
+            //#endif
             return "/msg {to} {msg}";
         }
     }

@@ -127,14 +127,16 @@ public final class SpeedrunClock {
             return;
         }
         lastPublishMs = now;
-        try {
-            var baritone = baritone.api.BaritoneAPI.getProvider().getPrimaryBaritone();
-            if (baritone != null && baritone.getSwarm() != null) {
-                baritone.getSwarm().publishSpeedrunSplits(encodeForFeed());
-            }
-        } catch (Throwable ignored) {
-            // Public API optional hook; safe to ignore in unit tests.
-        }
+        //#if MC >= 260000
+        //$$ try {
+        //$$     baritone.api.IBaritone primary = baritone.api.BaritoneAPI.getProvider().getPrimaryBaritone();
+        //$$     if (primary != null && primary.getSwarm() != null) {
+        //$$         primary.getSwarm().publishSpeedrunSplits(encodeForFeed());
+        //$$     }
+        //$$ } catch (Throwable ignored) {
+        //$$     // Public API optional hook; safe to ignore in unit tests.
+        //$$ }
+        //#endif
     }
 
     private static void ensurePbLoaded() {

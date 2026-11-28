@@ -27,19 +27,21 @@ public final class SigilService {
 
     /** Effective max token length using Ostinato's per-server resolved whisper template and learned chat budget. */
     public static int effectiveWhisperLine() {
-        try {
-            var baritone = baritone.api.BaritoneAPI.getProvider().getPrimaryBaritone();
-            if (baritone != null && baritone.getSwarm() != null) {
-                String tpl = baritone.getSwarm().resolvedWhisperTemplate();
-                int maxChars = baritone.getSwarm().resolvedChatMaxChars();
-                if (tpl != null && tpl.contains("{to}") && tpl.contains("{msg}") && maxChars >= 128) {
-                    int overhead = tpl.replace("{to}", "0123456789abcdef").replace("{msg}", "").length();
-                    return Math.max(100, maxChars - overhead);
-                }
-            }
-        } catch (Throwable ignored) {
-            // Fall back to default constant when swarm hook is unavailable.
-        }
+        //#if MC >= 260000
+        //$$ try {
+        //$$     baritone.api.IBaritone primary = baritone.api.BaritoneAPI.getProvider().getPrimaryBaritone();
+        //$$     if (primary != null && primary.getSwarm() != null) {
+        //$$         String tpl = primary.getSwarm().resolvedWhisperTemplate();
+        //$$         int maxChars = primary.getSwarm().resolvedChatMaxChars();
+        //$$         if (tpl != null && tpl.contains("{to}") && tpl.contains("{msg}") && maxChars >= 128) {
+        //$$             int overhead = tpl.replace("{to}", "0123456789abcdef").replace("{msg}", "").length();
+        //$$             return Math.max(100, maxChars - overhead);
+        //$$         }
+        //$$     }
+        //$$ } catch (Throwable ignored) {
+        //$$     // Fall back to default constant when swarm hook is unavailable.
+        //$$ }
+        //#endif
         return WHISPER_LINE;
     }
     private static final long FRAGMENT_TTL_MS = 120_000;

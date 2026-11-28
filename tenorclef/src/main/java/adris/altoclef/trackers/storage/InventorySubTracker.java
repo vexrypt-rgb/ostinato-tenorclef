@@ -8,6 +8,7 @@ import adris.altoclef.util.helpers.ItemHelper;
 import adris.altoclef.util.helpers.StorageHelper;
 import adris.altoclef.util.slots.CraftingTableSlot;
 import adris.altoclef.util.slots.CursorSlot;
+import adris.altoclef.util.slots.MerchantSlot;
 import adris.altoclef.util.slots.PlayerSlot;
 import adris.altoclef.util.slots.Slot;
 import net.minecraft.client.gui.screen.Screen;
@@ -91,6 +92,8 @@ public class InventorySubTracker extends Tracker {
         //
         // We also don't want our bot to think we "have" an item if it's in our armor/crafting/shield slots. That's annoying to work with.
         if (slot instanceof CraftingTableSlot && slot.equals(CraftingTableSlot.OUTPUT_SLOT))
+            return true;
+        if (slot instanceof MerchantSlot && slot.equals(MerchantSlot.OUTPUT_SLOT))
             return true;
         if (slot instanceof PlayerSlot) {
             // Ignore non-normal inventory slots

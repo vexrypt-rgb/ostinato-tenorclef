@@ -4,9 +4,11 @@ import adris.altoclef.Debug;
 import adris.altoclef.TaskCatalogue;
 import adris.altoclef.util.helpers.ItemHelper;
 import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
 
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -33,6 +35,9 @@ public class ItemTarget {
     private final int targetCount;
     private String catalogueName = null;
     private boolean infinite = false;
+    private ItemComponentSpec componentSpec = null;
+    private int maxEmeraldCost = -1;
+    private String preferredMerchantId = null;
 
     public ItemTarget(Item[] items, int targetCount) {
         itemMatches = items;
@@ -70,6 +75,9 @@ public class ItemTarget {
         catalogueName = toCopy.catalogueName;
         targetCount = newCount;
         infinite = toCopy.infinite;
+        componentSpec = toCopy.componentSpec;
+        maxEmeraldCost = toCopy.maxEmeraldCost;
+        preferredMerchantId = toCopy.preferredMerchantId;
     }
 
     public static boolean nullOrEmpty(ItemTarget target) {
@@ -110,6 +118,64 @@ public class ItemTarget {
         return false;
     }
 
+    public boolean matches(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) {
+            return false;
+        }
+        if (!matches(stack.getItem())) {
+            return false;
+        }
+        if (!hasStackFilter()) {
+            return true;
+        }
+        return ItemComponentReader.matches(stack, componentSpec);
+    }
+
+    public boolean hasStackFilter() {
+        return componentSpec != null && !componentSpec.isEmpty();
+    }
+
+    public ItemComponentSpec getComponentSpec() {
+        return componentSpec;
+    }
+
+    public ItemTarget withComponentSpec(ItemComponentSpec spec) {
+        ItemTarget copy = new ItemTarget(this, targetCount);
+        copy.componentSpec = (spec == null || spec.isEmpty()) ? null : spec;
+        return copy;
+    }
+
+    public boolean hasEmeraldCap() {
+        return maxEmeraldCost >= 0;
+    }
+
+    public int getMaxEmeraldCost() {
+        return maxEmeraldCost;
+    }
+
+    public ItemTarget withMaxEmeraldCost(int maxEmeraldCost) {
+        if (maxEmeraldCost < -1) {
+            throw new IllegalArgumentException("maxEmeraldCost must be >= 0 (or -1 for uncapped), got " + maxEmeraldCost);
+        }
+        ItemTarget copy = new ItemTarget(this, targetCount);
+        copy.maxEmeraldCost = maxEmeraldCost;
+        return copy;
+    }
+
+    public boolean hasPreferredMerchant() {
+        return preferredMerchantId != null && !preferredMerchantId.isBlank();
+    }
+
+    public String getPreferredMerchantId() {
+        return preferredMerchantId;
+    }
+
+    public ItemTarget withPreferredMerchantId(String merchantId) {
+        ItemTarget copy = new ItemTarget(this, targetCount);
+        copy.preferredMerchantId = (merchantId == null || merchantId.isBlank()) ? null : merchantId.trim();
+        return copy;
+    }
+
     public boolean isCatalogueItem() {
         return catalogueName != null;
     }
@@ -127,6 +193,9 @@ public class ItemTarget {
                 // Neither are infinite
                 if (targetCount != other.targetCount) return false;
             }
+            if (maxEmeraldCost != other.maxEmeraldCost) return false;
+            if (!Objects.equals(componentSpec, other.componentSpec)) return false;
+            if (!Objects.equals(preferredMerchantId, other.preferredMerchantId)) return false;
             if ((other.itemMatches == null) != (itemMatches == null)) return false;
             if (itemMatches != null) {
                 if (itemMatches.length != other.itemMatches.length) return false;
@@ -172,10 +241,19 @@ public class ItemTarget {
             }
             result.append("]");
         }
+        if (hasStackFilter()) {
+            result.append(componentSpec.formatBraceSpec());
+        }
         if (!infinite && !isEmpty() && targetCount > 1) {
             result.append(" x ").append(targetCount);
         } else if (infinite) {
             result.append(" x infinity");
+        }
+        if (hasEmeraldCap()) {
+            result.append(" (max_emeralds=").append(maxEmeraldCost).append(")");
+        }
+        if (hasPreferredMerchant()) {
+            result.append(" (villager=").append(preferredMerchantId).append(")");
         }
 
         return result.toString();
