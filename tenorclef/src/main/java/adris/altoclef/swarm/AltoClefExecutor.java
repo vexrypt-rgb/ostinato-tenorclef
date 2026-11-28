@@ -34,8 +34,18 @@ public final class AltoClefExecutor implements AssignmentExecutor {
         this.inventory = new CatalogueInventoryView(mod);
     }
 
+    /** Survey objectives run in the scout, which watches this client's loaded chunks; acquire runs through the goal system. */
+    private adris.altoclef.swarm.survey.SurveyScout scout;
+
     @Override
     public void start(Objective o) {
+        if (o.isSurvey()) {
+            objective = null;
+            scout = new adris.altoclef.swarm.survey.SurveyScout(new AltoClefSurveyPort(mod));
+            scout.start(o);
+            return;
+        }
+        scout = null;
         objective = o;
         manager = null;
         startFailure = null;
@@ -59,6 +69,7 @@ public final class AltoClefExecutor implements AssignmentExecutor {
 
     @Override
     public Status poll() {
+        if (scout != null) return mod.inGame() ? scout.poll() : Status.failed("LEFT_GAME", java.util.Map.of());
         if (objective == null) return Status.idle();
         if (startDelay > 0) {
             if (--startDelay > 0) return Status.running(0);
@@ -114,7 +125,21 @@ public final class AltoClefExecutor implements AssignmentExecutor {
     }
 
     @Override
+    public java.util.Set<Long> drainObserved() { return scout == null ? java.util.Set.of() : scout.drainObserved(); }
+
+    @Override
+    public String dimension() { return scout == null ? "" : scout.dimension(); }
+
+    @Override
+    public void update(java.util.Map<String, String> fields) { if (scout != null) scout.update(fields); }
+
+    @Override
     public void cancel() {
+        if (scout != null) {
+            scout.cancel();
+            scout = null;
+            return;
+        }
         if (manager != null && !manager.getStatus().isTerminal()) manager.cancel();
         try {
             mod.cancelUserTask();

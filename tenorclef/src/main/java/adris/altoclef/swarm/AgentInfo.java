@@ -25,6 +25,9 @@ public final class AgentInfo {
     public AgentLifecycle lifecycle() { return lifecycle; }
     public String assignmentId() { return assignmentId; }
     public boolean hasPosition() { return hasPosition; }
+    public double x() { return x; }
+    public double y() { return y; }
+    public double z() { return z; }
     public float health() { return health; }
     public String risk() { return risk; }
     public long lastSeenMs() { return lastSeenMs; }

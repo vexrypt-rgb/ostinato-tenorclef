@@ -17,6 +17,8 @@ public record FailureDiagnosis(Kind kind, String detail, boolean blameAgent, boo
         ABANDONED,
         /** Took longer than the swarm allows. */
         RUN_TIMEOUT,
+        /** Held the work but showed neither new observations nor movement for the survey stall window. */
+        STALLED,
         /** Agent said SUCCEEDED but the evidence does not meet the objective. */
         UNVERIFIED_SUCCESS,
         /** Agent reported FAILED with a reason. */
@@ -41,6 +43,10 @@ public record FailureDiagnosis(Kind kind, String detail, boolean blameAgent, boo
 
     public static FailureDiagnosis runTimeout() {
         return new FailureDiagnosis(Kind.RUN_TIMEOUT, "exceeded run time limit", true, true);
+    }
+
+    public static FailureDiagnosis stalled(long ms) {
+        return new FailureDiagnosis(Kind.STALLED, "no new chunks and no movement for " + ms / 1000 + "s", true, true);
     }
 
     public static FailureDiagnosis unverified(String evidence) {
