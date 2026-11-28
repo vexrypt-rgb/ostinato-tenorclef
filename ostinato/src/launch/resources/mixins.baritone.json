@@ -63,6 +63,8 @@
     "MixinHeadlessClipboard",
     "MixinHeadlessText",
     "MixinHeadlessDraw",
+    "MixinHeadlessKeybinds",
+    "MixinHeadlessTickBurst",
     "MixinHeadlessAtlas",
     "MixinHeadlessFont",
     "MixinHeadlessShader",

@@ -251,6 +251,19 @@ final class AreaBar {
         replies.setText(String.join(" | ", replyLines));
     }
 
+    /** Ostinato: the drawn area with this bar's Y range, or null (no area, or no whole-number Y range). */
+    public AreaOrders.Box box() {
+        if (!haveArea) {
+            return null;
+        }
+        try {
+            return new AreaOrders.Box(ax1, Integer.parseInt(y1.getText().trim()), az1, ax2,
+                    Integer.parseInt(y2.getText().trim()), az2);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     private Plan plan() {
         if (!haveArea) {
             return Plan.refuse("drag a rectangle");

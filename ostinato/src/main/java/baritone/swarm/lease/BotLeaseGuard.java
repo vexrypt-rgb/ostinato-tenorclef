@@ -507,6 +507,12 @@ public final class BotLeaseGuard implements CommandProtocol.LeaseHooks {
             return; // nothing ran for it: nothing in flight
         }
         ReservationKey k = ReservationKey.parse(l.resource);
+        if (k != null && k.type == ReservationKey.Type.CHEST) {
+            // Ostinato: RTS r5 - a chest lease only gates container clicks (the fence denies those once it is gone),
+            // and it ends while the role that asked for it (a miner's deposit) carries on: stopping the processes and
+            // cancelling the path here stopped the miner for good after its deposit.
+            return;
+        }
         if (k != null && !endedBoxes.contains(k)) {
             endedBoxes.add(k);
         }
@@ -1465,6 +1471,26 @@ public final class BotLeaseGuard implements CommandProtocol.LeaseHooks {
             }
         }
         return null;
+    }
+
+    /**
+     * Ostinato: RTS mode. True while this bot holds an authorised lease on exactly {@code resource} (compared as
+     * canonical reservation keys, so corner order does not matter). Roles and live blueprints check their own lease.
+     */
+    public synchronized boolean holds(String resource) {
+        ReservationKey want = ReservationKey.parse(resource);
+        String wanted = want == null ? resource : want.toString();
+        long now = mono.getAsLong();
+        for (Lease l : leases.values()) {
+            if (l.phase == Phase.DONE || !l.authorized(now)) {
+                continue;
+            }
+            ReservationKey k = ReservationKey.parse(l.resource);
+            if (wanted.equals(k == null ? l.resource : k.toString())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

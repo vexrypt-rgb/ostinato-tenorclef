@@ -897,7 +897,12 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
                         if (LeaseFence.placeBlocked(x, y, z)) {
                             continue; // live cell is occupied or unreadable; do not click a place into it
                         }
-                        if (dy == 1 && bcc.bsi.get0(x, y + 1, z).getBlock() instanceof AirBlock) {
+                        // Ostinato: se-r1. Stock skips an open-sky cell at head height so the bot will walk up
+                        // and place from the same Y. That deadlocks when the only same-Y stand is gone (mid-erase
+                        // on a 1-column lease) or is the GoalAdjacent forbidden neighbor. A support below is a
+                        // vanilla click from y-1; allow it.
+                        if (dy == 1 && bcc.bsi.get0(x, y + 1, z).getBlock() instanceof AirBlock
+                                && !MovementHelper.canPlaceAgainst(ctx, new BlockPos(x, y - 1, z))) {
                             continue;
                         }
                         desirableOnHotbar.add(desired);
@@ -1513,11 +1518,12 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         }
         sourceLiquids.forEach(pos -> extras.add(new GoalBlock(pos.above())));
         // only cells searchForPlacables places from: within 5 sideways, the target 5 below to 1 above the feet, and at
-        // head height only under a block
+        // head height only under a block unless a support below makes a y-1 place legal (Ostinato: se-r1)
         Cadenza.CellFilter inSearchBox = (t, x, y, z) -> {
             int dy = t.pos.y - y;
-            return Math.abs(t.pos.x - x) <= 5 && Math.abs(t.pos.z - z) <= 5 && dy >= -5 && dy <= 1
-                    && (dy < 1 || !(bcc.bsi.get0(t.pos.x, t.pos.y + 1, t.pos.z).getBlock() instanceof AirBlock));
+            boolean openSkyHead = dy == 1 && bcc.bsi.get0(t.pos.x, t.pos.y + 1, t.pos.z).getBlock() instanceof AirBlock
+                    && !MovementHelper.canPlaceAgainst(ctx, t.pos.below());
+            return Math.abs(t.pos.x - x) <= 5 && Math.abs(t.pos.z - z) <= 5 && dy >= -5 && dy <= 1 && !openSkyHead;
         };
         return cadenza.goal(bcc, targets, Cadenza.Forbidden.NONE, inSearchBox, Baritone.settings().cadenzaShortHorizon.value,
                 CadenzaSession.liveOptions(CadenzaGoal.Ordering.ANY), r -> {
@@ -1630,7 +1636,6 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         if (!(ctx.world().getBlockState(pos).getBlock() instanceof AirBlock)) {  // TODO can this even happen?
             return new GoalPlace(pos);
         }
-        boolean allowSameLevel = !(ctx.world().getBlockState(pos.above()).getBlock() instanceof AirBlock);
         BlockState current = ctx.world().getBlockState(pos);
         // Ostinato: run105. The player standing in the target made placementPlausible false for every face, so the goal fell
         // back to GoalPlace (stand on top, pillar). In a 2-high tunnel with a protected ceiling that never works, and the
@@ -1639,8 +1644,15 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         BlockState desired = bcc.getSchematic(pos.getX(), pos.getY(), pos.getZ(), current);
         boolean plausible = desired != null && (desired.getCollisionShape(ctx.world(), pos).isEmpty()
                 || ctx.world().isUnobstructed(ctx.entity(), desired.getCollisionShape(ctx.world(), pos).move(pos.getX(), pos.getY(), pos.getZ())));
-        for (Direction facing : Movement.HORIZONTALS_BUT_ALSO_DOWN_____SO_EVERY_DIRECTION_EXCEPT_UP) {
-            //noinspection ConstantConditions
+        // Ostinato: se-r1. Stock checked horizontals before DOWN, so a neighbor-column block became GoalAdjacent's
+        // forbidden stand, and allowSameLevel was false whenever the cell had air above. After mid-erase removed the
+        // in-lease same-Y stand, every remaining in-goal cell was mid-air; the path 'All done' at a jump and never
+        // placed. Prefer the support below as the forbidden stand and allow standing at y-1 so a vanilla click on the support works.
+        if (plausible && MovementHelper.canPlaceAgainst(ctx, pos.below())) {
+            return new GoalAdjacent(pos, pos.below(), true);
+        }
+        boolean allowSameLevel = !(ctx.world().getBlockState(pos.above()).getBlock() instanceof AirBlock);
+        for (Direction facing : Direction.Plane.HORIZONTAL) {
             if (MovementHelper.canPlaceAgainst(ctx, pos.relative(facing)) && plausible) {
                 return new GoalAdjacent(pos, pos.relative(facing), allowSameLevel);
             }

@@ -12,9 +12,10 @@ In chat:
 #center layout
 #center layout wall
 #center layout map
+#center layout editor
 ```
 
-`wall` is the mission-control grid and the default. `map` is a war-room placeholder (no map, no click-to-command). The last choice is saved per OS user as `command-center-layout-<user>.txt` under the Ostinato config directory (`<game>/baritone`).
+`wall` is the mission-control grid and the default. `map` is the war-room map (RTS, area orders). `editor` is the 3D Design/Live schematic editor (see `docs/schematic-editor.md`). The last choice is saved per OS user as `command-center-layout-<user>.txt` under the Ostinato config directory (`<game>/baritone`).
 
 The same open path is `baritone.swarm.center.CenterRuntime#open`. `#center` calls that hook. The window installs itself as the host when the client starts and does not show until the hook runs.
 

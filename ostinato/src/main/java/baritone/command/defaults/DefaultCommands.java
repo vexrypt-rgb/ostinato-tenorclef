@@ -78,6 +78,8 @@ public final class DefaultCommands {
                 new ElytraCommand(baritone),
                 new TasksCommand(baritone),
                 new SwarmCommand(baritone),
+                new RoleCommand(baritone), // Ostinato: RTS mode
+                new BlueprintCommand(baritone), // Ostinato: RTS live build
                 new PortalCommand(baritone),
                 new TunnelsCommand(baritone), // Ostinato: public #maze.tunnels
                 new AllBlocksCommand(baritone), // Ostinato: public #allblocks (runner registered by TenorClef)

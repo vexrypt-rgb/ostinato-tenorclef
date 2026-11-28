@@ -39,6 +39,7 @@ public final class MapView implements LayoutView {
     private final JToggleButton overworld, nether, end;
     private final SelectInspector inspector;
     private final AreaBar areaBar;
+    private final RtsPanel rts; // Ostinato: RTS mode
     private SwarmView last = SwarmView.EMPTY;
     private Path groupsFile;
 
@@ -83,9 +84,23 @@ public final class MapView implements LayoutView {
                 }
                 areaBar.setArea(x1, z1, x2, z2, ys);
             }
+
+            @Override
+            public void order(int blockX, int blockZ) {
+                if (rts.visible()) {
+                    rts.move(blockX, blockZ);
+                }
+            }
+
+            @Override
+            public void paint(int blockX, int blockZ, boolean erase) {
+                rts.paint(blockX, blockZ, erase);
+            }
         });
         inspector = new SelectInspector(style, commands);
         areaBar = new AreaBar(style, commands, armed -> canvas.areaArmed = armed, canvas::setGhost);
+        rts = new RtsPanel(style, commands, canvas.selection::names, armed -> canvas.paintArmed = armed, canvas::setBlueprint,
+                areaBar::box, canvas::dim); // Ostinato: "In area" region leases use the drawn area and its Y range
 
         JPanel header = style.panel(new BorderLayout(), style.surface());
         header.setBorder(style.box(style.line(), 0, 6));
@@ -100,6 +115,15 @@ public final class MapView implements LayoutView {
         dims.add(layerToggle(dims, "Paths", "map:toggle:paths", on -> canvas.showPaths = on));
         dims.add(layerToggle(dims, "Terrain", "map:toggle:terrain", on -> canvas.showTerrain = on));
         dims.add(areaBar.tool());
+        JToggleButton rtsToggle = style.toggle("RTS");
+        rtsToggle.setName("map:toggle:rts");
+        rtsToggle.setToolTipText("Roles, right-click move orders, blueprint painting and live build");
+        rtsToggle.addActionListener(e -> {
+            rts.setVisible(rtsToggle.isSelected());
+            root.revalidate();
+            canvas.repaint();
+        });
+        dims.add(rtsToggle);
         header.add(dims, BorderLayout.WEST);
         JPanel info = style.panel(new FlowLayout(FlowLayout.RIGHT, 12, 0), null);
         bots = style.label("0 bots", style.muted(), Font.PLAIN, 12f);
@@ -128,7 +152,10 @@ public final class MapView implements LayoutView {
         lines.add(legend);
         lines.add(keys);
         lines.add(hover);
-        south.add(areaBar.bar(), BorderLayout.NORTH);
+        JPanel bars = style.panel(new BorderLayout(), null);
+        bars.add(rts.component(), BorderLayout.NORTH);
+        bars.add(areaBar.bar(), BorderLayout.SOUTH);
+        south.add(bars, BorderLayout.NORTH);
         JPanel under = style.panel(new BorderLayout(), null);
         under.add(inspector.component(), BorderLayout.NORTH);
         under.add(lines, BorderLayout.CENTER);
@@ -270,6 +297,15 @@ public final class MapView implements LayoutView {
         return canvas.areaBounds();
     }
 
+    /** Ostinato: RTS mode panel (tests and the auto driver). */
+    public RtsPanel rts() {
+        return rts;
+    }
+
+    public int blueprintCells() {
+        return canvas.blueprintCount();
+    }
+
     public MapGroups groups() {
         return canvas.groups;
     }
@@ -280,6 +316,7 @@ public final class MapView implements LayoutView {
         if (groupsFile != null) {
             canvas.groups.read(groupsFile);
         }
+        rts.setDir(dir);
     }
 
     private void saveGroups() {
@@ -299,6 +336,7 @@ public final class MapView implements LayoutView {
         canvas.setView(last);
         inspector.sync(last, canvas.selection.names());
         areaBar.sync(last, canvas.selection.names(), canvas.dim());
+        rts.update(last);
         int n = 0;
         if (view != null) {
             for (SwarmView.BotState b : view.bots()) {

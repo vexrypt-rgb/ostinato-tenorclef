@@ -64,7 +64,9 @@ final class BotFeedGather {
         long gatherUs = (System.nanoTime() - t0) / 1000;
         return new BotFeed(name, nowWallMs, seq, server(), RunMode.current().name().toLowerCase(Locale.ROOT),
                 swarm.commandHost(), swarm.coordinator(), pos, health, maxHealth, hunger, dead, process, route, inv,
-                swarm.executions(), swarm.leases(), perf, swarm.link(), gatherUs);
+                swarm.executions(), swarm.leases(), perf, swarm.link(), gatherUs,
+                b.getRoleBehavior() == null ? "idle" : b.getRoleBehavior().role().id, // Ostinato: RTS mode
+                b.getRoleBehavior() == null ? "" : b.getRoleBehavior().describe());
     }
 
     static char dim(Level level) {

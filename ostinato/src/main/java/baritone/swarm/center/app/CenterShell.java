@@ -59,6 +59,7 @@ public final class CenterShell {
     private final Map<DensityPolicy.Override, JToggleButton> densityToggles = new EnumMap<>(DensityPolicy.Override.class);
     private WallView wall;
     private MapView map;
+    private EditorView editor;
     private final Commands commands;
     private CenterLayout shown;
     private Consumer<CenterLayout> onPick = l -> {};
@@ -128,7 +129,7 @@ public final class CenterShell {
         }
         ButtonGroup group = new ButtonGroup();
         for (CenterLayout l : CenterLayout.values()) {
-            JToggleButton t = style.toggle(l == CenterLayout.WALL ? "Wall" : "War room");
+            JToggleButton t = style.toggle(l.label());
             t.setName("header.layout." + l.wire());
             t.addActionListener(e -> pick(l));
             group.add(t);
@@ -171,8 +172,10 @@ public final class CenterShell {
         root.add(body, BorderLayout.CENTER);
         wall = new WallView(style, commands);
         map = new MapView(style, commands);
+        editor = new EditorView(style, commands, map::selected, () -> (int) map.dimension());
         add(wall);
         add(map);
+        add(editor);
         wall.onOpenOnMap(name -> {
             pick(CenterLayout.MAP);
             map.centerOn(name);
@@ -278,11 +281,17 @@ public final class CenterShell {
         Prefs p = readPrefs(dir);
         followTheme(p.theme());
         map.setPrefsDir(dir);
+        editor.setDir(dir);
         followLayout(p.layout());
     }
 
     public Path prefsDir() {
         return prefsDir;
+    }
+
+    /** Ostinato: 3D schematic editor (tests and the auto driver). */
+    public EditorView editor() {
+        return editor;
     }
 
     /** The shared layout and theme files as text; null where a file is missing or unreadable. */
@@ -343,6 +352,7 @@ public final class CenterShell {
         assemble();
         if (prefsDir != null) {
             map.setPrefsDir(prefsDir);
+            editor.setDir(prefsDir);
         }
         setDensityOverride(snap.densityOverride);
         wall.setActiveFilter(snap.wallFilter);
@@ -350,6 +360,9 @@ public final class CenterShell {
         wall.setMultiSelected(snap.wallMultiSelected);
         map.restoreMap(snap.zoom, snap.cx, snap.cz, snap.dim, snap.selected, snap.groups, snap.area, snap.armed,
                 snap.mine, snap.build);
+        if (snap.editor != null) {
+            editor.restore(snap.editor);
+        }
         if (snap.reply != null) {
             reply.setText(snap.reply);
             reply.setForeground(snap.replyColor);
@@ -381,6 +394,7 @@ public final class CenterShell {
         h.armed = map != null && map.areaArmed();
         h.mine = map != null && map.areaMine();
         h.build = map != null && map.areaBuild();
+        h.editor = editor == null ? null : editor.snapshot();
         collect(root, h.fields);
         return h;
     }
@@ -466,7 +480,7 @@ public final class CenterShell {
     }
 
     private void sendLayout(CenterLayout l) {
-        String id = l == CenterLayout.MAP ? "layout-map" : "layout-wall";
+        String id = l.formId();
         ButtonModel form = headerForm(id);
         if (form != null) {
             commands.press(form, Map.of(), last.hostBot(), null);
@@ -561,6 +575,7 @@ public final class CenterShell {
         private boolean armed;
         private boolean mine;
         private boolean build;
+        private EditorView.Snapshot editor;
         private final Map<String, String> fields = new LinkedHashMap<>();
     }
 }

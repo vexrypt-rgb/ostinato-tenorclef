@@ -21,22 +21,25 @@ TenorClef repo, and use pinned jars in `tenorclef/libs/`.
 ## Install (players)
 
 Download the 26.3 jars from this repository's [releases](https://github.com/vexrypt-rgb/ostinato-tenorclef/releases).
-Current pair: **Ostinato v1.28.0** (tag `ostinato-v1.28.0`) and **TenorClef v0.29.0** (tag `tenorclef-v0.29.0`).
-You need Fabric Loader, Java 25, `ostinato-mc26.3-unoptimized-fabric-1.28.0.jar` and `tenorclef-mc26.3-v0.29.0.jar`
-in `mods/`. Older Minecraft lines are still in the [Ostinato](https://github.com/vexrypt-rgb/Ostinato/releases) and
+Current pair: **Ostinato v1.29.0** (tag `ostinato-v1.29.0`) and **TenorClef v0.29.0** (tag `tenorclef-v0.29.0`,
+unchanged). You need Fabric Loader, Java 25, `ostinato-mc26.3-unoptimized-fabric-1.29.0.jar` and
+`tenorclef-mc26.3-v0.29.0.jar` in `mods/`. Older Minecraft lines are still in the
+[Ostinato](https://github.com/vexrypt-rgb/Ostinato/releases) and
 [TenorClef](https://github.com/vexrypt-rgb/TenorClef/releases) repositories.
 
-## What's new in Ostinato v1.28.0 / TenorClef v0.29.0
+## What's new in Ostinato v1.29.0
 
-- **Controls-only input**: the bot plays only through vanilla key presses and visible mouse look. On Paper 26.3 it
-  ran the full course with 0 flags under Grim, NoCheatPlus Updated and LightAntiCheat+. Spartan's gravity check also
-  flags plain vanilla 26.3, so its flags are a false positive (`ostinato/docs/CONTROLS_ONLY_AUDIT.md`).
-- **True headless bot** (experimental): a plain-JVM 26.3 protocol client with no Minecraft client
-  (`cd ostinato && ./gradlew runHeadlessBot`). Offline-mode servers only (`ostinato/HEADLESS_BOT_NOTES.md`).
-- **Swarm and command center**: signed swarm commands, leases, shared observations, region builds, and the command
-  center window with a war room map. Swarm features stay off until you turn them on.
-- **Microsoft sign-in** for bot accounts with Ostinato's own Azure app id. It waits on Mojang's approval: until
-  then, sign-in stops at the Minecraft step with "app ID awaiting Mojang approval".
+- **RTS mode** in the command-center map: assign farmer, miner, storage organizer and armor maker roles; region and
+  chest leases; split a live blueprint across several bots; paint more than one layer; erase a cell while they build.
+  Proven on Paper 26.3 with Grim 2.3.75, **0 flags and 0 deaths**, controls-only (`ostinato/docs/rts-mode.md`).
+- **3D schematic editor** (`--layout editor`): Design mode (orbit, place/erase per layer, palette, save/load `.ost`,
+  import `.litematic` and Sponge `.schem`) and Live mode (the same view of in-world progress; edits go to the bots as
+  blueprint changes). A 2-bot Live build with a mid-build erase finished 11/11 with the erased cell left air, Grim 0,
+  deaths 0 (`ostinato/docs/schematic-editor.md`).
+- **Builder open-sky place fix**: a stacked cell with air above can be placed from y-1 against the support, so a
+  one-column strip still finishes after a mid-build erase removes the only same-Y stand.
+- TenorClef is unchanged at v0.29.0. v1.28.0's controls-only input, true headless bot, swarm/command center and
+  Microsoft sign-in are still in this release.
 
 Full notes: `ostinato/RELEASE_NOTES.md` and `tenorclef/CHANGELOG.md`.
 

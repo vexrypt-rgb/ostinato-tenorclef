@@ -53,6 +53,8 @@ public final class FakeSwarm implements SwarmSource {
                     FormDecl.of("layout-wall", "Wall", "center layout wall", FormPlacement.HEADER)),
             new CatalogFeed.Button("center", CommandPermission.OWNER,
                     FormDecl.of("layout-map", "War room", "center layout map", FormPlacement.HEADER)),
+            new CatalogFeed.Button("center", CommandPermission.OWNER,
+                    FormDecl.of("layout-editor", "Editor", "center layout editor", FormPlacement.HEADER)),
             new CatalogFeed.Button("theme", CommandPermission.OWNER,
                     FormDecl.of("theme-pick", "Theme", "theme", FormPlacement.HEADER, ArgDecl.token("name", true))));
 

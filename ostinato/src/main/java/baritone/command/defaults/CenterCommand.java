@@ -47,7 +47,8 @@ public class CenterCommand extends Command {
     public static List<FormDecl> windowForms() {
         return List.of(
                 FormDecl.of("layout-wall", "Wall", "center layout wall", FormPlacement.HEADER),
-                FormDecl.of("layout-map", "War room", "center layout map", FormPlacement.HEADER)
+                FormDecl.of("layout-map", "War room", "center layout map", FormPlacement.HEADER),
+                FormDecl.of("layout-editor", "Editor", "center layout editor", FormPlacement.HEADER)
         );
     }
 
@@ -110,7 +111,7 @@ public class CenterCommand extends Command {
                 try {
                     layout = CenterLayout.parse(which);
                 } catch (IllegalArgumentException e) {
-                    throw new CommandInvalidTypeException(args.consumed(), "wall or map");
+                    throw new CommandInvalidTypeException(args.consumed(), "wall, map or editor");
                 }
                 try {
                     LayoutStore.save(file, layout);

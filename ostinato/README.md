@@ -283,8 +283,9 @@ wire are SIGIL S2 (including S2S when a sender must be proven).
 
 - [Region builds](docs/REGION_BUILD.md)
 - [Swarm and region builds guide](docs/guides/swarm-and-region-builds.md)
-- [Command center](docs/command-center.md) and [bot accounts](docs/bot-accounts.md) (Microsoft sign-in waits on
-  Mojang's approval of the app id)
+- [Command center](docs/command-center.md) (`--layout wall|map|editor`), [RTS mode](docs/rts-mode.md) and the
+  [3D schematic editor](docs/schematic-editor.md)
+- [Bot accounts](docs/bot-accounts.md) (Microsoft sign-in waits on Mojang's approval of the app id)
 - [SIGIL](https://github.com/vexrypt-rgb/sigil)
 
 ## Controls-only input

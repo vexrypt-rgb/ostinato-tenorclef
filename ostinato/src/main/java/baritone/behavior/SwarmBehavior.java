@@ -1117,6 +1117,21 @@ public final class SwarmBehavior extends Behavior implements Helper {
     }
 
     /** True while one of the leased processes (mine, tunnel, builder, custom goal) is the one in control. */
+    /** Ostinato: RTS roles and blueprints read their own leases through this (null while leases are off). */
+    public BotLeaseGuard leaseGuard() {
+        return leaseGuard;
+    }
+
+    /** Ostinato: the reservation dimension letter of this bot's world (o, n, e or ?). */
+    public char dimLetter() {
+        return dimChar();
+    }
+
+    /** Ostinato: the active lease coordinator on this client, or null. */
+    public LeaseCoordinator leaseCoordinatorOrNull() {
+        return leaseCoordinator;
+    }
+
     /** Ostinato: Phase 2b reservation dimension letter: o, n or e. */
     private char dimChar() {
         net.minecraft.client.multiplayer.ClientLevel w = ctx.minecraft().level;

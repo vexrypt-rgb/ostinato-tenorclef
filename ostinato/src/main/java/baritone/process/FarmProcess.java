@@ -64,6 +64,7 @@ public final class FarmProcess extends BaritoneProcessHelper implements IFarmPro
 
     private int range;
     private BlockPos center;
+    private int[] box; // Ostinato: RTS region lease, x1,y1,z1,x2,y2,z2; only columns inside are farmed
 
     private static final List<Item> FARMLAND_PLANTABLE = Arrays.asList(
             Items.BEETROOT_SEEDS,
@@ -147,11 +148,18 @@ public final class FarmProcess extends BaritoneProcessHelper implements IFarmPro
             center = pos;
         }
         this.range = range;
+        box = null; // Ostinato:
         active = true;
         locations = null;
         requestOutcome.start(); // Ostinato:
         watchHarvest.clear();
         watchPlant.clear();
+    }
+
+    /** Ostinato: confine the current farm request to the columns of {@code region} (null clears). */
+    public void farmBox(int[] region) {
+        box = region == null ? null : region.clone();
+        locations = null;
     }
 
     private enum Harvest {
@@ -269,6 +277,10 @@ public final class FarmProcess extends BaritoneProcessHelper implements IFarmPro
         for (BlockPos pos : locations) {
             //check if the target block is out of range.
             if (range != 0 && pos.distSqr(center) > range * range) {
+                continue;
+            }
+            int[] b = box; // Ostinato: a region-leased farmer never works another farmer's columns
+            if (b != null && (pos.getX() < b[0] || pos.getX() > b[3] || pos.getZ() < b[2] || pos.getZ() > b[5])) {
                 continue;
             }
 

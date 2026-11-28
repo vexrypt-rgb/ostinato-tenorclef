@@ -46,7 +46,8 @@ public class FeedSchemaTest {
             + "\"ageMs\":1500,\"endReason\":\"\"}],\"leases\":[{\"id\":\"l1\",\"gen\":2,\"resource\":"
             + "\"r:o:0,60,0:15,70,15\",\"phase\":\"valid\",\"leftMs\":12000,\"active\":true}],\"perf\":{\"pathMs\":12,"
             + "\"tpsX10\":200,\"pingMs\":3,\"ramUsedMb\":800,\"ramMaxMb\":2048,\"chatUsed\":4,\"chatCap\":30,"
-            + "\"dropped\":0,\"retried\":1},\"link\":{\"up\":true,\"peersSeen\":2,\"failure\":\"\"},\"gatherUs\":85}";
+            + "\"dropped\":0,\"retried\":1},\"link\":{\"up\":true,\"peersSeen\":2,\"failure\":\"\"},\"gatherUs\":85,"
+            + "\"role\":\"idle\",\"roleState\":\"\"}"; // Ostinato: RTS mode keys at the end
 
     @Test public void botFeedMatchesTheGoldenFile() {
         assertEquals(GOLDEN, sample().toJson());

@@ -48,7 +48,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <pre>
  *   java -cp &lt;jar&gt; baritone.swarm.center.app.CenterApp --dir &lt;swarmCenterDir&gt;
- *        [--theme dark|light|high-contrast|colorblind] [--layout wall|map] [--pos x,y] [--log file]
+ *        [--theme dark|light|high-contrast|colorblind] [--layout wall|map|editor] [--pos x,y] [--log file]
  *        [--fake N]                               moving demo swarm of N bots (DemoSwarm), no files, no host
  *        [--auto "secs|bot|formId|arg=value,..."] press a tile button programmatically (live checks; no mouse)
  * </pre>
@@ -244,6 +244,9 @@ public final class CenterApp {
                 if (field instanceof javax.swing.text.JTextComponent t) {
                     t.setText(f.length > 3 ? f[3] : "");
                     logger.line("auto: set " + form + "=" + t.getText());
+                } else if (field instanceof javax.swing.JComboBox<?> box) {
+                    box.setSelectedItem(f.length > 3 ? f[3] : ""); // Ostinato: RTS role picker
+                    logger.line("auto: set " + form + "=" + box.getSelectedItem());
                 } else {
                     logger.line("auto: no field " + form);
                 }
@@ -319,6 +322,10 @@ public final class CenterApp {
         if (map == null || !(find(shell.component(), "map:canvas") instanceof javax.swing.JComponent canvas)) {
             return "no map";
         }
+        if (spec.startsWith("select:") && find(shell.component(), "rts:bp:paint") instanceof AbstractButton paint
+                && paint.isSelected()) {
+            paint.doClick(); // Ostinato: with Paint on, a click paints; selecting turns Paint off first
+        }
         if (spec.startsWith("select:")) {
             String[] names = spec.substring("select:".length()).split("\\+");
             map.centerOn(names[0]);
@@ -361,7 +368,107 @@ public final class CenterApp {
             int[] a = map.area();
             return a == null ? "no area" : "area=" + a[0] + "," + a[1] + "," + a[2] + "," + a[3];
         }
+        if (spec.startsWith("rts:")) {
+            return rtsAuto(map, canvas, shell, spec.substring("rts:".length()));
+        }
+        if (spec.startsWith("ed:")) {
+            return editorAuto(shell, spec.substring("ed:".length()));
+        }
         return "bad map spec";
+    }
+
+    /**
+     * Ostinato: RTS live checks. {@code rts:on} shows the panel; {@code rts:paint:x1,z1,x2,z2} and
+     * {@code rts:erase:x1,z1,x2,z2} drag the paint tool over every block of the box (left paints, right erases);
+     * {@code rts:order:x,z} right-clicks open ground. All synthetic events on the canvas, never the real mouse.
+     */
+    static String rtsAuto(MapView map, javax.swing.JComponent canvas, CenterShell shell, String spec) {
+        RtsPanel rts = map.rts();
+        if (spec.equals("on")) {
+            if (!rts.visible() && find(shell.component(), "map:toggle:rts") instanceof AbstractButton b) {
+                b.doClick();
+            }
+            return "rts=" + rts.visible();
+        }
+        boolean erase = spec.startsWith("erase:");
+        if (spec.startsWith("paint:") || erase) {
+            String[] n = spec.substring(spec.indexOf(':') + 1).split(",");
+            int x1 = Integer.parseInt(n[0].trim()), z1 = Integer.parseInt(n[1].trim());
+            int x2 = Integer.parseInt(n[2].trim()), z2 = Integer.parseInt(n[3].trim());
+            map.placeCamera(8, (x1 + x2 + 1) / 2.0, (z1 + z2 + 1) / 2.0);
+            if (find(shell.component(), "rts:bp:paint") instanceof AbstractButton paint && !paint.isSelected()) {
+                paint.doClick();
+            }
+            MapCamera cam = map.camera();
+            int button = erase ? java.awt.event.MouseEvent.BUTTON3 : java.awt.event.MouseEvent.BUTTON1;
+            int downMask = erase ? java.awt.event.InputEvent.BUTTON3_DOWN_MASK : java.awt.event.InputEvent.BUTTON1_DOWN_MASK;
+            long now = System.currentTimeMillis();
+            boolean first = true;
+            int lx = 0, lz = 0;
+            for (int x = Math.min(x1, x2); x <= Math.max(x1, x2); x++) {
+                for (int z = Math.min(z1, z2); z <= Math.max(z1, z2); z++) {
+                    lx = (int) Math.round(cam.screenX(x + 0.5));
+                    lz = (int) Math.round(cam.screenZ(z + 0.5));
+                    canvas.dispatchEvent(new java.awt.event.MouseEvent(canvas, first ? java.awt.event.MouseEvent.MOUSE_PRESSED
+                            : java.awt.event.MouseEvent.MOUSE_DRAGGED, now, first ? 0 : downMask, lx, lz, first ? 1 : 0, false, button));
+                    first = false;
+                }
+            }
+            canvas.dispatchEvent(new java.awt.event.MouseEvent(canvas, java.awt.event.MouseEvent.MOUSE_RELEASED, now, 0,
+                    lx, lz, 1, false, button));
+            return "blueprint " + rts.blueprint().name() + " " + rts.blueprint().size() + " blocks v" + rts.blueprint().version();
+        }
+        if (spec.startsWith("order:")) {
+            if (find(shell.component(), "rts:bp:paint") instanceof AbstractButton paint && paint.isSelected()) {
+                paint.doClick();
+            }
+            String[] n = spec.substring("order:".length()).split(",");
+            int x = Integer.parseInt(n[0].trim()), z = Integer.parseInt(n[1].trim());
+            MapCamera cam = map.camera();
+            int sx = (int) Math.round(cam.screenX(x + 0.5));
+            int sz = (int) Math.round(cam.screenZ(z + 0.5));
+            long now = System.currentTimeMillis();
+            canvas.dispatchEvent(new java.awt.event.MouseEvent(canvas, java.awt.event.MouseEvent.MOUSE_PRESSED, now, 0,
+                    sx, sz, 1, false, java.awt.event.MouseEvent.BUTTON3));
+            canvas.dispatchEvent(new java.awt.event.MouseEvent(canvas, java.awt.event.MouseEvent.MOUSE_RELEASED, now, 0,
+                    sx, sz, 1, false, java.awt.event.MouseEvent.BUTTON3));
+            return "order " + x + "," + z + " for " + map.selected();
+        }
+        return "bad rts spec";
+    }
+
+    /**
+     * Ostinato: 3D editor live checks. {@code ed:paint:x1,z1,x2,z2} and {@code ed:erase:x1,z1,x2,z2}
+     * paint the current layer (and {@code ed:h} up) through {@link EditorView#paintBox}, the same method a
+     * canvas click uses.
+     */
+    static String editorAuto(CenterShell shell, String spec) {
+        EditorView ed = shell.editor();
+        if (ed == null) {
+            return "no editor";
+        }
+        boolean erase = spec.startsWith("erase:");
+        if (spec.startsWith("paint:") || erase) {
+            String[] n = spec.substring(spec.indexOf(':') + 1).split(",");
+            int x1 = Integer.parseInt(n[0].trim());
+            int z1 = Integer.parseInt(n[1].trim());
+            int x2, z2;
+            if (n.length >= 4) {
+                x2 = Integer.parseInt(n[2].trim());
+                z2 = Integer.parseInt(n[3].trim());
+            } else {
+                x2 = x1;
+                z2 = z1;
+            }
+            ed.syncLayer();
+            ed.paintBox(x1, z1, x2, z2, erase);
+            return "blueprint " + ed.blueprint().name() + " " + ed.blueprint().size() + " blocks v" + ed.blueprint().version();
+        }
+        if (spec.equals("status")) {
+            ed.readStatus();
+            return ed.blueprint().name() + " " + ed.blueprint().size() + " placed=" + ed.placed().size();
+        }
+        return "bad editor spec";
     }
 
     /** Depth-first search by component name. */

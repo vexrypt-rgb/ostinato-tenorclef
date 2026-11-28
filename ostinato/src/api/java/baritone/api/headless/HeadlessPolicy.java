@@ -38,6 +38,20 @@ public final class HeadlessPolicy {
 
     private HeadlessPolicy() {}
 
+    /**
+     * Ostinato: most game ticks one headless frame may run. After a stall (GC, CPU starved by the other clients) vanilla
+     * runs up to 10 ticks back to back, so the server gets 10 movement packets within a few ms; Grim's Timer counts
+     * that burst against its drift allowance (about 120 ms) and flags. Headless drops the debt instead, as a client that
+     * skipped those ticks would: the server only ever sees this bot slower than real time, never faster.
+     */
+    public static final int MAX_TICKS_PER_FRAME = 2;
+
+    /** The ticks a frame runs: unchanged when windowed or hidden, at most {@link #MAX_TICKS_PER_FRAME} headless. */
+    public static int ticksThisFrame(RunMode.Value mode, int owed) {
+        return active(mode) ? Math.min(owed, MAX_TICKS_PER_FRAME) : owed;
+    }
+
+
     /** True only for {@link RunMode.Value#HEADLESS}. */
     public static boolean active(RunMode.Value mode) {
         return mode == RunMode.Value.HEADLESS;
