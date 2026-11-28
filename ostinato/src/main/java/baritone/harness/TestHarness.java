@@ -42,6 +42,8 @@ public final class TestHarness {
         if (Boolean.getBoolean("ostinato.tolerancetrace")) sb.append("ostinato.tolerancetrace ");
         if (Boolean.getBoolean("ostinato.interacttest")) sb.append("ostinato.interacttest ");
         if (Boolean.getBoolean("ostinato.roadtest")) sb.append("ostinato.roadtest ");
+        String upkeep = System.getProperty("ostinato.upkeeptest");
+        if (upkeep != null && !upkeep.isEmpty()) sb.append("ostinato.upkeeptest ");
         return sb.toString().trim();
     }
 
@@ -68,5 +70,6 @@ public final class TestHarness {
         InteractLiveTest.install(b); // Ostinato 2.0 Phase 08: navigate -> interact -> verify
         InteractTerrainLiveTest.install(b); // Ostinato 2.0 Phase 10: the same check on natural terrain
         RoadLiveTest.install(b); // Ostinato: terrain road 5-corridor acceptance fixture
+        RegionUpkeepLiveTest.install(b); // Ostinato: region upkeep (#baseline) setup / restart / verify fixture
     }
 }

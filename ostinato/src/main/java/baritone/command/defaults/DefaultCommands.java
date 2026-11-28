@@ -80,6 +80,7 @@ public final class DefaultCommands {
                 new SwarmCommand(baritone),
                 new RoleCommand(baritone), // Ostinato: RTS mode
                 new BlueprintCommand(baritone), // Ostinato: RTS live build
+                new BaselineCommand(baritone), // Ostinato: region upkeep (#baseline)
                 new PortalCommand(baritone),
                 new RoadCommand(baritone), // Ostinato: public #road terrain road planner & builder
                 new TunnelsCommand(baritone), // Ostinato: public #maze.tunnels
