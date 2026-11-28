@@ -23,7 +23,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Ostinato: P3 in-game Ctrl+K command palette screen (design doc: Unified command and menu system).
+ * Ostinato: P3 in-game command palette screen (Ctrl+P in-game to avoid TenorClef's Ctrl+K stop-tasks keybind).
  * Fuzzy-searches every registered {@link ICommand}, saved presets, and session history; supports Tab target cycling,
  * Ctrl+D dry-run preview, Ctrl+S favorite toggling, and dispatches through {@code ICommandManager.execute}.
  */

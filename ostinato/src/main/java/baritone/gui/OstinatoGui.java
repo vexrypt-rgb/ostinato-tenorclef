@@ -35,7 +35,8 @@ import com.mojang.blaze3d.platform.InputConstants;
 /**
  * Wiring for the Ostinato GUI: polls the {@code guiKeybind} key every client tick (edge-triggered, only with no
  * screen open, same approach as TenorClef's menu key), polls the hold-key radial quick menu ({@code ostinato.radialKey},
- * default {@code R}), polls {@code Ctrl+K} for the in-game command palette, and flushes debounced GUI saves.
+ * default {@code R}), polls {@code Ctrl+P} (configurable via {@code ostinato.paletteKey}, avoiding TenorClef's
+ * {@code Ctrl+K} stop-tasks shortcut) for the in-game command palette, and flushes debounced GUI saves.
  */
 public final class OstinatoGui implements AbstractGameEventListener {
 
@@ -73,9 +74,10 @@ public final class OstinatoGui implements AbstractGameEventListener {
         }
         radialWasDown = radialDown;
 
-        // Ostinato: P3 in-game Ctrl+K command palette
+        // Ostinato: P3 in-game command palette (Ctrl+P by default; Ctrl+K is reserved by TenorClef stopTasks)
+        int paletteKey = KeyNames.parse(System.getProperty("ostinato.paletteKey", "P"));
         boolean ctrl = InputConstants.isKeyDown(InputConstants.KEY_LCONTROL) || InputConstants.isKeyDown(InputConstants.KEY_RCONTROL);
-        boolean paletteDown = ctrl && InputConstants.isKeyDown(InputConstants.KEY_K);
+        boolean paletteDown = paletteKey != KeyNames.NONE && ctrl && InputConstants.isKeyDown(paletteKey);
         if (paletteDown && !paletteWasDown && mc.gui.screen() == null && mc.player != null) {
             mc.gui.setScreen(new PaletteScreen());
         }
