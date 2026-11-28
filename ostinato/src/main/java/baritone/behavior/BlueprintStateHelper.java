@@ -489,6 +489,44 @@ public final class BlueprintStateHelper {
     }
 
     /** State-aware schematic backed by {@link Blueprint.Cell} entries (air omitted, legacy name-only preserved). */
+    /**
+     * Ostinato: a schematic that wants exactly {@code cells} to be air and has no opinion about anything else, so
+     * the builder takes down scaffolding without touching its neighbours. Lowest corner in {@code originOut}.
+     */
+    public static ISchematic clearSchematic(List<int[]> cells, int[] originOut) {
+        int x0 = Integer.MAX_VALUE, y0 = Integer.MAX_VALUE, z0 = Integer.MAX_VALUE;
+        int x1 = Integer.MIN_VALUE, y1 = Integer.MIN_VALUE, z1 = Integer.MIN_VALUE;
+        for (int[] c : cells) {
+            x0 = Math.min(x0, c[0]); y0 = Math.min(y0, c[1]); z0 = Math.min(z0, c[2]);
+            x1 = Math.max(x1, c[0]); y1 = Math.max(y1, c[1]); z1 = Math.max(z1, c[2]);
+        }
+        originOut[0] = x0; originOut[1] = y0; originOut[2] = z0;
+        boolean[][][] mark = new boolean[x1 - x0 + 1][z1 - z0 + 1][y1 - y0 + 1];
+        for (int[] c : cells) {
+            mark[c[0] - x0][c[2] - z0][c[1] - y0] = true;
+        }
+        return new ClearSchematic(x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1, mark);
+    }
+
+    static final class ClearSchematic extends AbstractSchematic {
+        private final boolean[][][] mark;
+
+        ClearSchematic(int sx, int sy, int sz, boolean[][][] mark) {
+            super(sx, sy, sz);
+            this.mark = mark;
+        }
+
+        @Override
+        public boolean inSchematic(int x, int y, int z, BlockState currentState) {
+            return super.inSchematic(x, y, z, currentState) && mark[x][z][y];
+        }
+
+        @Override
+        public BlockState desiredState(int x, int y, int z, BlockState current, List<BlockState> approxPlaceable) {
+            return net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+        }
+    }
+
     static final class BlueprintSchematic extends AbstractSchematic {
         private final Blueprint.Cell[][][] cells;
         private final Block[][][] blocks;

@@ -83,13 +83,15 @@ public final class RegionUpkeepLiveTest implements AbstractGameEventListener {
     private static final int PATCH_X0 = 11;
     private static final int PATCH_X1 = 12;
     private static final int POLICY_X = 9;
+    private static final int SHORT_X = 8;
     private static final int REPAIR_TIMEOUT_TICKS = 2400;
     private static final int FAR_BLOCKS = 600;
 
     private enum State {
         TITLE, WAIT_WORLD, BUILD, WAIT_SYNC, RUN,
         FAR_TELEPORT, FAR_WAIT_UNLOAD, FAR_CHECK, NEAR_TELEPORT, NEAR_WAIT_LOAD, NEAR_CHECK,
-        REPAIR_WAIT, POLICY_PREP, POLICY_CHECK, POLICY_REPAIR_WAIT, DONE
+        REPAIR_WAIT, POLICY_PREP, POLICY_CHECK, POLICY_REPAIR_WAIT,
+        SHORTAGE_PREP, SHORTAGE_REPAIR_WAIT, SEL_STEP, DIM_OUT, DIM_WAIT, DIM_BACK, DONE
     }
 
     private final Baritone baritone;
@@ -104,6 +106,7 @@ public final class RegionUpkeepLiveTest implements AbstractGameEventListener {
 
     private int baseY;
     private int stage;
+    private int outsideChanged;
     private Map<Long, BlockState> serverBefore = new HashMap<>();
     private List<ItemStack> chestBefore = List.of();
 
@@ -307,10 +310,16 @@ public final class RegionUpkeepLiveTest implements AbstractGameEventListener {
                 state = State.NEAR_CHECK;
             }
             case NEAR_CHECK -> repairPhase(mc, level);
-            case REPAIR_WAIT -> waitRepair(mc, level, false);
+            case REPAIR_WAIT -> waitRepair(mc, level, 0);
             case POLICY_PREP -> policyPrep(mc, level);
             case POLICY_CHECK -> policyCheck(mc, level);
-            case POLICY_REPAIR_WAIT -> waitRepair(mc, level, true);
+            case POLICY_REPAIR_WAIT -> waitRepair(mc, level, 1);
+            case SHORTAGE_PREP -> shortagePrep(mc, level, player);
+            case SHORTAGE_REPAIR_WAIT -> waitRepair(mc, level, 2);
+            case SEL_STEP -> selStep(mc);
+            case DIM_OUT -> dimOut(mc, level, player);
+            case DIM_WAIT -> dimWait(mc, level, player);
+            case DIM_BACK -> dimBack(mc, level);
             default -> {
             }
         }
@@ -530,29 +539,32 @@ public final class RegionUpkeepLiveTest implements AbstractGameEventListener {
         state = State.REPAIR_WAIT;
     }
 
-    private void waitRepair(Minecraft mc, ServerLevel level, boolean policy) {
+    private void waitRepair(Minecraft mc, ServerLevel level, int mode) {
         BlueprintRepairSession s = baritone.getBlueprintBehavior().repairSession();
         if (s == null) {
             check(false, "repair session exists while waiting");
             finish(mc);
             return;
         }
-        if (s.isActive() && ++ticks < REPAIR_TIMEOUT_TICKS) {
+        boolean busy = s.isActive() || baritone.getBlueprintBehavior().cleaningUp();
+        if (busy && ++ticks < REPAIR_TIMEOUT_TICKS) {
             if (ticks % 200 == 0) {
-                log("repairing... " + s.statusNote());
+                log("repairing... " + s.statusNote() + (baritone.getBlueprintBehavior().cleaningUp() ? " (taking down scaffolding)" : ""));
             }
             return;
         }
-        if (s.isActive()) {
+        if (busy) {
             cmd("baseline stop");
-            check(false, "repair finished within " + REPAIR_TIMEOUT_TICKS + " ticks (stopped via #baseline stop)");
+            check(false, "repair and cleanup finished within " + REPAIR_TIMEOUT_TICKS + " ticks (stopped via #baseline stop)");
             finish(mc);
             return;
         }
-        log("repair ended after " + ticks + " ticks: " + s.statusNote());
+        log("repair ended after " + ticks + " ticks: " + s.statusNote() + "; scaffolding: " + baritone.getBlueprintBehavior().cleanupNote());
         check(s.state() == BlueprintRepairSession.SessionState.SUCCEEDED, "repair session SUCCEEDED (" + s.state() + ")");
+        String cn = baritone.getBlueprintBehavior().cleanupNote();
+        check(cn.startsWith("took down") || cn.startsWith("no scaffolding"), "scaffolding cleanup finished cleanly (" + cn + ")");
         // Independent verification from the server world.
-        if (!policy) {
+        if (mode == 0) {
             for (int x = PATCH_X0; x <= PATCH_X1; x++) {
                 for (int dy = 2; dy <= 3; dy++) {
                     check(level.getBlockState(wall(x, dy)).is(Blocks.STONE_BRICKS),
@@ -565,6 +577,7 @@ public final class RegionUpkeepLiveTest implements AbstractGameEventListener {
             checkChest(level);
             int changed = countChangedOutside(level, serverBefore, PATCH_X0, PATCH_X1, 2, 3);
             check(changed == 0, "server: nothing else in the wall region changed (" + changed + " other cells differ)");
+            check(outsideChanged == 0, "server: no scaffolding left standing around the wall (" + outsideChanged + " blocks)");
             cmd("baseline check wall");
             RegionBaseline.Report r = new RegionUpkeep(baritone).check("wall");
             logFindings(r);
@@ -573,7 +586,7 @@ public final class RegionUpkeepLiveTest implements AbstractGameEventListener {
             ticks = 0;
             stage = 0;
             state = State.POLICY_PREP;
-        } else {
+        } else if (mode == 1) {
             check(level.getBlockState(wall(POLICY_X, 3)).is(Blocks.STONE_BRICKS),
                     "server: standing-policy cell restored at " + wall(POLICY_X, 3).toShortString());
             check(isAir(level, wall(DOOR_X, 0)) && isAir(level, wall(OPENING_X, 0)), "server: doorway and opening still untouched");
@@ -581,8 +594,151 @@ public final class RegionUpkeepLiveTest implements AbstractGameEventListener {
             cmd("baseline check wall");
             RegionBaseline.Report r = new RegionUpkeep(baritone).check("wall");
             check(r.restore() == 0 && r.review() == 2 && r.unknown() == 0,
-                    "final client check: " + r.summary());
-            finish(mc);
+                    "client re-check after the standing-policy repair: " + r.summary());
+            ticks = 0;
+            stage = 0;
+            state = State.SHORTAGE_PREP;
+        } else {
+            check(level.getBlockState(wall(SHORT_X, 3)).is(Blocks.STONE_BRICKS),
+                    "server: after restocking, the cell is restored at " + wall(SHORT_X, 3).toShortString());
+            checkChest(level);
+            stage = 0;
+            state = State.SEL_STEP;
+        }
+    }
+
+    /** One more gap, no bricks in the inventory: the repair must refuse with the exact shortage, not search for a minute. */
+    private void shortagePrep(Minecraft mc, ServerLevel level, ServerPlayer player) {
+        if (stage == 0) {
+            mc.getSingleplayerServer().submit(() -> {
+                level.setBlock(wall(SHORT_X, 3), Blocks.AIR.defaultBlockState(), 3);
+                for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+                    if (player.getInventory().getItem(i).is(Items.STONE_BRICKS)) {
+                        player.getInventory().setItem(i, ItemStack.EMPTY);
+                    }
+                }
+            }).join();
+            restartWait();
+            stage = 1;
+            return;
+        }
+        if (stage == 1) {
+            if (!waited(20)) {
+                return;
+            }
+            serverBefore = snapshot(level);
+            String box = boxText(SHORT_X, 3, SHORT_X, 3);
+            cmd("baseline repair wall box=" + box);
+            String text = new RegionUpkeep(baritone).repair("wall",
+                    new RegionUpkeep.Picks(List.of(), List.of(new int[]{SHORT_X, baseY + 3, WALL_Z, SHORT_X, baseY + 3, WALL_Z})));
+            log("shortage reply: " + text.replace('\n', '|'));
+            check(text.contains("short of materials") && text.contains("stone_bricks 1 short (has 0, needs 1)"),
+                    "with no bricks the repair is refused with the exact shortage");
+            BlueprintRepairSession s = baritone.getBlueprintBehavior().repairSession();
+            check(s == null || !s.isActive(), "no repair session started for the shortage");
+            check(isAir(level, wall(SHORT_X, 3)), "server: the cell is still open, nothing was placed or broken");
+            check(sameAs(level, serverBefore), "server: the world is unchanged by the refused repair");
+            // Restock (pre-stocked materials, as the slice assumes) and the very same command now works.
+            mc.getSingleplayerServer().submit(() -> player.getInventory().add(new ItemStack(Items.STONE_BRICKS, 8))).join();
+            restartWait();
+            stage = 2;
+            return;
+        }
+        if (stage == 2 && waited(20)) { // the client's inventory has caught up with the server's
+            cmd("baseline repair wall box=" + boxText(SHORT_X, 3, SHORT_X, 3));
+            ticks = 0;
+            state = State.SHORTAGE_REPAIR_WAIT;
+        }
+    }
+
+    /** The region comes from the player's {@code #sel} selection when none is typed. */
+    private void selStep(Minecraft mc) {
+        cmd("sel clear");
+        cmd("sel pos1 " + WALL_X0 + " " + baseY + " " + WALL_Z);
+        cmd("sel pos2 " + WALL_X1 + " " + (baseY + WALL_H - 1) + " " + WALL_Z);
+        cmd("baseline save wallsel");
+        RegionBaseline b = new RegionUpkeep(baritone).load("wallsel");
+        int[] box = b.box();
+        check(box[0] == WALL_X0 && box[1] == baseY && box[2] == WALL_Z && box[3] == WALL_X1 && box[4] == baseY + WALL_H - 1 && box[5] == WALL_Z,
+                "#sel region became the baseline region (" + java.util.Arrays.toString(box) + ")");
+        // Current masonry: 40 cells minus the chest and the 4 open cells (doorway 2 + opening 2).
+        check(b.size() == WALL_H * (WALL_X1 - WALL_X0 + 1) - 1 - 4 && b.exclusions().size() == 1,
+                "#sel snapshot manages the current masonry only (" + b.size() + " cells, " + b.exclusions().size() + " excluded)");
+        cmd("sel clear");
+        stage = 0;
+        state = State.DIM_OUT;
+    }
+
+    private String playerName(ServerPlayer p) {
+        return p.getName().getString();
+    }
+
+    /** A baseline belongs to one world and dimension: in the Nether it must refuse everything and touch nothing. */
+    private void dimOut(Minecraft mc, ServerLevel level, ServerPlayer player) {
+        serverBefore = snapshot(level);
+        mc.getSingleplayerServer().submit(() -> {
+            player.setGameMode(GameType.SPECTATOR);
+            var srv = mc.getSingleplayerServer();
+            srv.getCommands().performPrefixedCommand(srv.createCommandSourceStack(),
+                    "execute in minecraft:the_nether as " + playerName(player) + " run tp " + playerName(player) + " 0 100 0");
+        }).join();
+        restartWait();
+        ticks = 0;
+        state = State.DIM_WAIT;
+    }
+
+    private void dimWait(Minecraft mc, ServerLevel level, ServerPlayer player) {
+        if (mc.level.dimension() != net.minecraft.world.level.Level.NETHER || !waited(60)) {
+            if (++ticks > 2400) {
+                check(false, "client reached the Nether");
+                finish(mc);
+            }
+            return;
+        }
+        RegionUpkeep up = new RegionUpkeep(baritone);
+        log("in the Nether: world id " + up.worldId() + " dimension " + up.dimensionId());
+        String refused = refusal(() -> up.checkText("wall"));
+        check(refused != null && refused.contains("belongs to") && refused.contains("minecraft:overworld"),
+                "check is refused in another dimension (" + refused + ")");
+        String repairRefused = refusal(() -> up.repair("wall", new RegionUpkeep.Picks(List.of(),
+                List.of(new int[]{WALL_X0, baseY, WALL_Z, WALL_X1, baseY + WALL_H - 1, WALL_Z}))));
+        check(repairRefused != null && repairRefused.contains("belongs to"), "repair is refused in another dimension");
+        String acceptRefused = refusal(() -> up.accept("wall", new RegionUpkeep.Picks(List.of(new int[]{WALL_X0, baseY, WALL_Z}), List.of())));
+        check(acceptRefused != null && acceptRefused.contains("belongs to"), "accept is refused in another dimension");
+        cmd("baseline check wall");
+        BlueprintRepairSession s = baritone.getBlueprintBehavior().repairSession();
+        check(s == null || !s.isActive(), "no repair is running in the Nether");
+        mc.getSingleplayerServer().submit(() -> {
+            player.setGameMode(GameType.SURVIVAL);
+            var srv = mc.getSingleplayerServer();
+            srv.getCommands().performPrefixedCommand(srv.createCommandSourceStack(),
+                    "execute in minecraft:overworld as " + playerName(player) + " run tp " + playerName(player) + " 8.5 " + baseY + " 2.5");
+        }).join();
+        restartWait();
+        ticks = 0;
+        state = State.DIM_BACK;
+    }
+
+    private void dimBack(Minecraft mc, ServerLevel level) {
+        if (mc.level.dimension() != net.minecraft.world.level.Level.OVERWORLD || !waited(40) || !clientSeesWall(mc)) {
+            if (++ticks > 2400) {
+                check(false, "client returned to the overworld");
+                finish(mc);
+            }
+            return;
+        }
+        check(sameAs(level, serverBefore), "server: the overworld wall is unchanged by the refused commands");
+        RegionBaseline.Report r = new RegionUpkeep(baritone).check("wall");
+        check(r.unknown() == 0 && r.restore() == 0 && r.review() == 2, "back in the overworld the baseline works again: " + r.summary());
+        finish(mc);
+    }
+
+    private static String refusal(Runnable r) {
+        try {
+            r.run();
+            return null;
+        } catch (IllegalArgumentException e) {
+            return e.getMessage();
         }
     }
 
@@ -652,12 +808,13 @@ public final class RegionUpkeepLiveTest implements AbstractGameEventListener {
     }
 
     private boolean sameAs(ServerLevel level, Map<Long, BlockState> before) {
-        return countChangedOutside(level, before, 1, 0, 1, 0) == 0;
+        return countChangedOutside(level, before, 1, 0, 1, 0) == 0 && outsideChanged == 0;
     }
 
     /** Cells that differ from {@code before} other than the (x0..x1, dy0..dy1) wall patch. */
     private int countChangedOutside(ServerLevel level, Map<Long, BlockState> before, int x0, int x1, int dy0, int dy1) {
         int changed = 0;
+        outsideChanged = 0;
         for (Map.Entry<Long, BlockState> e : before.entrySet()) {
             BlockPos p = BlockPos.of(e.getKey());
             boolean inPatch = p.getZ() == WALL_Z && p.getX() >= x0 && p.getX() <= x1
@@ -667,6 +824,8 @@ public final class RegionUpkeepLiveTest implements AbstractGameEventListener {
             if (!inPatch && level.getBlockState(p) != e.getValue()) {
                 if (inBaseline) {
                     changed++;
+                } else {
+                    outsideChanged++;
                 }
                 log("  changed " + (inBaseline ? "IN BASELINE " : "outside baseline ") + p.toShortString() + " "
                         + e.getValue().getBlock() + " -> " + level.getBlockState(p).getBlock());

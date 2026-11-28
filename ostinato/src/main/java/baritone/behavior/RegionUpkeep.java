@@ -342,13 +342,45 @@ public final class RegionUpkeep {
             return sb.append("\n  nothing authorized to restore").toString();
         }
         Blueprint bp = b.restoreBlueprint(r, RegionBaseline.repairBlueprintName(b.name()));
+        String shortage = shortage(bp);
+        if (shortage != null) {
+            // Materials are pre-stocked in this slice; replenishing them is a later one. Say exactly what is missing.
+            return sb.append("\n  repair not started, short of materials: ").append(shortage).toString();
+        }
         // Everything in the saved region except the authorized cells is off limits to the builder and pathfinder:
         // approved masonry, accepted openings and unclassified differences must survive the repair untouched.
         int[] region = b.box();
         String started = baritone.getBlueprintBehavior().repairCells(bp, (x, y, z) ->
                 x >= region[0] && x <= region[3] && y >= region[1] && y <= region[4] && z >= region[2] && z <= region[5]
-                        && bp.at(x, y, z) == null);
+                        && bp.at(x, y, z) == null, region);
         return sb.append("\n  ").append(started).toString();
+    }
+
+    /** Blocks the repair needs that the player does not carry, as {@code stone_bricks 4 short (has 2)}; null when covered. */
+    private String shortage(Blueprint bp) {
+        if (ctx.player().getAbilities().instabuild) {
+            return null;
+        }
+        Map<String, Integer> need = new java.util.TreeMap<>();
+        for (Blueprint.Cell c : bp.cells()) {
+            need.merge(c.block(), 1, Integer::sum);
+        }
+        List<String> missing = new ArrayList<>();
+        for (Map.Entry<String, Integer> e : need.entrySet()) {
+            Block block = BlueprintStateHelper.lookupBlock(e.getKey());
+            int have = 0;
+            if (block != null) {
+                for (net.minecraft.world.item.ItemStack s : ctx.player().getInventory().getNonEquipmentItems()) {
+                    if (s.getItem() == block.asItem()) {
+                        have += s.getCount();
+                    }
+                }
+            }
+            if (have < e.getValue()) {
+                missing.add(e.getKey() + " " + (e.getValue() - have) + " short (has " + have + ", needs " + e.getValue() + ")");
+            }
+        }
+        return missing.isEmpty() ? null : String.join(", ", missing);
     }
 
     // ---- selection helpers ---------------------------------------------------------------------------------------

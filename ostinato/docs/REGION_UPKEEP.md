@@ -41,14 +41,21 @@ Using only client-visible state, every managed cell is exactly one of:
 | restore | differs, and an explicit selection or a standing zone authorizes it |
 | review | differs and nothing authorizes it (a client cannot tell a player edit from an explosion), or it is an accepted opening that was filled, or a container is involved |
 
-`repair` hands only the `restore` cells to `BlueprintBehavior.repairCells`, which reuses the Phase 2 settle-verified
-`BlueprintRepairSession` (bounded retries, cancellation via `#baseline stop`) and adds:
+`repair` first checks the inventory (a repair needs the blocks it restores, pre-stocked; it refuses with the exact shortage
+such as `stone_bricks 4 short (has 2, needs 6)` instead of searching), then hands only the `restore` cells to
+`BlueprintBehavior.repairCells`, which reuses the Phase 2 settle-verified `BlueprintRepairSession` (bounded retries,
+cancellation via `#baseline stop`) and adds:
 
 * a guard (`AltoClefSettings.ostinatoGuard`) that keeps the builder and pathfinder from breaking or placing into any other
   cell of the saved region for as long as the repair runs, so approved masonry, the doorway and the unclassified opening
   are untouched;
 * a no-progress limit (`DEFAULT_STALL_TICKS`, 60 s) that fails the remaining cells when the builder never finishes (no
-  route, no materials). Previously a builder that searched forever was only stopped by the player.
+  route). Previously a builder that searched forever was only stopped by the player;
+* scaffolding cleanup: `ScaffoldTracker` remembers which cells within 6 blocks of the region were air when the repair began.
+  When the repair ends, every such cell that now holds a throwaway block (or the repair's own material) outside the region
+  is taken down by the builder with an air-only schematic, re-read until gone, and bounded (600 ticks without progress, 3
+  starts). The result is reported (`took down N scaffolding blocks`, or what was left). A repair stopped with
+  `#baseline stop` skips the cleanup.
 
 ## Chunk checks
 
@@ -68,9 +75,10 @@ air and never as `UNLOADED`. It now asks `getChunkSource().hasChunk`, which also
 Run through `:fabric:runClient`. `setup` builds a 10x4 stone-brick wall with a chest, saves a baseline, registers a doorway,
 removes an approved patch and opens a second, unregistered gap. `verify` reopens the world, teleports 600 blocks away
 (everything unknown), returns (review list), repairs the patch by explicit selection, then a second gap via a standing
-zone, and checks the integrated server's world independently. Results append to `upkeeptest-result.txt`.
+zone, then a third gap with no bricks in the inventory (refused with the exact shortage) and again after restocking. It
+saves a second baseline from a `#sel` selection, visits the Nether (every command is refused, the world is untouched) and
+returns. Every repair is checked independently on the integrated server's world, including that no scaffolding is left. Results append to `upkeeptest-result.txt`.
 
 ## Not in this slice
 
-Autonomous repair of ambiguous changes, automatic material replenishment, and cleanup of the scaffolding the builder
-places outside the saved region while it works.
+Autonomous repair of ambiguous changes, and automatic material replenishment (a shortage is reported, never fetched).
