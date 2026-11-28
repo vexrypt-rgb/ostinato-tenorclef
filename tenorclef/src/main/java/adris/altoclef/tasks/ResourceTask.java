@@ -82,7 +82,7 @@ public abstract class ResourceTask extends Task implements ITaskCanForce {
         // We have an important item target in our cursor.
         return StorageHelper.itemTargetsMetInventory(itemTargets) && !isFinished()
                 // This _should_ be redundant, but it'll be a guard just to make 100% sure.
-                && Arrays.stream(itemTargets).anyMatch(target -> target.matches(StorageHelper.getItemStackInCursorSlot().getItem()));
+                && Arrays.stream(itemTargets).anyMatch(target -> target.matches(StorageHelper.getItemStackInCursorSlot()));
     }
 
     @Override
@@ -110,7 +110,7 @@ public abstract class ResourceTask extends Task implements ITaskCanForce {
             }
         }
         // We have enough items COUNTING the cursor slot, we just need to move an item from our cursor.
-        if (StorageHelper.itemTargetsMetInventory(itemTargets) && Arrays.stream(itemTargets).anyMatch(target -> target.matches(StorageHelper.getItemStackInCursorSlot().getItem()))) {
+        if (StorageHelper.itemTargetsMetInventory(itemTargets) && Arrays.stream(itemTargets).anyMatch(target -> target.matches(StorageHelper.getItemStackInCursorSlot()))) {
             setDebugState("Moving from cursor");
             Optional<Slot> moveTo = mod.getItemStorage().getSlotThatCanFitInPlayerInventory(StorageHelper.getItemStackInCursorSlot(), false);
             if (moveTo.isPresent()) {

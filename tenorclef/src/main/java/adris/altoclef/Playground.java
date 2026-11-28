@@ -118,6 +118,9 @@ public class Playground {
         Debug.logMessage("Running test...");
 
         switch (arg) {
+            case "villager_trade_fixture":
+                Debug.logMessage(adris.altoclef.benchmark.VillagerTradeFixture.start(mod));
+                break;
             case "":
                 // None specified
                 Debug.logWarning("Please specify a test (ex. stacked, bed, terminate)");

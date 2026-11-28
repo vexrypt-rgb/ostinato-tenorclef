@@ -13,6 +13,7 @@ import net.minecraft.client.gui.screen.ingame.*;
 //$$ import net.minecraft.client.gui.screens.inventory.FurnaceScreen;
 //$$ import net.minecraft.client.gui.screens.inventory.ContainerScreen;
 //$$ import net.minecraft.client.gui.screens.inventory.EnchantmentScreen;
+//$$ import net.minecraft.client.gui.screens.inventory.MerchantScreen;
 //$$ import net.minecraft.client.gui.screens.inventory.SmithingScreen;
 //$$ import net.minecraft.client.gui.screens.inventory.SmokerScreen;
 //#endif
@@ -26,6 +27,7 @@ import net.minecraft.screen.*;
 //$$ import net.minecraft.world.inventory.ChestMenu;
 //$$ import net.minecraft.world.inventory.InventoryMenu;
 //$$ import net.minecraft.world.inventory.AbstractContainerMenu;
+//$$ import net.minecraft.world.inventory.MerchantMenu;
 //$$ import net.minecraft.world.inventory.SmithingMenu;
 //#endif
 
@@ -75,6 +77,8 @@ public abstract class Slot {
                 return new ChestSlot(slot, false, inventory);
             case ENCHANTING_TABLE:
                 return new EnchantingTableSlot(slot, inventory);
+            case MERCHANT:
+                return new MerchantSlot(slot, inventory);
             default:
                 Debug.logWarning("Unhandled slot for inventory check: " + getCurrentType());
                 return null;
@@ -105,6 +109,9 @@ public abstract class Slot {
             if (handler instanceof EnchantmentScreenHandler) {
                 return ContainerType.ENCHANTING_TABLE;
             }
+            if (handler instanceof MerchantScreenHandler) {
+                return ContainerType.MERCHANT;
+            }
             return ContainerType.PLAYER;
         }
         Screen screen = BotClientBridge.currentScreenOrNull();
@@ -122,6 +129,9 @@ public abstract class Slot {
         }
         if (screen instanceof EnchantmentScreen) {
             return ContainerType.ENCHANTING_TABLE;
+        }
+        if (screen instanceof MerchantScreen) {
+            return ContainerType.MERCHANT;
         }
         return ContainerType.PLAYER;
     }
@@ -217,6 +227,7 @@ public abstract class Slot {
         CHEST_SMALL,
         CHEST_LARGE,
         FURNACE_OR_SMITH_OR_SMOKER_OR_BLAST,
-        ENCHANTING_TABLE
+        ENCHANTING_TABLE,
+        MERCHANT
     }
 }

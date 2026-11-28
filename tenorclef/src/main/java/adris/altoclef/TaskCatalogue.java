@@ -13,6 +13,7 @@ import adris.altoclef.tasks.container.UpgradeInSmithingTableTask;
 import adris.altoclef.tasks.resources.*;
 import adris.altoclef.tasks.resources.wood.*;
 import adris.altoclef.tasks.squashed.CataloguedResourceTask;
+import adris.altoclef.tasks.trading.TradeWithVillagerTask;
 import adris.altoclef.util.*;
 import adris.altoclef.util.helpers.ItemHelper;
 import net.minecraft.block.Block;
@@ -329,6 +330,7 @@ public class TaskCatalogue {
             shapedRecipe3x3("brush", Items.BRUSH, 1, o, "feather", o, o, "copper_ingot", o, o, s, o);
             shapedRecipe3x3("paper", Items.PAPER, 3, "sugar_cane", "sugar_cane", "sugar_cane", o, o, o, o, o, o);
             shapedRecipe2x2("book", Items.BOOK, 1, "paper", "paper", "paper", "leather");
+            simple("enchanted_book", Items.ENCHANTED_BOOK, count -> new TradeWithVillagerTask(new ItemTarget("enchanted_book", count))).anyDimension();
             shapedRecipe2x2("writable_book", Items.WRITABLE_BOOK, 1, "book", "ink_sac", o, "feather");
             alias("book_and_quill", "writable_book");
             shapedRecipe3x3("bowl", Items.BOWL, 4, p, o, p, o, p, o, o, o, o);
@@ -872,6 +874,9 @@ public class TaskCatalogue {
     }
 
     public static ResourceTask getItemTask(ItemTarget target) {
+        if (target != null && (target.hasStackFilter() || target.hasEmeraldCap() || target.hasPreferredMerchant())) {
+            return new TradeWithVillagerTask(target);
+        }
         if (target.isCatalogueItem()) {
             return getItemTask(target.getCatalogueName(), target.getTargetCount());
         } else if (target.getMatches().length == 1) {
