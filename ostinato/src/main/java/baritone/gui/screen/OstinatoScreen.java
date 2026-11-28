@@ -56,7 +56,7 @@ public final class OstinatoScreen extends Screen {
 
     private enum Filter { ALL, TOGGLES, MODIFIED }
 
-    private enum Desk { SETTINGS, TASKS, STUDIO, ARCADE }
+    private enum Desk { SETTINGS, TASKS, COMMANDS, STUDIO, ARCADE }
 
     private static final class Entry {
         final Settings.Setting<?> s;
@@ -137,9 +137,11 @@ public final class OstinatoScreen extends Screen {
     private final Map<SettingCategory, Anim> catHover = new EnumMap<>(SettingCategory.class);
     private final Anim modHover = new Anim(0, 18);
     private final Anim tasksHover = new Anim(0, 18);
+    private final Anim commandsHover = new Anim(0, 18);
     private final Anim studioHover = new Anim(0, 18);
     private final Anim arcadeHover = new Anim(0, 18);
     private static final ItemStack TASKS_ICON = new ItemStack(Items.MAP);
+    private static final ItemStack COMMANDS_ICON = new ItemStack(Items.COMMAND_BLOCK);
     private static final ItemStack STUDIO_ICON = new ItemStack(Items.STRUCTURE_BLOCK);
     private static final ItemStack ARCADE_ICON = new ItemStack(Items.NOTE_BLOCK);
     private final Anim open = new Anim(0, 14);
@@ -151,6 +153,7 @@ public final class OstinatoScreen extends Screen {
     private boolean modifiedView;
     private Desk desk = Desk.SETTINGS;
     private final TasksPanel tasks = new TasksPanel(this);
+    private final CommandsPanel commandsPanel = new CommandsPanel(this);
     private final StudioPanel studio = new StudioPanel(this);
     private final ArcadePanel arcade = new ArcadePanel(this);
     private Filter filter = Filter.ALL;
@@ -326,6 +329,20 @@ public final class OstinatoScreen extends Screen {
         flash("Reset " + e.name, Theme.MUTED);
     }
 
+    private void toggleServerScope(Entry e) {
+        try {
+            java.nio.file.Path dir = minecraft.gameDirectory.toPath().resolve("baritone");
+            ServerSettingsStore.Scope next = OstinatoGui.SERVER_STORE.toggleServerOverride(
+                    dir, e.name, SettingsUtil.settingToString(e.s), SettingsUtil.settingValueToString(e.s), isModified(e));
+            String srv = OstinatoGui.SERVER_STORE.activeServer();
+            flash(next == ServerSettingsStore.Scope.SERVER
+                    ? e.name + " pinned to server (" + (srv.isEmpty() ? "singleplayer" : srv) + ")"
+                    : e.name + " moved back to global settings", accentOrMuted());
+        } catch (Exception ex) {
+            flash("Could not toggle server override: " + ex.getMessage(), Theme.DANGER);
+        }
+    }
+
     private static String valueString(Entry e) {
         try {
             if (e.kind == Kind.COLOR && e.s.value instanceof Color) {
@@ -441,9 +458,9 @@ public final class OstinatoScreen extends Screen {
 
     // ------------------------------------------------------------------ layout
 
-    /** Studio, Arcade, Tasks, and Modified, then one row per category that has settings. */
+    /** Studio, Arcade, Tasks, Commands, and Modified, then one row per category that has settings. */
     private int sideItemCount() {
-        int n = 4;
+        int n = 5;
         for (SettingCategory c : SettingCategory.values()) {
             List<Entry> l = byCat.get(c);
             if (l != null && !l.isEmpty()) {
@@ -515,6 +532,7 @@ public final class OstinatoScreen extends Screen {
         out.add(new Orbit.Body("Studio", studio.blockCount(), STUDIO_ICON, false, false, false));
         out.add(new Orbit.Body("Arcade", 3, ARCADE_ICON, false, false, false));
         out.add(new Orbit.Body("Tasks", TaskService.INSTANCE.list().size(), TASKS_ICON, false, TaskService.INSTANCE.runner.active(), false));
+        out.add(new Orbit.Body("Commands", commandsPanel.formCount(), COMMANDS_ICON, false, false, false));
         out.add(new Orbit.Body("Modified", countModified(), null, true, false, true));
         boolean first = true;
         for (SettingCategory c : navCategories()) {
@@ -547,8 +565,10 @@ public final class OstinatoScreen extends Screen {
                 return 1;
             case TASKS:
                 return 2;
+            case COMMANDS:
+                return 3;
             default:
-                return modifiedView ? 3 : 4 + navCategories().indexOf(selected);
+                return modifiedView ? 4 : 5 + navCategories().indexOf(selected);
         }
     }
 
@@ -556,14 +576,17 @@ public final class OstinatoScreen extends Screen {
     private void selectNav(int i) {
         search.set("");
         searchFocused = false;
-        modifiedView = i == 3;
-        if (i < 3) {
-            desk = i == 0 ? Desk.STUDIO : i == 1 ? Desk.ARCADE : Desk.TASKS;
+        modifiedView = i == 4;
+        if (i < 4) {
+            desk = i == 0 ? Desk.STUDIO : i == 1 ? Desk.ARCADE : i == 2 ? Desk.TASKS : Desk.COMMANDS;
+            if (desk == Desk.COMMANDS) {
+                commandsPanel.reloadForms();
+            }
         } else {
             desk = Desk.SETTINGS;
             filter = Filter.ALL;
-            if (i > 3) {
-                selected = navCategories().get(i - 4);
+            if (i > 4) {
+                selected = navCategories().get(i - 5);
             }
         }
         flungAt = System.currentTimeMillis();
@@ -746,6 +769,7 @@ public final class OstinatoScreen extends Screen {
         iy = sideItem(ms, iy, "Arcade", 3, ARCADE_ICON, desk == Desk.ARCADE && !searching, arcadeHover, mx, my, accent, false, false);
         iy = sideItem(ms, iy, "Tasks", TaskService.INSTANCE.list().size(), TASKS_ICON, desk == Desk.TASKS && !searching, tasksHover, mx, my, accent, false,
                 TaskService.INSTANCE.runner.active());
+        iy = sideItem(ms, iy, "Commands", commandsPanel.formCount(), COMMANDS_ICON, desk == Desk.COMMANDS && !searching, commandsHover, mx, my, accent, false, false);
         GuiDraw.rect(ms, x0 + 10, iy + 2, sbx1 - 10, iy + 3, 0x10FFFFFF);
         iy += 6;
         iy = sideItem(ms, iy, "Modified", countModified(), null, modifiedView && onSettings && !searching, modHover, mx, my, accent, true, false);
@@ -840,6 +864,10 @@ public final class OstinatoScreen extends Screen {
         return desk == Desk.TASKS && search.get().trim().isEmpty();
     }
 
+    private boolean showCommands() {
+        return desk == Desk.COMMANDS && search.get().trim().isEmpty();
+    }
+
     private boolean showStudio() {
         return desk == Desk.STUDIO && search.get().trim().isEmpty();
     }
@@ -929,6 +957,11 @@ public final class OstinatoScreen extends Screen {
         if (showTasks()) {
             tasks.layout(px0, px1, hb, fy);
             tasks.draw(ms, mx, my, accent, now);
+            return null;
+        }
+        if (showCommands()) {
+            commandsPanel.layout(px0, px1, hb, fy);
+            commandsPanel.draw(ms, mx, my, accent, now);
             return null;
         }
         String title = title();
@@ -1038,12 +1071,21 @@ public final class OstinatoScreen extends Screen {
         String d = e.doc.isEmpty() ? "(no description)" : e.doc;
         GuiDraw.text(ms, GuiDraw.trim(d, Math.max(20, descMax), 0.5f), nx, ry + 14.5f, 0.5f, Theme.MUTED, false, false);
 
-        // reset button for modified rows
+        // reset button + per-server/global scope badge for modified rows
         if (mod) {
             float rx0 = cx - cw - 16, rx1 = rx0 + 12;
             boolean rh = in(mx, my, rx0, cyc - 6, rx1, cyc + 6);
             GuiDraw.round(ms, rx0, cyc - 6, rx1, cyc + 6, 2.5f, rh ? GuiDraw.alphaOf(accent, 0x33) : (hov ? GuiDraw.alphaOf(accent, 0x1A) : 0x10FFFFFF));
             GuiDraw.icon(ms, Icons.RESET, rx0 + 2, cyc - 4, rh || hov ? accent : Theme.MUTED, 0.9f);
+
+            // Ostinato: P3 per-server vs global scope toggle pill (SRV / GLB)
+            ServerSettingsStore.Scope scope = OstinatoGui.SERVER_STORE.scopeOf(e.name, true);
+            boolean srv = scope == ServerSettingsStore.Scope.SERVER;
+            float sx1 = rx0 - 3, sx0 = sx1 - 18;
+            boolean sh = in(mx, my, sx0, cyc - 6, sx1, cyc + 6);
+            GuiDraw.round(ms, sx0, cyc - 6, sx1, cyc + 6, 2.5f,
+                    srv ? GuiDraw.alphaOf(accent, sh ? 0x50 : 0x33) : (sh ? 0x26FFFFFF : 0x12FFFFFF));
+            GuiDraw.text(ms, scope.badge, sx0 + 3, cyc - 2, 0.5f, srv ? accent : Theme.MUTED, false, srv);
         }
         if (editing == e) {
             float ex1 = cx, ex0 = cx - Math.max(cw, Math.min(150, cx - nx - 40));
@@ -1405,6 +1447,16 @@ public final class OstinatoScreen extends Screen {
             rebuild();
             return true;
         }
+        iy += sideH + 1;
+        if (inSide && in(mx, my, x0 + 6, iy, sbx1 - 6, iy + sideH)) {
+            desk = Desk.COMMANDS;
+            modifiedView = false;
+            search.set("");
+            searchFocused = false;
+            commandsPanel.reloadForms();
+            rebuild();
+            return true;
+        }
         iy += sideH + 1 + 6;
         if (inSide && in(mx, my, x0 + 6, iy, sbx1 - 6, iy + sideH)) {
             desk = Desk.SETTINGS;
@@ -1462,7 +1514,7 @@ public final class OstinatoScreen extends Screen {
             }
             return true;
         }
-        if (showStudio() || showArcade() || showTasks()) {
+        if (showStudio() || showArcade() || showTasks() || showCommands()) {
             if (in(mx, my, x1 - 10 - doneW0, fy + 5, x1 - 10, fy + 19)) {
                 dismiss();
                 return true;
@@ -1479,6 +1531,10 @@ public final class OstinatoScreen extends Screen {
         if (showTasks()) {
             tasks.layout(px0, px1, hb, fy);
             return tasks.mouseClicked(mx, my, button) || false;
+        }
+        if (showCommands()) {
+            commandsPanel.layout(px0, px1, hb, fy);
+            return commandsPanel.mouseClicked(mx, my, button);
         }
         // filter chips
         float chx = px1;
@@ -1551,6 +1607,10 @@ public final class OstinatoScreen extends Screen {
         }
         if (isModified(e) && in(mx, my, cx - cw - 16, cyc - 6, cx - cw - 4, cyc + 6)) {
             reset(e);
+            return true;
+        }
+        if (isModified(e) && in(mx, my, cx - cw - 37, cyc - 6, cx - cw - 19, cyc + 6)) {
+            toggleServerScope(e);
             return true;
         }
         switch (e.kind) {
@@ -1677,6 +1737,10 @@ public final class OstinatoScreen extends Screen {
             tasks.layout(px0, px1, hb, fy);
             return tasks.mouseScrolled(mx, my, delta);
         }
+        if (showCommands()) {
+            commandsPanel.layout(px0, px1, hb, fy);
+            return commandsPanel.mouseScrolled(mx, my, delta);
+        }
         if (maxSideScroll > 0 && in(mx, my, x0, hb + 1, sbx1, fy)) {
             sideScroll = Math.max(0, Math.min(maxSideScroll, sideScroll - (float) delta * 16));
             return true;
@@ -1724,6 +1788,9 @@ public final class OstinatoScreen extends Screen {
         }
         if (tasks.editing()) {
             return tasks.keyPressed(key);
+        }
+        if (showCommands() && commandsPanel.editing()) {
+            return commandsPanel.keyPressed(key);
         }
         if (showTasks() && key == InputConstants.KEY_S && Keys.ctrl()) {
             tasks.save();
@@ -1856,14 +1923,18 @@ public final class OstinatoScreen extends Screen {
             tasks.charTyped(c);
             return true;
         }
+        if (showCommands() && commandsPanel.editing()) {
+            commandsPanel.charTyped(c);
+            return true;
+        }
         if (showStudio() && studio.nameFocused()) {
             return studio.charTyped(c);
         }
         if (showStudio() && !searchFocused && studio.charTyped(c)) {
             return true;
         }
-        if (!searchFocused && (showTasks() || showStudio() || showArcade())) {
-            return false; // typing in Studio, Arcade, or Tasks does not jump to settings search
+        if (!searchFocused && (showTasks() || showCommands() || showStudio() || showArcade())) {
+            return false; // typing in Studio, Arcade, Commands, or Tasks does not jump to settings search
         }
         if (!searchFocused) {
             searchFocused = true;

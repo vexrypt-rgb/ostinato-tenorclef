@@ -19,12 +19,14 @@
 package baritone.gui.screen;
 
 import baritone.Baritone;
+import baritone.gui.model.UnifiedThemeBridge;
 import baritone.gui.render.GuiDraw;
 import baritone.gui.render.Skin;
+import baritone.swarm.center.CenterRuntime;
 
 import java.awt.Color;
 
-/** Palette shared with TenorClef's T2 menu (dark glass, teal accent). The accent comes from guiAccentColor. */
+/** Palette shared with TenorClef's T2 menu (dark glass, teal accent) and synced with {@link CenterRuntime#theme()}. */
 public final class Theme {
 
     public static final int TEXT = 0xFFE6EAF0, MUTED = 0xFF8B93A3, DIM = 0xFF5C6475, AMBER = 0xFFE8C96A,
@@ -37,7 +39,8 @@ public final class Theme {
         Color c = Baritone.settings().guiAccentColor.value;
         int rgb = c == null ? 0xFF4FD1C5 : (0xFF000000 | (c.getRGB() & 0xFFFFFF));
         // the singularity theme brings its own Hawking amber unless the accent was changed by hand
-        return rgb == 0xFF4FD1C5 && Skin.singularity() ? Skin.HAWKING : rgb;
+        int base = rgb == 0xFF4FD1C5 && Skin.singularity() ? Skin.HAWKING : rgb;
+        return UnifiedThemeBridge.accent(CenterRuntime.theme(), base);
     }
 
     public static int lighter(int c) {
