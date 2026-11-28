@@ -70,6 +70,8 @@ final class MapCanvas extends javax.swing.JComponent {
     boolean showObservations = true;
     boolean showPaths = true;
     boolean showTerrain = true;
+    /** Ostinato: P2 Danger overlay (lava, steep falls, entity observations, endangered bots). */
+    boolean showDanger;
     /** Ostinato: when true, the war-room map renders and interacts in 3D isometric projection. */
     boolean isometric;
     private MapTerrain.Grid terrainGrid = MapTerrain.Grid.EMPTY;
@@ -693,6 +695,9 @@ final class MapCanvas extends javax.swing.JComponent {
         if (showObservations) {
             drawObservations(g);
         }
+        if (showDanger) {
+            drawDanger2d(g, w, h);
+        }
         drawMarkers(g);
         drawSelectionBox(g);
         drawArea(g);
@@ -1003,7 +1008,68 @@ final class MapCanvas extends javax.swing.JComponent {
         };
     }
 
+    private void drawDanger2d(Graphics2D g, int w, int h) {
+        double[] tl = camera.screenToWorld(0, 0);
+        double[] br = camera.screenToWorld(w, h);
+        int x0 = (int) Math.floor(Math.min(tl[0], br[0]));
+        int z0 = (int) Math.floor(Math.min(tl[1], br[1]));
+        int x1 = (int) Math.ceil(Math.max(tl[0], br[0]));
+        int z1 = (int) Math.ceil(Math.max(tl[1], br[1]));
+        Color dangerCol = new Color(style.theme.danger());
+        Color warnCol = new Color(style.theme.warn());
+        int zoom = Math.max(2, camera.zoom());
+        for (MapDanger.Hazard hz : MapDanger.terrainHazards(ensureTerrainGrid(), x0, z0, x1, z1)) {
+            int sx = (int) Math.round(camera.screenX(hz.x()));
+            int sy = (int) Math.round(camera.screenZ(hz.z()));
+            if (hz.kind() == MapDanger.Kind.LAVA) {
+                g.setColor(new Color(dangerCol.getRed(), dangerCol.getGreen(), dangerCol.getBlue(), 180));
+                g.fillRect(sx - zoom / 2, sy - zoom / 2, zoom, zoom);
+                g.setColor(dangerCol);
+                g.setStroke(new BasicStroke(1.2f));
+                g.drawRect(sx - zoom / 2, sy - zoom / 2, zoom, zoom);
+            } else {
+                g.setColor(warnCol);
+                g.setStroke(new BasicStroke(1.5f));
+                int r = Math.max(2, Math.min(5, zoom / 2));
+                g.drawLine(sx - r, sy - r, sx + r, sy + r);
+                g.drawLine(sx - r, sy + r, sx + r, sy - r);
+            }
+        }
+        for (MapDanger.Hazard hz : MapDanger.dynamicHazards(view, dim)) {
+            int sx = (int) Math.round(camera.screenX(hz.x()));
+            int sy = (int) Math.round(camera.screenZ(hz.z()));
+            g.setColor(dangerCol);
+            g.setStroke(new BasicStroke(2f));
+            if (hz.kind() == MapDanger.Kind.BOT_DANGER) {
+                g.drawOval(sx - 15, sy - 15, 30, 30);
+            } else {
+                int[] xs = {sx, sx - 7, sx + 7};
+                int[] ys = {sy - 7, sy + 6, sy + 6};
+                g.fillPolygon(xs, ys, 3);
+                g.setColor(new Color(style.theme.text()));
+                g.drawString("!" + hz.label(), sx + 9, sy + 4);
+            }
+        }
+    }
+
     private String tipAt(int sx, int sy) {
+        if (showDanger) {
+            for (MapDanger.Hazard hz : MapDanger.dynamicHazards(view, dim)) {
+                double[] pt = isometric ? isoCamera.worldToScreen(hz.x(), hz.y(), hz.z())
+                        : camera.worldToScreen(hz.x(), hz.z());
+                if (Math.hypot(sx - pt[0], sy - pt[1]) <= 12) {
+                    return hz.tip();
+                }
+            }
+            int[] picked = pickGroundBlock(sx, sy);
+            MapTerrain.Grid grid = ensureTerrainGrid();
+            if (grid.contains(picked[0], picked[2])) {
+                List<MapDanger.Hazard> near = MapDanger.terrainHazards(grid, picked[0], picked[2], picked[0], picked[2]);
+                if (!near.isEmpty()) {
+                    return near.get(0).tip();
+                }
+            }
+        }
         if (showLeases) {
             for (MapOverlay.LeaseMark lease : MapOverlay.leases(view.coordinator(), dim)) {
                 if (lease.box() == null) {

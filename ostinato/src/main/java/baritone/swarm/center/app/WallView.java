@@ -248,6 +248,7 @@ public final class WallView implements LayoutView {
     @Override
     public void update(SwarmView view) {
         last = view == null ? SwarmView.EMPTY : view;
+        focus.observe(last);
         if (selected != null && last.bot(selected) == null) {
             selected = null;
         }

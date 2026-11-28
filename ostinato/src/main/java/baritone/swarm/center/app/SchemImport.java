@@ -39,10 +39,58 @@ public final class SchemImport {
         if (root.has("Palette") && root.has("BlockData") && root.has("Width")) {
             return sponge(root);
         }
-        if (root.has("Blocks") && root.has("Width")) {
-            throw new IllegalArgumentException("classic .schematic (numeric ids) is not imported; use .litematic or .schem");
+        if (root.has("palette") && root.has("blocks") && root.has("size")) {
+            return structureNbt(root);
         }
-        throw new IllegalArgumentException("not a .litematic or Sponge .schem");
+        if (root.has("Blocks") && root.has("Width")) {
+            throw new IllegalArgumentException("classic .schematic (numeric ids) is not imported; use .litematic, .schem or .nbt");
+        }
+        throw new IllegalArgumentException("not a .litematic, Sponge .schem or structure .nbt");
+    }
+
+    /** Ostinato: import vanilla Minecraft structure-block {@code .nbt} (palette + blocks + size). */
+    static OstSchematic structureNbt(Nbt.Compound root) {
+        List<String> palette = new ArrayList<>();
+        for (Nbt.Tag t : root.list("palette")) {
+            palette.add(paletteEntry(t));
+        }
+        if (palette.isEmpty()) {
+            throw new IllegalArgumentException("structure .nbt has no palette");
+        }
+        List<OstSchematic.Cell> cells = new ArrayList<>();
+        for (Nbt.Tag t : root.list("blocks")) {
+            if (!(t instanceof Nbt.Compound b)) {
+                continue;
+            }
+            int state = b.i("state", -1);
+            if (state < 0 || state >= palette.size()) {
+                throw new IllegalArgumentException("structure .nbt state index " + state);
+            }
+            String id = palette.get(state);
+            if (skip(id)) {
+                continue;
+            }
+            List<Nbt.Tag> pos = b.list("pos");
+            if (pos.size() != 3) {
+                continue;
+            }
+            int x = intTag(pos.get(0));
+            int y = intTag(pos.get(1));
+            int z = intTag(pos.get(2));
+            try {
+                cells.add(new OstSchematic.Cell(x, y, z, OstSchematic.blockName(id)));
+            } catch (IllegalArgumentException ignored) {
+                // drop unknown block id characters
+            }
+        }
+        return OstSchematic.of(cells);
+    }
+
+    private static int intTag(Nbt.Tag t) {
+        if (t instanceof Nbt.IntTag n) return n.v();
+        if (t instanceof Nbt.ShortTag n) return n.v();
+        if (t instanceof Nbt.ByteTag n) return n.v();
+        return 0;
     }
 
     /** World-anchored blueprint at {@code origin} (or 0,0,0). */
@@ -381,6 +429,70 @@ public final class SchemImport {
         root.put("MinecraftDataVersion", 3700);
         root.put("Regions", regions);
         return Nbt.writeGzip(root, "");
+    }
+
+    /** Ostinato: write a vanilla Minecraft structure-block {@code .nbt} file (gzipped). */
+    public static byte[] writeStructureNbt(int sx, int sy, int sz, List<OstSchematic.Cell> cells) {
+        List<Nbt.Tag> palTags = new ArrayList<>();
+        Map<String, Integer> palIdx = new LinkedHashMap<>();
+        List<Nbt.Tag> blockTags = new ArrayList<>();
+        for (OstSchematic.Cell c : cells) {
+            int state = palIdx.computeIfAbsent(c.block(), k -> {
+                Nbt.Compound entry = new Nbt.Compound();
+                entry.put("Name", "minecraft:" + k);
+                palTags.add(entry);
+                return palTags.size() - 1;
+            });
+            Nbt.Compound b = new Nbt.Compound();
+            b.put("state", state);
+            b.put("pos", new Nbt.ListTag(Nbt.INT, List.of(new Nbt.IntTag(c.x()), new Nbt.IntTag(c.y()), new Nbt.IntTag(c.z()))));
+            blockTags.add(b);
+        }
+        Nbt.Compound root = new Nbt.Compound();
+        root.put("DataVersion", 3700);
+        root.put("size", new Nbt.ListTag(Nbt.INT, List.of(new Nbt.IntTag(sx), new Nbt.IntTag(sy), new Nbt.IntTag(sz))));
+        root.put("palette", new Nbt.ListTag(Nbt.COMPOUND, palTags));
+        root.put("blocks", new Nbt.ListTag(Nbt.COMPOUND, blockTags));
+        root.put("entities", new Nbt.ListTag(Nbt.COMPOUND, List.of()));
+        return Nbt.writeGzip(root, "");
+    }
+
+    /**
+     * Ostinato: export a {@link Blueprint} to {@code .ost}, Sponge v2 {@code .schem}, {@code .litematic},
+     * or vanilla structure {@code .nbt} based on the file extension.
+     */
+    public static void exportBlueprint(Blueprint blueprint, Path target) throws IOException {
+        if (blueprint == null || blueprint.size() == 0) {
+            throw new IllegalArgumentException("blueprint is empty");
+        }
+        if (target == null) {
+            throw new IllegalArgumentException("export path is required");
+        }
+        int[] b = blueprint.bounds();
+        int ox = b[0], oy = b[1], oz = b[2];
+        int sx = b[3] - ox + 1;
+        int sy = b[4] - oy + 1;
+        int sz = b[5] - oz + 1;
+        List<OstSchematic.Cell> local = new ArrayList<>(blueprint.size());
+        for (Blueprint.Cell c : blueprint.cells()) {
+            local.add(new OstSchematic.Cell(c.x() - ox, c.y() - oy, c.z() - oz, c.block()));
+        }
+        Path parent = target.toAbsolutePath().getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
+        }
+        String name = target.getFileName().toString().toLowerCase(Locale.ROOT);
+        if (name.endsWith(".schem")) {
+            Files.write(target, writeSchem(sx, sy, sz, local));
+        } else if (name.endsWith(".litematic")) {
+            Files.write(target, writeLitematic(sx, sy, sz, local));
+        } else if (name.endsWith(".nbt")) {
+            Files.write(target, writeStructureNbt(sx, sy, sz, local));
+        } else if (name.endsWith(".ost") || name.endsWith(".ostinato")) {
+            Files.writeString(target, blueprint.write());
+        } else {
+            throw new IllegalArgumentException("unsupported export format (use .schem, .litematic, .nbt or .ost)");
+        }
     }
 
     private record Region(int x0, int y0, int z0, List<OstSchematic.Cell> cells) {}

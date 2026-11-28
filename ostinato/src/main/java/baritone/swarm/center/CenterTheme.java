@@ -70,6 +70,42 @@ public record CenterTheme(
             0x56B4E9, 0xF0E442, 0xFF9A4D
     );
 
+    /** Ostinato: flavor theme — obsidian crimson and magma orange (WCAG AA verified). */
+    public static final CenterTheme NETHER = new CenterTheme(
+            0x191114, 0x23171B, 0x2F1F24, 0x52313A,
+            0xF4E6E8, 0xC9AEB2, 0x9E7D82,
+            0xFF7B4A, 0x140A08,
+            0x5FD48D, 0xF2C14E, 0xFF7070
+    );
+
+    /** Ostinato: flavor theme — void obsidian and chorus violet (WCAG AA verified). */
+    public static final CenterTheme END = new CenterTheme(
+            0x13111B, 0x1B1726, 0x252034, 0x42385C,
+            0xEFEBF7, 0xBEB4D6, 0x9287B0,
+            0xC78BFF, 0x120B1C,
+            0x63DB9A, 0xE8E28A, 0xFF7898
+    );
+
+    /** Ostinato: flavor theme — deep prismarine and sea-lantern teal (WCAG AA verified). */
+    public static final CenterTheme OCEAN = new CenterTheme(
+            0x0E171D, 0x14212A, 0x1C2E3A, 0x2F4C5E,
+            0xE6F2F6, 0xA6C4D1, 0x7B9EAE,
+            0x4CD4D0, 0x08171A,
+            0x58D68D, 0xF0C95A, 0xFF7C70
+    );
+
+    /** Ostinato: flavor theme — oxidized copper and forge iron (WCAG AA verified). */
+    public static final CenterTheme RUST = new CenterTheme(
+            0x181412, 0x221C18, 0x2D2520, 0x4F4037,
+            0xF2EAE4, 0xC7B6A8, 0x9C897A,
+            0xE89554, 0x170E08,
+            0x5CC99C, 0xF0C44C, 0xFF7566
+    );
+
+    /** All built-in theme names: four core themes first, then four flavor themes. */
+    public static final List<String> BUILT_IN_NAMES = List.of(
+            "dark", "light", "high-contrast", "colorblind", "nether", "end", "ocean", "rust");
+
     /** Display label for a built-in name. {@code ThemeStore.label} uses this. */
     public static String label(String name) {
         return switch (name == null ? "" : name) {
@@ -77,6 +113,10 @@ public record CenterTheme(
             case "light" -> "Light";
             case "high-contrast" -> "High contrast";
             case "colorblind" -> "Colorblind safe";
+            case "nether" -> "Nether";
+            case "end" -> "End";
+            case "ocean" -> "Ocean";
+            case "rust" -> "Rust";
             default -> name == null ? "" : name;
         };
     }
@@ -87,6 +127,10 @@ public record CenterTheme(
             case "light" -> LIGHT;
             case "high-contrast" -> HIGH_CONTRAST;
             case "colorblind" -> COLORBLIND_SAFE;
+            case "nether" -> NETHER;
+            case "end" -> END;
+            case "ocean" -> OCEAN;
+            case "rust" -> RUST;
             default -> DEFAULT_DARK;
         };
     }

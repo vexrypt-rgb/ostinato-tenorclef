@@ -125,6 +125,14 @@ public final class MapView implements LayoutView {
         dims.add(layerToggle(dims, "Observations", "map:toggle:observations", on -> canvas.showObservations = on));
         dims.add(layerToggle(dims, "Paths", "map:toggle:paths", on -> canvas.showPaths = on));
         dims.add(layerToggle(dims, "Terrain", "map:toggle:terrain", on -> canvas.showTerrain = on));
+        JToggleButton dangerToggle = style.toggle("Danger");
+        dangerToggle.setName("map:toggle:danger");
+        dangerToggle.setToolTipText("Highlight lava pools, steep fall cliffs, nearby entities and endangered bots");
+        dangerToggle.addActionListener(e -> {
+            canvas.showDanger = dangerToggle.isSelected();
+            canvas.repaint();
+        });
+        dims.add(dangerToggle);
         dims.add(areaBar.tool());
         rtsToggle = style.toggle("RTS");
         rtsToggle.setName("map:toggle:rts");
@@ -258,6 +266,18 @@ public final class MapView implements LayoutView {
     /** Ostinato: 3D isometric camera sharing center and zoom with {@link #camera()}. */
     public IsoMapCamera isoCamera() {
         return canvas.isoCamera;
+    }
+
+    public boolean showDanger() {
+        return canvas.showDanger;
+    }
+
+    public void setShowDanger(boolean on) {
+        canvas.showDanger = on;
+        if (CenterApp.find(root, "map:toggle:danger") instanceof javax.swing.AbstractButton b && b.isSelected() != on) {
+            b.setSelected(on);
+        }
+        canvas.repaint();
     }
 
     public boolean isometric() {

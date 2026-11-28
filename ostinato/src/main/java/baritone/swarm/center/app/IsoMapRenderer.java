@@ -60,6 +60,9 @@ final class IsoMapRenderer {
         if (canvas.showObservations) {
             drawObservations(g, style, cam, view, dim, grid);
         }
+        if (canvas.showDanger) {
+            drawDanger(g, style, cam, view, dim, grid);
+        }
         drawArea(g, style, cam, canvas);
         drawGhost(g, style, cam, canvas);
         drawBlueprint(g, style, cam, canvas);
@@ -383,6 +386,67 @@ final class IsoMapRenderer {
             }
             g.setColor(accent);
             MapCanvas.drawObsShape(g, obs.kind(), obs.state(), obs.suspect(), sx, sy);
+        }
+    }
+
+    private static void drawDanger(Graphics2D g, AppStyle style, IsoMapCamera cam, SwarmView view,
+                                   char dim, MapTerrain.Grid grid) {
+        Color dangerCol = new Color(style.theme.danger());
+        Color warnCol = new Color(style.theme.warn());
+        if (grid != null && !grid.isEmpty()) {
+            int[] vis = cam.visibleRotGridBounds(grid.minY, grid.maxY);
+            int x0 = Integer.MAX_VALUE, x1 = Integer.MIN_VALUE;
+            int z0 = Integer.MAX_VALUE, z1 = Integer.MIN_VALUE;
+            for (int gx : new int[]{vis[0], vis[1]}) {
+                for (int gz : new int[]{vis[2], vis[3]}) {
+                    int wx = cam.worldXFromRot(gx, gz);
+                    int wz = cam.worldZFromRot(gx, gz);
+                    if (wx < x0) x0 = wx;
+                    if (wx > x1) x1 = wx;
+                    if (wz < z0) z0 = wz;
+                    if (wz > z1) z1 = wz;
+                }
+            }
+            for (MapDanger.Hazard hz : MapDanger.terrainHazards(grid, x0, z0, x1, z1)) {
+                double[] pt = cam.worldToScreen(hz.x(), hz.y() + 0.05, hz.z());
+                int sx = (int) Math.round(pt[0]);
+                int sy = (int) Math.round(pt[1]);
+                if (hz.kind() == MapDanger.Kind.LAVA) {
+                    int hw = Math.max(2, (int) Math.round(cam.halfW()));
+                    int hh = Math.max(1, (int) Math.round(cam.halfH()));
+                    int[] xs = {sx, sx + hw, sx, sx - hw};
+                    int[] ys = {sy - hh, sy, sy + hh, sy};
+                    g.setColor(alpha(style.theme.danger(), 150));
+                    g.fillPolygon(xs, ys, 4);
+                    g.setColor(dangerCol);
+                    g.setStroke(new BasicStroke(1.2f));
+                    g.drawPolygon(xs, ys, 4);
+                } else {
+                    g.setColor(warnCol);
+                    g.setStroke(new BasicStroke(1.5f));
+                    g.drawLine(sx - 3, sy - 3, sx + 3, sy + 3);
+                    g.drawLine(sx - 3, sy + 3, sx + 3, sy - 3);
+                }
+            }
+        }
+        for (MapDanger.Hazard hz : MapDanger.dynamicHazards(view, dim)) {
+            double[] pt = cam.worldToScreen(hz.x(), hz.y(), hz.z());
+            int sx = (int) Math.round(pt[0]);
+            int sy = (int) Math.round(pt[1]);
+            g.setColor(dangerCol);
+            g.setStroke(new BasicStroke(2f));
+            if (hz.kind() == MapDanger.Kind.BOT_DANGER) {
+                g.drawOval(sx - 16, sy - 9, 32, 18);
+            } else {
+                double[] head = cam.worldToScreen(hz.x(), hz.y() + 1.4, hz.z());
+                int hx = (int) Math.round(head[0]);
+                int hy = (int) Math.round(head[1]);
+                g.drawLine(sx, sy, hx, hy);
+                int[] xs = {hx, hx - 7, hx + 7};
+                int[] ys = {hy - 7, hy + 5, hy + 5};
+                g.fillPolygon(xs, ys, 3);
+                drawTag(g, style, "! " + hz.label(), hx + 9, hy + 4, style.theme.danger());
+            }
         }
     }
 

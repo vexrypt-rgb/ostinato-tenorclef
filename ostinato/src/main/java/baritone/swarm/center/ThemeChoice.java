@@ -34,6 +34,10 @@ public final class ThemeChoice {
             case "light" -> "light";
             case "high-contrast", "contrast", "highcontrast", "hc" -> "high-contrast";
             case "colorblind", "colorblind-safe", "cb" -> "colorblind";
+            case "nether" -> "nether";
+            case "end" -> "end";
+            case "ocean" -> "ocean";
+            case "rust" -> "rust";
             default -> null;
         };
     }

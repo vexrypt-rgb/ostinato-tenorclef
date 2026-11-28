@@ -17,7 +17,7 @@ import static org.junit.Assert.assertTrue;
 /** Ostinato: built-in themes meet WCAG AA, and the colorblind identity palette stays apart. */
 public class ThemeContrastTest {
 
-    private static final List<String> NAMES = List.of("dark", "light", "high-contrast", "colorblind");
+    private static final List<String> NAMES = CenterTheme.BUILT_IN_NAMES;
 
     @Rule public TemporaryFolder temporary = new TemporaryFolder();
 
@@ -36,7 +36,11 @@ public class ThemeContrastTest {
                 case "dark" -> "Default dark";
                 case "light" -> "Light";
                 case "high-contrast" -> "High contrast";
-                default -> "Colorblind safe";
+                case "colorblind" -> "Colorblind safe";
+                case "nether" -> "Nether";
+                case "end" -> "End";
+                case "ocean" -> "Ocean";
+                default -> "Rust";
             });
         }
     }
@@ -69,6 +73,10 @@ public class ThemeContrastTest {
         Files.writeString(file, "nope\n");
         assertEquals("dark", ThemeChoice.load(file));
         assertEquals("high-contrast", ThemeChoice.canonical("hc"));
-        assertEquals(null, ThemeChoice.canonical("nether"));
+        assertEquals("nether", ThemeChoice.canonical("nether"));
+        assertEquals("end", ThemeChoice.canonical("end"));
+        assertEquals("ocean", ThemeChoice.canonical("ocean"));
+        assertEquals("rust", ThemeChoice.canonical("rust"));
+        assertEquals(null, ThemeChoice.canonical("unknown-flavor"));
     }
 }

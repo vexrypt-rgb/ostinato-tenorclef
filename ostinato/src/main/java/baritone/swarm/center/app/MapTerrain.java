@@ -24,10 +24,11 @@ public final class MapTerrain {
     public static final class Grid {
         public static final Grid EMPTY = new Grid(0, 0, 0, 0, new int[0], new short[0], new byte[0], 64, 64, 64);
 
-        /** Surface material hint used by the isometric cliff skirt shader. */
+        /** Surface material hint used by the isometric cliff skirt shader and danger overlay. */
         public static final byte KIND_NORMAL = 0;
         public static final byte KIND_GRASS = 1;
         public static final byte KIND_WATER = 2;
+        public static final byte KIND_LAVA = 3;
 
         public final int minX, minZ, width, depth;
         public final int[] rgb;
@@ -203,6 +204,9 @@ public final class MapTerrain {
             }
             if ("water".equalsIgnoreCase(k)) {
                 return KIND_WATER;
+            }
+            if ("lava".equalsIgnoreCase(k)) {
+                return KIND_LAVA;
             }
             return KIND_NORMAL;
         }

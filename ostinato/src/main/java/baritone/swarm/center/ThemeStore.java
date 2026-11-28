@@ -35,6 +35,10 @@ public final class ThemeStore {
         BUILT_INS.put("light", CenterTheme.LIGHT);
         BUILT_INS.put("high-contrast", CenterTheme.HIGH_CONTRAST);
         BUILT_INS.put("colorblind", CenterTheme.COLORBLIND_SAFE);
+        BUILT_INS.put("nether", CenterTheme.NETHER);
+        BUILT_INS.put("end", CenterTheme.END);
+        BUILT_INS.put("ocean", CenterTheme.OCEAN);
+        BUILT_INS.put("rust", CenterTheme.RUST);
         ALIASES.put("default", "dark");
         ALIASES.put("default-dark", "dark");
         ALIASES.put("contrast", "high-contrast");

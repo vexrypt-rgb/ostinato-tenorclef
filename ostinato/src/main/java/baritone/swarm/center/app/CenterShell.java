@@ -60,6 +60,11 @@ public final class CenterShell {
     private WallView wall;
     private MapView map;
     private EditorView editor;
+    private CommandPalette palette;
+    private ThemeEditorPanel themeEditor;
+    private JToggleButton paletteToggle;
+    private JToggleButton themeEditToggle;
+    private javax.swing.JComboBox<String> moreThemes;
     private final Commands commands;
     private CenterLayout shown;
     private Consumer<CenterLayout> onPick = l -> {};
@@ -92,6 +97,18 @@ public final class CenterShell {
         if (CenterTheme.COLORBLIND_SAFE.equals(theme)) {
             return "colorblind";
         }
+        if (CenterTheme.NETHER.equals(theme)) {
+            return "nether";
+        }
+        if (CenterTheme.END.equals(theme)) {
+            return "end";
+        }
+        if (CenterTheme.OCEAN.equals(theme)) {
+            return "ocean";
+        }
+        if (CenterTheme.RUST.equals(theme)) {
+            return "rust";
+        }
         return ThemeChoice.DEFAULT;
     }
 
@@ -112,9 +129,15 @@ public final class CenterShell {
         server = named(style.label(" ", style.muted(), Font.PLAIN, 12f), "header.server");
         host = named(style.label(" ", style.muted(), Font.PLAIN, 12f), "header.host");
         alerts = named(style.label(" ", style.muted(), Font.BOLD, 12f), "header.alerts");
+        javax.swing.JButton stopAll = style.dangerButton("Stop all");
+        stopAll.setName("header.stopAll");
+        stopAll.setToolTipText("Emergency stop: send #stop to every bot in the swarm");
+        stopAll.setFont(AppStyle.font(Font.BOLD, 11f));
+        stopAll.addActionListener(e -> stopAllBots());
         left.add(server);
         left.add(host);
         left.add(alerts);
+        left.add(stopAll);
         topRow.add(left, BorderLayout.WEST);
 
         JPanel right = style.panel(new FlowLayout(FlowLayout.RIGHT, 4, 0), null);
@@ -140,11 +163,50 @@ public final class CenterShell {
         header.add(topRow, BorderLayout.NORTH);
 
         JPanel subRow = style.panel(new BorderLayout(12, 0), null);
-        JPanel subLeft = style.panel(new FlowLayout(FlowLayout.LEFT, 12, 0), null);
+        JPanel subLeft = style.panel(new FlowLayout(FlowLayout.LEFT, 10, 0), null);
         coordinator = named(style.label("Coord none", style.muted(), Font.PLAIN, 11f), "header.coordinator");
         tierLabel = named(style.label("View: Cards (auto)", style.muted(), Font.PLAIN, 11f), "header.tier");
+        paletteToggle = style.toggle("Ctrl+K");
+        paletteToggle.setName("header.palette");
+        paletteToggle.setFont(AppStyle.font(Font.PLAIN, 11f));
+        paletteToggle.setToolTipText("Command palette, presets, dry-run preview, history and favorites");
+        paletteToggle.addActionListener(e -> {
+            if (palette != null) {
+                palette.setVisible(paletteToggle.isSelected());
+                root.revalidate();
+            }
+        });
+        moreThemes = new javax.swing.JComboBox<>();
+        moreThemes.setName("header.theme.more");
+        moreThemes.setFont(AppStyle.font(Font.PLAIN, 11f));
+        moreThemes.setToolTipText("Flavor themes (Nether, End, Ocean, Rust) and custom JSON themes");
+        populateMoreThemes();
+        moreThemes.addActionListener(e -> {
+            if (applying) return;
+            Object sel = moreThemes.getSelectedItem();
+            if (sel instanceof String s && !s.isBlank() && !s.startsWith("More")) {
+                choose(s);
+            }
+        });
+        themeEditToggle = style.toggle("Theme editor");
+        themeEditToggle.setName("header.theme.edit");
+        themeEditToggle.setFont(AppStyle.font(Font.PLAIN, 11f));
+        themeEditToggle.setToolTipText("Live custom theme editor with WCAG AA contrast warnings");
+        themeEditToggle.addActionListener(e -> {
+            if (themeEditor != null) {
+                boolean on = themeEditToggle.isSelected();
+                if (on) {
+                    themeEditor.loadDraft(themeName, style.theme);
+                }
+                themeEditor.setVisible(on);
+                root.revalidate();
+            }
+        });
         subLeft.add(coordinator);
         subLeft.add(tierLabel);
+        subLeft.add(paletteToggle);
+        subLeft.add(moreThemes);
+        subLeft.add(themeEditToggle);
         subRow.add(subLeft, BorderLayout.WEST);
 
         JPanel subRight = style.panel(new FlowLayout(FlowLayout.RIGHT, 4, 0), null);
@@ -166,13 +228,47 @@ public final class CenterShell {
         subRow.add(subRight, BorderLayout.EAST);
         header.add(subRow, BorderLayout.SOUTH);
 
-        root.add(header, BorderLayout.NORTH);
+        JPanel northWrap = style.panel(new BorderLayout(), null);
+        northWrap.add(header, BorderLayout.NORTH);
 
         body = style.panel(cards, style.bg());
         root.add(body, BorderLayout.CENTER);
         wall = new WallView(style, commands);
         map = new MapView(style, commands);
         editor = new EditorView(style, commands, map::selected, () -> (int) map.dimension());
+        palette = new CommandPalette(style, commands, this::activeSelection, () -> {
+            if (paletteToggle != null) paletteToggle.setSelected(false);
+            root.revalidate();
+        });
+        themeEditor = new ThemeEditorPanel(style, style.theme,
+                preview -> applyLiveTheme(preview, themeName),
+                (savedName, savedTheme) -> {
+                    populateMoreThemes();
+                    chooseCustom(savedName, savedTheme);
+                },
+                () -> {
+                    if (themeEditToggle != null) themeEditToggle.setSelected(false);
+                    root.revalidate();
+                });
+        JPanel drawers = style.panel(new BorderLayout(), null);
+        drawers.add(palette.component(), BorderLayout.NORTH);
+        drawers.add(themeEditor.component(), BorderLayout.SOUTH);
+        northWrap.add(drawers, BorderLayout.SOUTH);
+        root.add(northWrap, BorderLayout.NORTH);
+
+        javax.swing.KeyStroke ctrlK = javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_K,
+                java.awt.event.InputEvent.CTRL_DOWN_MASK);
+        root.getInputMap(javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT).put(ctrlK, "ostinato.palette");
+        root.getActionMap().put("ostinato.palette", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                boolean next = !palette.visible();
+                palette.setVisible(next);
+                if (paletteToggle != null) paletteToggle.setSelected(next);
+                root.revalidate();
+            }
+        });
+
         add(wall);
         add(map);
         add(editor);
@@ -278,11 +374,74 @@ public final class CenterShell {
     /** Per-user prefs (control groups, layout, and theme) live under this directory. */
     public void setPrefsDir(Path dir) {
         prefsDir = dir;
+        populateMoreThemes();
         Prefs p = readPrefs(dir);
         followTheme(p.theme());
         map.setPrefsDir(dir);
         editor.setDir(dir);
+        if (palette != null) palette.setPrefsDir(dir);
+        if (themeEditor != null) themeEditor.setPrefsDir(dir);
         followLayout(p.layout());
+    }
+
+    public CommandPalette palette() {
+        return palette;
+    }
+
+    public ThemeEditorPanel themeEditor() {
+        return themeEditor;
+    }
+
+    private List<String> activeSelection() {
+        if (shown == CenterLayout.MAP && map != null && !map.selected().isEmpty()) {
+            return map.selected();
+        }
+        if (wall != null) {
+            if (!wall.multiSelected().isEmpty()) {
+                return List.copyOf(wall.multiSelected());
+            }
+            if (wall.selected() != null) {
+                return List.of(wall.selected());
+            }
+        }
+        return map == null ? List.of() : map.selected();
+    }
+
+    private void stopAllBots() {
+        if (commands == null) {
+            return;
+        }
+        String host = last.hostBot();
+        int sent = 0;
+        for (SwarmView.BotState b : last.bots()) {
+            String target = baritone.swarm.center.TileRoute.target(b.name(), host);
+            String line = target == null ? "stop" : "swarm send " + target + " stop";
+            commands.line(line, b.name(), null);
+            sent++;
+        }
+        if (sent == 0) {
+            commands.line("stop", host == null ? "" : host, null);
+        }
+    }
+
+    private void populateMoreThemes() {
+        if (moreThemes == null) {
+            return;
+        }
+        boolean wasApplying = applying;
+        applying = true;
+        try {
+            moreThemes.removeAllItems();
+            moreThemes.addItem("More themes...");
+            for (String f : List.of("nether", "end", "ocean", "rust")) {
+                moreThemes.addItem(f);
+            }
+            for (String custom : CustomThemeStore.loadAll(prefsDir).keySet()) {
+                moreThemes.addItem(custom);
+            }
+        } finally {
+            applying = wasApplying;
+        }
     }
 
     public Path prefsDir() {
@@ -327,11 +486,43 @@ public final class CenterShell {
         if (applying || name == null || name.equals(themeName)) {
             return;
         }
+        CenterTheme resolved = CustomThemeStore.resolve(prefsDir, name);
+        if (resolved == null) {
+            resolved = CenterTheme.builtIn(name);
+        }
         applying = true;
         try {
-            applyTheme(CenterTheme.builtIn(name), name);
+            applyTheme(resolved, name);
             saveTheme(name);
             sendTheme(name);
+            update(last);
+        } finally {
+            applying = false;
+        }
+    }
+
+    private void chooseCustom(String name, CenterTheme theme) {
+        if (applying || name == null || theme == null) {
+            return;
+        }
+        applying = true;
+        try {
+            applyTheme(theme, name);
+            saveTheme(name);
+            sendTheme(name);
+            update(last);
+        } finally {
+            applying = false;
+        }
+    }
+
+    private void applyLiveTheme(CenterTheme theme, String name) {
+        if (applying || theme == null) {
+            return;
+        }
+        applying = true;
+        try {
+            applyTheme(theme, name);
             update(last);
         } finally {
             applying = false;
@@ -353,6 +544,8 @@ public final class CenterShell {
         if (prefsDir != null) {
             map.setPrefsDir(prefsDir);
             editor.setDir(prefsDir);
+            if (palette != null) palette.setPrefsDir(prefsDir);
+            if (themeEditor != null) themeEditor.setPrefsDir(prefsDir);
         }
         setDensityOverride(snap.densityOverride);
         wall.setActiveFilter(snap.wallFilter);
@@ -361,6 +554,16 @@ public final class CenterShell {
         map.restoreMap(snap.zoom, snap.cx, snap.cz, snap.dim, snap.selected, snap.groups, snap.area, snap.armed,
                 snap.mine, snap.build);
         map.restoreIso(snap.isometric, snap.isoRotation, snap.rtsVisible);
+        map.setShowDanger(snap.showDanger);
+        if (palette != null && snap.paletteVisible) {
+            palette.setVisible(true);
+            if (paletteToggle != null) paletteToggle.setSelected(true);
+        }
+        if (themeEditor != null && snap.themeEditorVisible) {
+            themeEditor.loadDraft(themeName, style.theme);
+            themeEditor.setVisible(true);
+            if (themeEditToggle != null) themeEditToggle.setSelected(true);
+        }
         if (snap.editor != null) {
             editor.restore(snap.editor);
         }
@@ -398,6 +601,9 @@ public final class CenterShell {
         h.isometric = map != null && map.isometric();
         h.isoRotation = map == null ? 0 : map.isoRotation();
         h.rtsVisible = map != null && map.rts().visible();
+        h.showDanger = map != null && map.showDanger();
+        h.paletteVisible = palette != null && palette.visible();
+        h.themeEditorVisible = themeEditor != null && themeEditor.visible();
         h.editor = editor == null ? null : editor.snapshot();
         collect(root, h.fields);
         return h;
@@ -465,22 +671,43 @@ public final class CenterShell {
         }
     }
 
-    /** A missing file keeps the current theme. An unknown name is Default dark. */
+    /** A missing file keeps the current theme. Built-in, flavor, or custom JSON themes are supported; unknown is Default dark. */
     private void followTheme(String text) {
         if (applying || prefsDir == null || text == null || text.equals(themeSeen)) {
             return;
         }
         themeSeen = text;
-        String name = ThemeChoice.parse(text);
+        String raw = firstChoiceLine(text);
+        CenterTheme custom = raw == null ? null : CustomThemeStore.resolve(prefsDir, raw);
+        String name;
+        CenterTheme target;
+        if (custom != null) {
+            String canonical = ThemeChoice.canonical(raw);
+            name = canonical != null ? canonical : CustomThemeStore.normalizeName(raw);
+            target = custom;
+        } else {
+            name = ThemeChoice.parse(text);
+            target = CenterTheme.builtIn(name);
+        }
         if (name.equals(themeName)) {
             return;
         }
         applying = true;
         try {
-            applyTheme(CenterTheme.builtIn(name), name);
+            applyTheme(target, name);
         } finally {
             applying = false;
         }
+    }
+
+    private static String firstChoiceLine(String text) {
+        for (String raw : text.split("\\R")) {
+            String line = raw.trim();
+            if (!line.isEmpty() && !line.startsWith("#")) {
+                return line;
+            }
+        }
+        return null;
     }
 
     private void sendLayout(CenterLayout l) {
@@ -542,6 +769,9 @@ public final class CenterShell {
         for (LayoutView v : views) {
             v.update(view);
         }
+        if (palette != null) {
+            palette.update(view);
+        }
         refreshTierBadge();
         if (hold != null) {
             restoreFields(hold);
@@ -582,6 +812,9 @@ public final class CenterShell {
         private boolean isometric;
         private int isoRotation;
         private boolean rtsVisible;
+        private boolean showDanger;
+        private boolean paletteVisible;
+        private boolean themeEditorVisible;
         private EditorView.Snapshot editor;
         private final Map<String, String> fields = new LinkedHashMap<>();
     }

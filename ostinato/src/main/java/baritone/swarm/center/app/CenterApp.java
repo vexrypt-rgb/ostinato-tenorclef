@@ -208,12 +208,8 @@ public final class CenterApp {
         if (name == null) {
             return CenterTheme.DEFAULT_DARK;
         }
-        return switch (name.toLowerCase(java.util.Locale.ROOT)) {
-            case "light" -> CenterTheme.LIGHT;
-            case "high-contrast", "contrast", "hc" -> CenterTheme.HIGH_CONTRAST;
-            case "colorblind", "colorblind-safe", "cb" -> CenterTheme.COLORBLIND_SAFE;
-            default -> CenterTheme.DEFAULT_DARK;
-        };
+        String canonical = baritone.swarm.center.ThemeChoice.canonical(name);
+        return CenterTheme.builtIn(canonical == null ? "dark" : canonical);
     }
 
     /**
@@ -382,6 +378,11 @@ public final class CenterApp {
         }
         if (spec.startsWith("iso:")) {
             return isoAuto(map, shell, spec.substring("iso:".length()));
+        }
+        if (spec.startsWith("danger:")) {
+            boolean want = "on".equals(spec.substring("danger:".length()).trim());
+            map.setShowDanger(want);
+            return "danger=" + map.showDanger();
         }
         if (spec.startsWith("rts:")) {
             return rtsAuto(map, canvas, shell, spec.substring("rts:".length()));

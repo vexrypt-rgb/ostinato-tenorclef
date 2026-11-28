@@ -125,7 +125,7 @@ public final class EditorView implements LayoutView {
         JPanel row3 = row();
         origin = field(row3, "ed:origin", 12, "origin", "World origin for import and empty start, x,y,z");
         origin.setText("0,-60,0");
-        path = field(row3, "ed:path", 22, "path", "Path to a .ost, .litematic or .schem file");
+        path = field(row3, "ed:path", 22, "path", "Path to a .ost, .litematic, .schem or .nbt file");
         JButton load = style.button("Load");
         load.setName("ed:load");
         load.addActionListener(e -> load());
@@ -135,6 +135,10 @@ public final class EditorView implements LayoutView {
         JButton imp = style.button("Import");
         imp.setName("ed:import");
         imp.addActionListener(e -> importFile());
+        JButton exp = style.button("Export");
+        exp.setName("ed:export");
+        exp.setToolTipText("Export blueprint to .schem, .litematic, .nbt or .ost at the path field");
+        exp.addActionListener(e -> exportFile());
         JButton liveBtn = style.button("Build live");
         liveBtn.setName("ed:live");
         liveBtn.addActionListener(e -> buildLive());
@@ -144,6 +148,7 @@ public final class EditorView implements LayoutView {
         row3.add(load);
         row3.add(save);
         row3.add(imp);
+        row3.add(exp);
         row3.add(liveBtn);
         row3.add(clear);
         bar.add(row3);
@@ -378,7 +383,7 @@ public final class EditorView implements LayoutView {
     public void importFile() {
         String p = path.getText().trim();
         if (p.isEmpty()) {
-            status.setText("set a .litematic or .schem path");
+            status.setText("set a .litematic, .schem or .nbt path");
             return;
         }
         try {
@@ -397,6 +402,23 @@ public final class EditorView implements LayoutView {
             status.setText("imported " + blueprint.size() + " blocks at " + o[0] + "," + o[1] + "," + o[2]);
         } catch (Exception e) {
             status.setText("import failed: " + e.getMessage());
+        }
+    }
+
+    /** Ostinato: export current blueprint to .schem, .litematic, .nbt or .ost based on path extension. */
+    public void exportFile() {
+        String p = path.getText().trim();
+        if (p.isEmpty()) {
+            status.setText("set a .schem, .litematic, .nbt or .ost export path");
+            return;
+        }
+        try {
+            ensureNamed();
+            Path target = Path.of(p);
+            SchemImport.exportBlueprint(blueprint, target);
+            status.setText("exported " + blueprint.size() + " blocks to " + target.getFileName());
+        } catch (Exception e) {
+            status.setText("export failed: " + e.getMessage());
         }
     }
 

@@ -45,7 +45,9 @@ final class FocusPanel extends JPanel {
     private final AppStyle style;
     private final Commands commands;
     private final JLabel title;
-    private final JTextArea position, dimension, path, executions, leases, inventory, perf, link, age, gather, alerts;
+    private final JTextArea position, dimension, path, stuck, executions, leases, inventory, perf, link, age, gather, alerts;
+    private final WhyStuck whyStuck = new WhyStuck();
+    private WhyStuck.Report lastStuck = new WhyStuck.Report(false, "idle", 0, "", "path", 0);
     private final JTextField quickArg;
     private final JButton despawnBtn;
     private final JLabel quickResult;
@@ -91,6 +93,7 @@ final class FocusPanel extends JPanel {
         position = row(body, "Position", "focus:position");
         dimension = row(body, "Dimension", "focus:dimension");
         path = row(body, "Path", "focus:path");
+        stuck = row(body, "Why stuck", "focus:stuck");
         executions = row(body, "Commands", "focus:executions");
         leases = row(body, "Leases", "focus:leases");
         inventory = row(body, "Inventory", "focus:inventory");
@@ -136,10 +139,16 @@ final class FocusPanel extends JPanel {
 
         JPanel row2 = style.panel(new FlowLayout(FlowLayout.LEFT, 3, 2), null);
         row2.setAlignmentX(Component.LEFT_ALIGNMENT);
-        despawnBtn = compactBtn("Despawn", "focus:button:despawn", true, this::runDespawn);
-        row2.add(despawnBtn);
+        row2.add(compactBtn("Repath", "focus:button:repath", false, this::runRepath));
+        row2.add(compactBtn("Home", "focus:button:home", false, this::runHome));
         row2.add(compactBtn("Open on Map", "focus:button:map", false, this::runOpenOnMap));
         controls.add(row2);
+
+        JPanel row3 = style.panel(new FlowLayout(FlowLayout.LEFT, 3, 2), null);
+        row3.setAlignmentX(Component.LEFT_ALIGNMENT);
+        despawnBtn = compactBtn("Despawn", "focus:button:despawn", true, this::runDespawn);
+        row3.add(despawnBtn);
+        controls.add(row3);
 
         quickResult = style.label(" ", style.muted(), Font.PLAIN, 10.5f);
         quickResult.setName("focus:result");
@@ -202,9 +211,15 @@ final class FocusPanel extends JPanel {
         return new Dimension(WIDTH, Integer.MAX_VALUE);
     }
 
+    /** Record a swarm snapshot for stall/failure tracking even while the focus panel is closed. */
+    void observe(SwarmView view) {
+        whyStuck.observe(view);
+    }
+
     /** Shows {@code bot}, or hides the panel when the selection is empty. */
     void show(SwarmView view, String bot) {
         last = view == null ? SwarmView.EMPTY : view;
+        whyStuck.observe(last);
         SwarmView.BotState b = bot == null || view == null ? null : view.bot(bot);
         if (b == null) {
             currentBot = null;
@@ -223,6 +238,9 @@ final class FocusPanel extends JPanel {
         position.setText(TileText.position(b.feed()));
         dimension.setText(TileDetails.dimension(b.feed()));
         path.setText(TileDetails.path(b.feed().path()));
+        lastStuck = whyStuck.report(last, b.name());
+        stuck.setText(lastStuck.summary());
+        stuck.setForeground(lastStuck.stuck() ? style.warn() : style.text());
         executions.setText(TileDetails.executions(b.feed().executions()));
         leases.setText(TileDetails.leases(b.feed().leases()));
         inventory.setText(TileText.inventory(b.feed().inventory()));
@@ -304,6 +322,21 @@ final class FocusPanel extends JPanel {
         } else {
             commands.line("swarm despawn " + targetBot, targetBot, this::showReply);
         }
+    }
+
+    private void runRepath() {
+        if (commands == null || currentBot == null) {
+            return;
+        }
+        String line = lastStuck == null || lastStuck.repathLine().isBlank() ? "path" : lastStuck.repathLine();
+        commands.line(routedLine(currentBot, line), currentBot, this::showReply);
+    }
+
+    private void runHome() {
+        if (commands == null || currentBot == null) {
+            return;
+        }
+        commands.line(routedLine(currentBot, "home"), currentBot, this::showReply);
     }
 
     private void runOpenOnMap() {
