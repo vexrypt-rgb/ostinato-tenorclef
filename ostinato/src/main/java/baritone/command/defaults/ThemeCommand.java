@@ -118,6 +118,7 @@ public class ThemeCommand extends Command {
                 "Status always shows a glyph and a word too, so no theme relies on color alone.",
                 "",
                 "Built-ins: dark (Default dark), light, high-contrast, colorblind (deuteranopia and protanopia safe).",
+                "Flavor themes: nether, end, ocean, rust.",
                 "Custom themes: put name.json in the themes folder of the Ostinato config directory, with any of",
                 "background, surface, raised, border, text, muted, faint, accent, onAccent, ok, warn, danger as \"#RRGGBB\",",
                 "and an optional \"base\" built-in for the rest.",

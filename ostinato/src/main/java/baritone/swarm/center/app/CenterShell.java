@@ -64,8 +64,10 @@ public final class CenterShell {
     private ThemeEditorPanel themeEditor;
     private final PovSwitcher pov = new PovSwitcher(); // Ostinato: P4 Bot POV switching
     private PovStreamPanel povPanel;
+    private ConsolePanel console; // Ostinato: P3 combined log & console drawer
     private JToggleButton paletteToggle;
     private JToggleButton themeEditToggle;
+    private JToggleButton consoleToggle;
     private javax.swing.JComboBox<String> moreThemes;
     private final Commands commands;
     private CenterLayout shown;
@@ -282,16 +284,36 @@ public final class CenterShell {
         });
         wall.onWatchPov(this::watchPov);
         map.onWatchPov(this::watchPov);
+        editor.onShowOnMap(bp -> {
+            map.showBlueprintOverlay(bp);
+            pick(CenterLayout.MAP);
+        });
         wall.onTierChanged(tier -> refreshTierBadge());
 
-        JPanel footer = style.panel(new BorderLayout(12, 0), style.surface());
-        footer.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, style.line()),
+        console = new ConsolePanel(style, commands, this::activeSelection);
+        JPanel footerBar = style.panel(new BorderLayout(12, 0), style.surface());
+        footerBar.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createMatteBorder(1, 0, 0, 0, style.line()),
                 BorderFactory.createEmptyBorder(5, 12, 5, 12)));
         reply = named(style.label("No command sent yet.", style.muted(), Font.PLAIN, 12f), "footer.reply");
         problems = named(style.label(" ", style.warn(), Font.PLAIN, 12f), "footer.problems");
-        footer.add(reply, BorderLayout.WEST);
-        footer.add(problems, BorderLayout.EAST);
-        root.add(footer, BorderLayout.SOUTH);
+        consoleToggle = style.toggle("Console");
+        consoleToggle.setName("footer.console");
+        consoleToggle.setFont(AppStyle.font(Font.PLAIN, 11f));
+        consoleToggle.setToolTipText("Combined log and command console with registry autocomplete");
+        consoleToggle.addActionListener(e -> {
+            console.setVisible(consoleToggle.isSelected());
+            root.revalidate();
+        });
+        JPanel footRight = style.panel(new FlowLayout(FlowLayout.RIGHT, 8, 0), null);
+        footRight.add(problems);
+        footRight.add(consoleToggle);
+        footerBar.add(reply, BorderLayout.WEST);
+        footerBar.add(footRight, BorderLayout.EAST);
+
+        JPanel southWrap = style.panel(new BorderLayout(), null);
+        southWrap.add(console.component(), BorderLayout.CENTER);
+        southWrap.add(footerBar, BorderLayout.SOUTH);
+        root.add(southWrap, BorderLayout.SOUTH);
 
         JToggleButton theme = themeToggles.get(themeName);
         if (theme != null) {
@@ -404,6 +426,10 @@ public final class CenterShell {
 
     public PovStreamPanel povPanel() {
         return povPanel;
+    }
+
+    public ConsolePanel console() {
+        return console;
     }
 
     /** Ostinato: P4 switch POV to {@code bot} (render-swap for hidden bots, stream preview for headless/other). */
@@ -611,6 +637,12 @@ public final class CenterShell {
         if (snap.editor != null) {
             editor.restore(snap.editor);
         }
+        if (console != null && snap.console != null) {
+            console.restore(snap.console);
+            if (consoleToggle != null) {
+                consoleToggle.setSelected(snap.console.visible());
+            }
+        }
         if (snap.reply != null) {
             reply.setText(snap.reply);
             reply.setForeground(snap.replyColor);
@@ -651,6 +683,7 @@ public final class CenterShell {
         h.paletteVisible = palette != null && palette.visible();
         h.themeEditorVisible = themeEditor != null && themeEditor.visible();
         h.editor = editor == null ? null : editor.snapshot();
+        h.console = console == null ? null : console.snapshot();
         collect(root, h.fields);
         return h;
     }
@@ -821,6 +854,9 @@ public final class CenterShell {
         if (povPanel != null) {
             povPanel.update(view);
         }
+        if (console != null) {
+            console.update(view);
+        }
         refreshTierBadge();
         if (hold != null) {
             restoreFields(hold);
@@ -836,6 +872,9 @@ public final class CenterShell {
     private void showReply(CenterReply r) {
         reply.setText((r.admitted() ? TileStatus.Level.OK.glyph : TileStatus.Level.WARN.glyph) + " " + r.summary());
         reply.setForeground(r.admitted() ? style.ok() : style.warn());
+        if (console != null) {
+            console.recordReply(r);
+        }
     }
 
     /** Camera, selection, wall filter/density and typed text carried across a theme rebuild. */
@@ -867,6 +906,7 @@ public final class CenterShell {
         private boolean paletteVisible;
         private boolean themeEditorVisible;
         private EditorView.Snapshot editor;
+        private ConsolePanel.Snapshot console;
         private final Map<String, String> fields = new LinkedHashMap<>();
     }
 }

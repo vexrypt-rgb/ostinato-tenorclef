@@ -480,6 +480,23 @@ public final class MapView implements LayoutView {
         return canvas.blueprintCount();
     }
 
+    /** Ostinato: display an Editor blueprint as a map ghost/overlay and frame its center. */
+    public void showBlueprintOverlay(baritone.swarm.rts.Blueprint bp) {
+        if (bp == null || bp.size() == 0) {
+            return;
+        }
+        List<int[]> cells = new ArrayList<>();
+        for (baritone.swarm.rts.Blueprint.Cell c : bp.cells()) {
+            cells.add(new int[]{c.x(), c.z(), 0, c.y()});
+        }
+        canvas.setGhost(cells);
+        int[] b = bp.bounds();
+        if (b != null) {
+            placeCamera(Math.max(4, canvas.camera.zoom()), (b[0] + b[3] + 1) * 0.5, (b[2] + b[5] + 1) * 0.5);
+        }
+        canvas.repaint();
+    }
+
     public MapGroups groups() {
         return canvas.groups;
     }

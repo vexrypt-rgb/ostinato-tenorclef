@@ -26,6 +26,7 @@ import baritone.api.event.events.type.EventState;
 import baritone.api.event.listener.AbstractGameEventListener;
 import baritone.gui.model.KeyNames;
 import baritone.gui.screen.OstinatoScreen;
+import baritone.gui.screen.PaletteScreen;
 import baritone.gui.screen.RadialScreen;
 import baritone.gui.tasks.game.TaskService;
 import net.minecraft.client.Minecraft;
@@ -34,7 +35,7 @@ import com.mojang.blaze3d.platform.InputConstants;
 /**
  * Wiring for the Ostinato GUI: polls the {@code guiKeybind} key every client tick (edge-triggered, only with no
  * screen open, same approach as TenorClef's menu key), polls the hold-key radial quick menu ({@code ostinato.radialKey},
- * default {@code R}), and flushes debounced GUI saves.
+ * default {@code R}), polls {@code Ctrl+K} for the in-game command palette, and flushes debounced GUI saves.
  */
 public final class OstinatoGui implements AbstractGameEventListener {
 
@@ -43,6 +44,7 @@ public final class OstinatoGui implements AbstractGameEventListener {
     private final Baritone baritone;
     private boolean wasDown = true; // don't open on a key that was already held at startup
     private boolean radialWasDown = true; // Ostinato: P3 hold-key radial menu
+    private boolean paletteWasDown = true; // Ostinato: P3 in-game Ctrl+K palette
 
     public OstinatoGui(Baritone baritone) {
         this.baritone = baritone;
@@ -70,6 +72,14 @@ public final class OstinatoGui implements AbstractGameEventListener {
             mc.gui.setScreen(new RadialScreen(radialKey));
         }
         radialWasDown = radialDown;
+
+        // Ostinato: P3 in-game Ctrl+K command palette
+        boolean ctrl = InputConstants.isKeyDown(InputConstants.KEY_LCONTROL) || InputConstants.isKeyDown(InputConstants.KEY_RCONTROL);
+        boolean paletteDown = ctrl && InputConstants.isKeyDown(InputConstants.KEY_K);
+        if (paletteDown && !paletteWasDown && mc.gui.screen() == null && mc.player != null) {
+            mc.gui.setScreen(new PaletteScreen());
+        }
+        paletteWasDown = paletteDown;
     }
 
     @Override

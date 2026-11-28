@@ -9,13 +9,17 @@ import baritone.swarm.rts.Blueprint;
 import javax.swing.BorderFactory;
 import javax.swing.ButtonGroup;
 import javax.swing.JButton;
+import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.JToggleButton;
 import javax.swing.Timer;
 import java.awt.BorderLayout;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GridLayout;
@@ -25,6 +29,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
@@ -55,6 +60,12 @@ public final class EditorView implements LayoutView {
     private final JToggleButton design;
     private final JToggleButton liveMode;
     private final JToggleButton allLayers;
+    private final JToggleButton bomToggle; // Ostinato: P3 Materials BOM & partition sidebar
+    private final JPanel bomPanel;
+    private final JLabel bomSummary;
+    private final JTextArea bomText;
+    private final JComboBox<BlueprintSplitter.Strategy> splitStrategy;
+    private Consumer<Blueprint> onShowOnMap = bp -> {};
     private final Timer writeLater;
     private final Timer statusPoll;
     private Blueprint blueprint = new Blueprint("untitled");
@@ -111,6 +122,16 @@ public final class EditorView implements LayoutView {
         allLayers.setSelected(true);
         allLayers.addActionListener(e -> canvas.setShowAll(allLayers.isSelected()));
         row1.add(allLayers);
+        bomToggle = style.toggle("Materials & Split");
+        bomToggle.setName("ed:bom:toggle");
+        bomToggle.setSelected(true);
+        bomToggle.setToolTipText("Compare blueprint bill of materials against swarm inventory and chests, and split regions");
+        row1.add(bomToggle);
+        JButton ghostBtn = style.button("Show on Map");
+        ghostBtn.setName("ed:ghost");
+        ghostBtn.setToolTipText("Display this blueprint on the War Room map and switch to Map view");
+        ghostBtn.addActionListener(e -> onShowOnMap.accept(blueprint));
+        row1.add(ghostBtn);
         bar.add(row1);
 
         JPanel row2 = row();
@@ -160,8 +181,60 @@ public final class EditorView implements LayoutView {
         south.add(status, BorderLayout.WEST);
         south.add(reply, BorderLayout.EAST);
 
+        bomPanel = style.panel(new BorderLayout(0, 6), style.surface());
+        bomPanel.setName("ed:bom:panel");
+        bomPanel.setPreferredSize(new Dimension(265, 300));
+        bomPanel.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 1, 0, 0, style.line()),
+                BorderFactory.createEmptyBorder(8, 8, 8, 8)));
+        JPanel bomHead = style.panel(new GridLayout(2, 1, 0, 2), null);
+        bomHead.add(style.label("Materials vs Swarm", style.text(), Font.BOLD, 12f));
+        bomSummary = named(style.label("No blocks yet", style.muted(), Font.PLAIN, 11f), "ed:bom:summary");
+        bomHead.add(bomSummary);
+        bomPanel.add(bomHead, BorderLayout.NORTH);
+
+        bomText = new JTextArea();
+        bomText.setName("ed:bom:text");
+        bomText.setEditable(false);
+        bomText.setLineWrap(true);
+        bomText.setWrapStyleWord(true);
+        bomText.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 11));
+        bomText.setBackground(style.bg());
+        bomText.setForeground(style.text());
+        bomText.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
+        JScrollPane bomScroll = new JScrollPane(bomText);
+        bomScroll.setBorder(BorderFactory.createLineBorder(style.line(), 1));
+        bomPanel.add(bomScroll, BorderLayout.CENTER);
+
+        JPanel bomFoot = style.panel(new GridLayout(2, 1, 0, 4), null);
+        JPanel splitRow = style.panel(new FlowLayout(FlowLayout.LEFT, 4, 0), null);
+        splitStrategy = new JComboBox<>(BlueprintSplitter.Strategy.values());
+        splitStrategy.setName("ed:split:strategy");
+        splitStrategy.setFont(AppStyle.font(Font.PLAIN, 11f));
+        JButton splitBtn = style.button("Split build");
+        splitBtn.setName("ed:split:send");
+        splitBtn.setToolTipText("Partition blueprint across selected bots using the chosen strategy");
+        splitBtn.addActionListener(e -> splitAndBuild());
+        splitRow.add(splitStrategy);
+        splitRow.add(splitBtn);
+        JPanel gatherRow = style.panel(new FlowLayout(FlowLayout.LEFT, 4, 0), null);
+        JButton gatherBtn = style.button("Gather missing");
+        gatherBtn.setName("ed:bom:gather");
+        gatherBtn.setToolTipText("Ask the swarm to gather every missing material from the BOM");
+        gatherBtn.addActionListener(e -> gatherMissing());
+        gatherRow.add(gatherBtn);
+        bomFoot.add(splitRow);
+        bomFoot.add(gatherRow);
+        bomPanel.add(bomFoot, BorderLayout.SOUTH);
+
+        bomToggle.addActionListener(e -> {
+            bomPanel.setVisible(bomToggle.isSelected());
+            root.revalidate();
+        });
+
         root.add(bar, BorderLayout.NORTH);
         root.add(canvas, BorderLayout.CENTER);
+        root.add(bomPanel, BorderLayout.EAST);
         root.add(south, BorderLayout.SOUTH);
 
         writeLater = new Timer(500, e -> writeNow());
@@ -200,6 +273,103 @@ public final class EditorView implements LayoutView {
     @Override
     public void update(SwarmView view) {
         this.view = view == null ? SwarmView.EMPTY : view;
+        refreshBom();
+    }
+
+    /** Ostinato: P3 show current blueprint on the War Room map. */
+    public void onShowOnMap(Consumer<Blueprint> show) {
+        this.onShowOnMap = show == null ? bp -> {} : show;
+    }
+
+    public MaterialCompare.Report materialReport() {
+        return MaterialCompare.compare(blueprint, placed, view);
+    }
+
+    public BlueprintSplitter.Strategy splitStrategy() {
+        BlueprintSplitter.Strategy s = (BlueprintSplitter.Strategy) splitStrategy.getSelectedItem();
+        return s == null ? BlueprintSplitter.Strategy.STRIPS : s;
+    }
+
+    public void setSplitStrategy(BlueprintSplitter.Strategy s) {
+        if (s != null) {
+            splitStrategy.setSelectedItem(s);
+        }
+    }
+
+    /** Ostinato: partition the blueprint across selected bots (or all swarm bots) via STRIPS/GRID/LAYERS. */
+    public void splitAndBuild() {
+        setLive(true);
+        writeNow();
+        List<String> sel = selection.get();
+        List<String> bots = new ArrayList<>();
+        if (sel != null && !sel.isEmpty()) {
+            bots.addAll(sel);
+        } else {
+            for (SwarmView.BotState b : view.bots()) {
+                bots.add(b.name());
+            }
+        }
+        RtsOrders.Plan plan = BlueprintSplitter.split(bots, (char) dim.getAsInt(), blueprint, splitStrategy());
+        if (plan.reason() != null) {
+            reply.setText(plan.reason());
+            return;
+        }
+        send(plan.orders());
+    }
+
+    /** Ostinato: dispatch swarm gather orders for every missing block in the current BOM. */
+    public void gatherMissing() {
+        MaterialCompare.Report rep = materialReport();
+        if (rep.totalMissing() <= 0) {
+            reply.setText("all materials available in swarm inventory and chests");
+            return;
+        }
+        String host = host();
+        int count = 0;
+        for (MaterialCompare.Row row : rep.rows()) {
+            if (row.missing() > 0) {
+                commands.line("swarm gather " + row.block() + " " + row.missing(), host, null);
+                count++;
+            }
+        }
+        reply.setText("requested gather for " + count + " missing block type" + (count == 1 ? "" : "s"));
+    }
+
+    private void refreshBom() {
+        if (bomSummary == null || bomText == null) {
+            return;
+        }
+        MaterialCompare.Report rep = materialReport();
+        if (rep.totalBlocks() == 0) {
+            bomSummary.setText("No blocks in blueprint");
+            bomSummary.setForeground(style.muted());
+            bomText.setText("Paint or import blocks to compare\nrequired materials against swarm\ninventory and observed chests.");
+            return;
+        }
+        if (rep.allReady()) {
+            bomSummary.setText(baritone.swarm.center.TileStatus.Level.OK.glyph + " Ready · "
+                    + rep.totalRemaining() + " to place (all stocked)");
+            bomSummary.setForeground(style.ok());
+        } else {
+            bomSummary.setText(baritone.swarm.center.TileStatus.Level.WARN.glyph + " Short "
+                    + rep.totalMissing() + " of " + rep.totalRemaining() + " remaining");
+            bomSummary.setForeground(style.warn());
+        }
+        StringBuilder sb = new StringBuilder();
+        for (MaterialCompare.Row r : rep.rows()) {
+            String glyph = r.ready() ? "●" : "▲";
+            sb.append(glyph).append(' ').append(r.block());
+            if (r.missing() > 0) {
+                sb.append(" (-").append(r.missing()).append(')');
+            }
+            sb.append('\n')
+                    .append("  need ").append(r.remaining())
+                    .append(" · bots ").append(r.inBots())
+                    .append(" · chests ").append(r.inChests())
+                    .append('\n');
+        }
+        bomText.setText(sb.toString().trim());
+        bomText.setCaretPosition(0);
     }
 
     /** {@code <feed dir>/blueprints}. */
@@ -549,6 +719,7 @@ public final class EditorView implements LayoutView {
             s += " · live, waiting for status";
         }
         status.setText(s);
+        refreshBom();
     }
 
     public Snapshot snapshot() {
